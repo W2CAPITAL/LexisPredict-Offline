@@ -42,6 +42,24 @@ Configure no backend da Vercel as variáveis de ambiente necessárias e use a im
 
 O bridge preserva colunas não alteradas ao editar um processo.
 
+## DataJud + DJEN
+
+O módulo judicial do LexisPredict Sheets foi adaptado a partir do núcleo DataJud/DJEN do `W1CAPITAL/LexisPredict` para a arquitetura Sheets + Vercel.
+
+Inclui:
+- consulta DataJud por CNJ, nome e CPF/CNPJ;
+- resolução de aliases TJ/TRF/TRT e tribunais superiores;
+- sanitização e deduplicação de movimentos;
+- detecção de encerramento, cumprimento de sentença, mérito e novidade pós-retorno;
+- consulta DJEN oficial por CNJ, nome, texto e intervalo de datas;
+- normalização de HTML, links de publicação, ato crítico, custas, Busca e Apreensão, CPF e veículo;
+- scanner combinado DataJud + DJEN com atualização dos campos da aba `Processos`;
+- pausa automática em HTTP 429, sem contornar bloqueios ou limites do CNJ.
+
+A chave DataJud não é versionada. Configure `DATAJUD_API_KEY` na Vercel. O DJEN usa por padrão:
+
+`https://comunicaapi.pje.jus.br/api/v1/comunicacao`
+
 ## Corrigir o DJEN da planilha V6
 
 Depois do deploy na Vercel, coloque a URL base do site na configuração:
@@ -81,7 +99,7 @@ As rotas `/api` são Vercel Functions e funcionam integralmente quando publicada
 
 ## Status
 
-**v1.3.0 — Apps Script unificado, responsáveis compostos, sessão obrigatória e token server-side.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
+**v1.4.0 — autenticação server-side, sincronização Sheets e núcleo DataJud + DJEN integrado.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
 
 
 ## DJEN — fonte oficial
