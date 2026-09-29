@@ -282,7 +282,14 @@ function mergePending(rows,pending){
 async function apiSheets(payload){
   const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload}),cache:"no-store"});
   const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));
-  if(!r.ok||j.ok===false)throw new Error(j.error||"Falha ao acessar a planilha");
+  if(!r.ok){
+    const e=new Error(j.error||"Falha ao acessar a planilha");
+    e.status=r.status;e.data=j;throw e;
+  }
+  if(j.ok===false&&!j.conflict){
+    const e=new Error(j.error||"Falha ao acessar a planilha");
+    e.status=r.status;e.data=j;throw e;
+  }
   return j;
 }
 async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
@@ -291,7 +298,7 @@ async function syncFromCloud(opts={}){
   state.syncing=true;
   if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
   try{
-    try{await flushOutbox()}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
+    try{await flushOutbox({force:!opts.quiet})}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
     try{await flushCrmOutbox()}catch(_){}
     const payload={action:"list",limit:8000,scope:"company"};
     const j=await apiSheets(payload);
@@ -345,15 +352,16 @@ async function verifySheetWrite(row){
   }
   return bad.length?{ok:false,error:"A planilha não confirmou: "+bad.slice(0,5).join(", ")}:{ok:true,row:saved};
 }
-async function flushOutbox(){
+async function flushOutbox(opts={}){
   const list=await idbAll("outbox");if(!list.length)return {ok:true,written:0};
-  const valid=[],invalid=[];
+  const force=!!opts.force,nowTs=Date.now(),valid=[],invalid=[],deferred=[];
   for(const item of list){
     const cnj=digits(pick(item.row||{},"Protocolo","protocolo","CNJ","cnj"));
-    if(cnj.length===20)valid.push(item);else invalid.push(item);
+    if(cnj.length!==20){invalid.push(item);continue}
+    if(!force&&Number(item.retryAfter||0)>nowTs){deferred.push(item);continue}
+    valid.push(item);
   }
-  // Um registro local sem CNJ não pode ser confirmado na planilha e travava todos os
-  // demais writes com HTTP 409. Remove apenas esses itens estruturalmente inválidos.
+  // Sem CNJ válido não existe forma segura de reconciliar o registro com Processos.
   if(invalid.length){
     const db=await openDb();
     await new Promise((resolve,reject)=>{
@@ -362,29 +370,40 @@ async function flushOutbox(){
       tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
     });
   }
-  if(!valid.length)return {ok:true,written:0,droppedInvalid:invalid.length};
-  const latest=new Map();valid.forEach(x=>latest.set(keyOf(x.row),x.row));
-  const rows=[...latest.values()];
+  if(!valid.length)return {ok:true,written:0,droppedInvalid:invalid.length,deferred:deferred.length};
+
+  const latestItems=new Map();
+  valid.forEach(item=>latestItems.set(keyOf(item.row),item));
+  const unique=[...latestItems.values()],rows=unique.map(x=>x.row);
   const j=await apiSheets({action:"write",rows});
-  const rejected=Number(j.rejected_count||0);
-  if(j.ok===false||rejected>0){
-    const why=(j.rejected||[]).map(x=>x.motivo||x.reason).filter(Boolean).join("; ");
-    throw new Error(why||j.error||"A planilha recusou uma ou mais alterações.");
-  }
-  if(rows.some(row=>row._JudicialHistory)&&j.history_saved!==true){
+
+  if(rows.some(row=>row._JudicialHistory)&&j.history_saved!==true&&!j.conflict){
     throw new Error("Resumo salvo, mas o Apps Script publicado ainda não grava os históricos. Atualize o bridge e publique uma Nova versão. Os eventos continuam pendentes neste navegador.");
   }
-  for(const row of rows){
-    const verify=await verifySheetWrite(row);
-    if(!verify.ok)throw new Error(verify.error);
+
+  const confirmed=[],failed=[];
+  for(const item of unique){
+    const verify=await verifySheetWrite(item.row).catch(e=>({ok:false,error:e.message||String(e)}));
+    if(verify.ok)confirmed.push(item);
+    else failed.push({item,error:verify.error||j.error||j.warning||"Gravação não confirmada"});
   }
+
   const db=await openDb();
   await new Promise((resolve,reject)=>{
-    const tx=db.transaction("outbox","readwrite");
-    list.forEach(item=>tx.objectStore("outbox").delete(item.id));
+    const tx=db.transaction("outbox","readwrite"),st=tx.objectStore("outbox");
+    const confirmedKeys=new Set(confirmed.map(x=>keyOf(x.row)));
+    // Apaga todas as versões locais do mesmo processo que já foram confirmadas.
+    list.forEach(item=>{if(confirmedKeys.has(keyOf(item.row)))st.delete(item.id)});
+    // Conflitos ficam preservados, mas o auto-sync aguarda 30 min antes de tentar de novo.
+    failed.forEach(({item,error})=>st.put({...item,conflict:String(error).slice(0,500),conflictAt:nowTs,retryAfter:nowTs+30*60*1000}));
     tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
   });
-  return {...j,written:Number(j.written??j.updated??rows.length),verified:true};
+
+  if(failed.length){
+    const sample=failed.slice(0,3).map(x=>cnjFormatted(pick(x.item.row,"Protocolo","CNJ"))+": "+x.error).join(" • ");
+    throw new Error(failed.length+" edição(ões) não confirmada(s) e preservada(s) localmente. "+sample);
+  }
+  return {...j,ok:true,written:confirmed.length,verified:true,droppedInvalid:invalid.length,deferred:deferred.length};
 }
 function showBanner(msg,type=""){const b=$("#banner");b.textContent=msg;b.className="banner "+type;b.classList.remove("hidden");clearTimeout(showBanner.t);showBanner.t=setTimeout(()=>b.classList.add("hidden"),7000)}
 function setLogged(on){$("#login").classList.toggle("hidden",on);$("#app").classList.toggle("hidden",!on)}
