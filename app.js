@@ -339,7 +339,7 @@ const viewPaths={dashboard:"/",processos:"/cases",empresa:"/processos",clientes:
 function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";if(p==="/processos-empresa")return"empresa";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
 function setView(v,push=true){
   state.view=v;
-  $$$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
+  $(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
   const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;
   if(push&&viewPaths[v]&&location.pathname!==viewPaths[v])history.pushState({view:v},"",viewPaths[v]);
   render();
@@ -401,8 +401,8 @@ function renderDashboard(){
     metricRow("Revisar",state.rows.length-potential-noSell,"sem gatilho conclusivo")+
   '</div></div></div></div></div>';
   bindGotos();
-  $$$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
-  $$$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
+  $("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
 }
 function metricRow(label,value,sub){return '<div class="metric-row"><div><div class="cell-main">'+esc(label)+'</div><div class="cell-sub">'+esc(sub)+'</div></div><strong>'+esc(value)+'</strong></div>'}
 function filteredRows(source=state.rows){
@@ -485,11 +485,11 @@ function taskCardHtml(x){
     '<div class="task-card-foot"><div class="task-icon-actions"><button class="task-icon suggest" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button><button class="task-icon audit" data-history="'+esc(key)+'">Histórico</button><a class="task-icon wa" target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">WhatsApp</a><button class="task-icon" data-edit="'+esc(key)+'">Editar</button></div><button class="task-icon task-manage" data-edit="'+esc(key)+'">Gerir ›</button></div></article>';
 }
 function bindTaskActions(){
-  $$$("[data-copy]").forEach(b=>b.onclick=async()=>{
+  $("[data-copy]").forEach(b=>b.onclick=async()=>{
     const r=findRow(b.dataset.copy),msg=window.LexisSuggest?.quickMessage?window.LexisSuggest.quickMessage(r):"";
     try{await navigator.clipboard.writeText(msg);showBanner("Mensagem copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
-  $$$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
+  $("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
   $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
   $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
   $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
@@ -643,8 +643,8 @@ function renderReport(){
     '<div class="card"><div class="card-head"><h3>Bloqueios comerciais</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Cliente</th><th>CNJ</th><th>Motivo</th></tr></thead><tbody>'+blocked.slice(0,30).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Produto / Oportunidade","_CommercialReason"))+'</td></tr>').join("")+'</tbody></table></div></div></div></div>';
   $("#printReport").onclick=()=>window.print();
   bindGotos();
-  $$$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
-  $$$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
+  $("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
 }
 function renderScanner(){
   const valid=state.rows.filter(r=>digits(pick(r,"Protocolo")).length===20);
@@ -766,7 +766,7 @@ async function scanQueue(){
   state.scanning=false;state.scanStop=false;logQueue("Fila finalizada/pausada.");renderScanner();
 }
 
-function bindGotos(){$$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
+function bindGotos(){$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
 function findRow(key){return state.companyRows.find(x=>keyOf(x)===key)||state.rows.find(x=>keyOf(x)===key)||null}
 function todayBrazil(){
   const parts=new Intl.DateTimeFormat("pt-BR",{timeZone:"America/Sao_Paulo",day:"2-digit",month:"2-digit",year:"numeric"}).formatToParts(new Date());
@@ -960,7 +960,7 @@ function renderAuditDialog(){
   $("#auditContactBtn").onclick=()=>openAttendance(state.auditKey);
   $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;renderAuditDialog()};
   $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
-  $$$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
+  $("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
     const s=suggestions[Number(b.dataset.copySuggestion)];if(!s)return;
     try{await navigator.clipboard.writeText(s.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
