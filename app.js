@@ -4,7 +4,7 @@
 const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit";
 const DB_NAME="lexispredict-offline-v1";
 const LS={cfg:"lexis.offline.config",session:"lexis.offline.session"};
-const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null};
+const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,serverCfg:{}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -50,8 +50,9 @@ async function queueWrite(row){await idbPut("outbox",{row,ts:Date.now()});update
 async function outboxCount(){return (await idbAll("outbox")).length}
 
 async function apiSheets(payload){
-  const c=cfg();if(!c.bridgeUrl)throw new Error("Conexão com a planilha não configurada.");
-  const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:c.bridgeUrl,payload})});
+  const c=cfg();
+  const body={payload}; if(c.bridgeUrl) body.url=c.bridgeUrl;
+  const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));if(!r.ok||j.ok===false)throw new Error(j.error||"Falha ao acessar a planilha");return j;
 }
 async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
@@ -64,7 +65,6 @@ async function syncFromCloud(){
 }
 async function flushOutbox(){
   const list=await idbAll("outbox");if(!list.length)return;
-  const c=cfg();if(!c.bridgeUrl)return;
   const rows=list.map(x=>x.row);
   const j=await apiSheets({action:"write",rows,sess:state.session?.sess||state.session?.session||"",actor:state.session?.user?.usuario||"offline"});
   if(j.ok!==false)await idbClear("outbox");
@@ -99,7 +99,7 @@ function taskLabel(r){
 function titleFor(v){return {dashboard:["CARTEIRA JURÍDICA","Visão geral"],processos:["BASE PRINCIPAL","Processos"],tarefas:["FILA INTELIGENTE","Tarefas"],analise:["INTELIGÊNCIA OPERACIONAL","Análise"],scanner:["DATAJUD + DJEN","Scanner DJEN"],config:["OFFLINE FIRST","Configurações"]}[v]||["LEXISPREDICT","Painel"]}
 function setView(v){state.view=v;$$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;render()}
 function render(){const m=metrics();$("#navProcessos").textContent=m.total;$("#navTarefas").textContent=tasks().length;updateSyncUi();if(state.view==="dashboard")renderDashboard();else if(state.view==="processos")renderProcessos();else if(state.view==="tarefas")renderTarefas();else if(state.view==="analise")renderAnalise();else if(state.view==="scanner")renderScanner();else renderConfig()}
-async function updateSyncUi(){const c=cfg(),count=await outboxCount();const online=navigator.onLine;$("#modeChip").textContent=c.bridgeUrl?(online?"SHEETS + LOCAL":"OFFLINE CACHE"):"LOCAL";$("#syncDot").className="dot "+(c.bridgeUrl&&online?"ok":online?"warn":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Local")+(count?" • "+count+" pendente(s)":"")}
+async function updateSyncUi(){const c=cfg(),count=await outboxCount();const online=navigator.onLine,connected=!!(c.bridgeUrl||state.serverCfg.bridgeConfigured);$("#modeChip").textContent=connected?(online?"SHEETS + LOCAL":"OFFLINE CACHE"):"LOCAL";$("#syncDot").className="dot "+(connected&&online?"ok":online?"warn":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Local")+(count?" • "+count+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function renderDashboard(){
   const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
@@ -227,7 +227,10 @@ function setupEvents(){
 function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Modo local";$("#userRole").textContent=u.perfil||"offline"}
 
 async function boot(){
-  setupEvents();restoreSession();await loadLocal();if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+  setupEvents();restoreSession();
+  try{const r=await fetch("/api/config",{cache:"no-store"});if(r.ok)state.serverCfg=await r.json()}catch(_){}
+  if(state.serverCfg.sheetUrl){const c=cfg();if(!c.sheetUrl||c.sheetUrl===SHEET_DEFAULT)saveCfg({...c,sheetUrl:state.serverCfg.sheetUrl})}
+  await loadLocal();if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
   if(state.session){setLogged(true);applyUser();render()}else setLogged(false);
   updateSyncUi();
 }
