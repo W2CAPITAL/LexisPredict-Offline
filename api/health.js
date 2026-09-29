@@ -1,0 +1,1 @@
+module.exports=async(req,res)=>{res.setHeader("Cache-Control","no-store");res.status(200).json({ok:true,app:"LexisPredict Offline Web",version:"1.0.0",time:new Date().toISOString(),modules:["offline","sheets-bridge","djen-proxy"]})};

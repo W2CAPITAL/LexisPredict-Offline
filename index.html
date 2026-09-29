@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <meta name="theme-color" content="#102a22"/>
+  <meta name="description" content="LexisPredict Offline Web — CRM jurídico e monitor processual conectado ao Google Sheets."/>
+  <link rel="manifest" href="/manifest.webmanifest"/>
+  <link rel="stylesheet" href="/styles.css"/>
+  <title>LexisPredict Offline</title>
+</head>
+<body>
+  <div id="login" class="login-shell">
+    <section class="login-art">
+      <div class="brand"><span class="brand-mark">L</span><span>LexisPredict</span></div>
+      <div>
+        <span class="eyebrow">OFFLINE WEB • SHEETS FIRST</span>
+        <h1>Seu gabinete jurídico continua funcionando com ou sem nuvem.</h1>
+        <p>Carteira, tarefas, análise, DataJud/DJEN, sincronização com planilha e cache local em um único sistema.</p>
+      </div>
+      <div class="login-points">
+        <span>Google Sheets</span><span>Offline local</span><span>DJEN</span><span>Vercel</span>
+      </div>
+    </section>
+    <section class="login-form">
+      <div class="login-box">
+        <span class="eyebrow">LEXISPREDICT OFFLINE</span>
+        <h2>Entrar no gabinete</h2>
+        <p class="muted" id="loginHint">Conecte a planilha ou use os dados salvos neste dispositivo.</p>
+        <label>Usuário<input id="loginUser" autocomplete="username" placeholder="usuário"/></label>
+        <label>Senha<input id="loginPass" type="password" autocomplete="current-password" placeholder="senha"/></label>
+        <button class="btn primary block" id="loginBtn">Entrar</button>
+        <button class="btn block" id="offlineBtn">Entrar offline neste dispositivo</button>
+        <button class="link-btn" id="openSetupBtn">Configurar conexão com a planilha</button>
+        <p class="status-line" id="loginStatus"></p>
+      </div>
+    </section>
+  </div>
+
+  <div id="app" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand side-brand"><span class="brand-mark">L</span><span>LexisPredict</span></div>
+      <div class="mode-chip" id="modeChip">OFFLINE</div>
+      <nav id="nav">
+        <button class="nav-item active" data-view="dashboard">Visão geral</button>
+        <button class="nav-item" data-view="processos">Processos <span class="nav-count" id="navProcessos">0</span></button>
+        <button class="nav-item" data-view="tarefas">Tarefas <span class="nav-count hot" id="navTarefas">0</span></button>
+        <button class="nav-item" data-view="analise">Análise</button>
+        <button class="nav-item" data-view="scanner">Scanner DJEN</button>
+        <button class="nav-item" data-view="config">Configurações</button>
+      </nav>
+      <div class="sidebar-foot">
+        <strong id="userName">Modo local</strong>
+        <span id="userRole">offline</span>
+        <button class="link-btn inverse" id="logoutBtn">Sair</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow" id="viewEyebrow">CARTEIRA JURÍDICA</span>
+          <h1 id="viewTitle">Visão geral</h1>
+        </div>
+        <div class="top-actions">
+          <div class="sync-indicator"><span class="dot" id="syncDot"></span><span id="syncText">Local</span></div>
+          <button class="btn" id="syncBtn">Sincronizar</button>
+          <button class="btn primary" id="newProcessBtn">Novo processo</button>
+        </div>
+      </header>
+
+      <div id="banner" class="banner hidden"></div>
+      <section id="content" class="content"></section>
+    </main>
+  </div>
+
+  <dialog id="setupDialog" class="dialog">
+    <form method="dialog" class="dialog-card" id="setupForm">
+      <div class="dialog-head">
+        <div><span class="eyebrow">CONEXÃO</span><h3>Google Sheets / Apps Script</h3></div>
+        <button class="icon-btn" value="cancel">×</button>
+      </div>
+      <p class="muted">Use a URL <code>/exec</code> do Apps Script e o mesmo token configurado em <code>LEXIS_SHEETS_TOKEN</code>. A credencial fica somente neste navegador.</p>
+      <label>URL do Apps Script<input id="bridgeUrl" placeholder="https://script.google.com/macros/s/.../exec"/></label>
+      <label>Token<input id="bridgeToken" type="password" placeholder="LEXIS_SHEETS_TOKEN"/></label>
+      <label>URL da planilha<input id="sheetUrl" value="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit"/></label>
+      <div class="row">
+        <button type="button" class="btn" id="testBridgeBtn">Testar conexão</button>
+        <button type="submit" class="btn primary">Salvar</button>
+      </div>
+      <p id="setupStatus" class="status-line"></p>
+    </form>
+  </dialog>
+
+  <dialog id="processDialog" class="dialog">
+    <form method="dialog" class="dialog-card wide" id="processForm">
+      <div class="dialog-head">
+        <div><span class="eyebrow">PROCESSO</span><h3 id="processDialogTitle">Editar processo</h3></div>
+        <button class="icon-btn" value="cancel">×</button>
+      </div>
+      <input type="hidden" id="editKey"/>
+      <div class="form-grid">
+        <label>Cliente<input id="fCliente"/></label>
+        <label>Protocolo / CNJ<input id="fProtocolo"/></label>
+        <label>Assistente<input id="fAssistente"/></label>
+        <label>Advogado<input id="fAdvogado"/></label>
+        <label>Escritório<input id="fEscritorio"/></label>
+        <label>Tribunal<input id="fTribunal"/></label>
+        <label>Status<input id="fStatus"/></label>
+        <label>Telefone<input id="fTelefone"/></label>
+        <label>Último retorno<input id="fRetorno" placeholder="dd/mm/aaaa"/></label>
+        <label>Próximo retorno<input id="fProximo" placeholder="dd/mm/aaaa"/></label>
+        <label class="full">Observações<textarea id="fObs"></textarea></label>
+      </div>
+      <div class="row end">
+        <button class="btn" value="cancel">Cancelar</button>
+        <button type="button" class="btn primary" id="saveProcessBtn">Salvar</button>
+      </div>
+      <p id="processStatus" class="status-line"></p>
+    </form>
+  </dialog>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

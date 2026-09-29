@@ -1,0 +1,8 @@
+{
+  "name":"lexispredict-offline-web",
+  "version":"1.0.0",
+  "private":true,
+  "description":"LexisPredict Offline Web — Google Sheets + IndexedDB + DJEN",
+  "scripts":{"start":"npx serve .","test":"node --check app.js && node --check api/djen.js && node --check api/sheets.js && node --check api/v1/comunicacao.js"},
+  "engines":{"node":"22.x"}
+}

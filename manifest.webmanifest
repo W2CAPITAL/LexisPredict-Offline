@@ -1,0 +1,9 @@
+{
+  "name":"LexisPredict Offline",
+  "short_name":"LexisPredict",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#eef2ef",
+  "theme_color":"#102a22",
+  "description":"CRM jurídico offline-first conectado ao Google Sheets."
+}
