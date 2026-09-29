@@ -1,5 +1,5 @@
-const CACHE="sheetspredict-v25";
-const SHELL=["/index.html","/styles.css","/app.js","/lib/crm-model.js","/lib/task-priority.js","/lib/suggest-response.js","/lib/sheets-hub.js","/manifest.webmanifest"];
+const CACHE="sheetspredict-v26";
+const SHELL=["/index.html","/styles.css","/app.js","/lib/crm-model.js","/lib/task-priority.js","/lib/suggest-response.js","/lib/sheets-hub.js","/lib/predict-studio.js","/lib/predict-runtime.js","/lib/predict-studio-catalog.js","/manifest.webmanifest"];
 
 self.addEventListener("install",event=>{
   event.waitUntil(
