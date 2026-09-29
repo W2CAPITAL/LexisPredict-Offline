@@ -1,4 +1,4 @@
-const PUBLIC_DJEN = process.env.DJEN_UPSTREAM || "https://hcomunicaapi.cnj.jus.br/api/v1/comunicacao";
+const PUBLIC_DJEN = process.env.DJEN_UPSTREAM || "https://comunicaapi.pje.jus.br/api/v1/comunicacao";
 
 function digits(v){return String(v||"").replace(/\D/g,"")}
 function masked(d){return d.length===20?d.slice(0,7)+"-"+d.slice(7,9)+"."+d.slice(9,13)+"."+d.slice(13,14)+"."+d.slice(14,16)+"."+d.slice(16):d}
