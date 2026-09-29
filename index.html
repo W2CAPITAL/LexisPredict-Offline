@@ -36,13 +36,16 @@
   </div>
 
   <div id="app" class="app-shell hidden">
-    <aside class="sidebar">
-      <div class="brand side-brand"><span class="brand-mark">L</span><span>LexisPredict</span></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <div class="brand side-brand"><span class="brand-mark">L</span><span>LexisPredict</span></div>
+        <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Recolher menu" title="Recolher/expandir menu">‹</button>
+      </div>
       <div class="mode-chip" id="modeChip">AUTENTICAÇÃO</div>
       <nav id="nav">
         <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>Dashboard</span></button>
-        <button class="nav-item" data-view="processos"><span class="nav-icon">▤</span><span>Processos</span><span class="nav-count" id="navProcessos">0</span></button>
-        <button class="nav-item" data-view="empresa"><span class="nav-icon">▦</span><span>Processos da empresa</span><span class="nav-count" id="navEmpresa">0</span></button>
+        <button class="nav-item" data-view="processos" title="Minha carteira"><span class="nav-icon">▤</span><span>Processos</span><span class="nav-count" id="navProcessos">0</span></button>
+        <button class="nav-item" data-view="empresa" title="Todos os processos da empresa"><span class="nav-icon">▦</span><span>Processos da empresa</span><span class="nav-count" id="navEmpresa">0</span></button>
         <button class="nav-item" data-view="clientes"><span class="nav-icon">◉</span><span>Clientes</span><span class="nav-count" id="navClientes">0</span></button>
         <button class="nav-item" data-view="pipeline"><span class="nav-icon">⇢</span><span>Pipeline CRM</span></button>
         <button class="nav-item" data-view="agenda"><span class="nav-icon">▣</span><span>Agenda</span></button>
@@ -113,6 +116,55 @@
         <button class="icon-btn" type="button" id="closeAuditBtn">×</button>
       </div>
       <div id="auditContent" class="audit-content"></div>
+    </div>
+  </dialog>
+
+
+  <dialog id="attendanceDialog" class="dialog attendance-dialog">
+    <div class="dialog-card attendance-card">
+      <div class="dialog-head">
+        <div><span class="eyebrow">ATENDIMENTO</span><h3 id="attendanceTitle">Registrar atendimento</h3></div>
+        <button class="icon-btn" type="button" id="closeAttendanceBtn">×</button>
+      </div>
+      <input id="attendanceKey" type="hidden"/>
+      <div class="attendance-summary" id="attendanceSummary"></div>
+      <div class="form-grid">
+        <label>Resultado do contato
+          <select id="attendanceResult">
+            <option value="EM ANDAMENTO">Manter ativo</option>
+            <option value="AGUARDANDO RETORNO">Aguardando retorno</option>
+            <option value="SEM CONTATO">Sem contato</option>
+            <option value="ENCERRADO">Encerrar processo</option>
+          </select>
+        </label>
+        <label>Próximo retorno
+          <input id="attendanceNext" type="date"/>
+        </label>
+        <label class="full">Observações do atendimento
+          <textarea id="attendanceNote" placeholder="Resumo do contato, orientação passada e próximo passo"></textarea>
+        </label>
+      </div>
+      <div class="attendance-rule">O atendimento grava <strong>AtendidoPor</strong> e <strong>Último Retorno</strong>. O campo <strong>Assistente</strong> não é alterado.</div>
+      <div class="row end">
+        <button class="btn" type="button" id="cancelAttendanceBtn">Cancelar</button>
+        <button class="btn primary" type="button" id="saveAttendanceBtn">Registrar atendimento</button>
+      </div>
+      <p class="status-line" id="attendanceStatus"></p>
+    </div>
+  </dialog>
+
+  <dialog id="historyDialog" class="dialog history-dialog">
+    <div class="dialog-card history-card">
+      <div class="dialog-head">
+        <div><span class="eyebrow">HISTÓRICO DO TRIBUNAL</span><h3 id="historyTitle">Cronologia completa</h3></div>
+        <button class="icon-btn" type="button" id="closeHistoryBtn">×</button>
+      </div>
+      <div id="historyMeta" class="history-meta"></div>
+      <div class="history-toolbar">
+        <button class="btn sm" type="button" id="historyRefreshBtn">Atualizar DataJud + DJEN</button>
+        <button class="btn sm" type="button" id="historyAttendanceBtn">Registrar atendimento</button>
+      </div>
+      <div id="historyContent" class="history-content"></div>
     </div>
   </dialog>
 

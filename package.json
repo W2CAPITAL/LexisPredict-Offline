@@ -1,11 +1,11 @@
 {
   "name": "lexispredict-offline-web",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "description": "LexisPredict Sheets — Google Sheets + DataJud + DJEN",
   "scripts": {
     "start": "npx serve .",
-    "test": "node --check app.js && node --check api/sheets.js && node --check api/djen.js && node --check api/djen-search.js && node --check api/datajud.js && node --check api/datajud-search.js && node --check api/datajud-status.js && node --check api/judicial-scan.js && node --check api/v1/comunicacao.js && node --check lib/bridge-auth.js && node --check lib/datajud.js && node --check lib/djen.js && node --check lib/judicial-intelligence.js && node --check lib/task-priority.js && node --check lib/suggest-response.js && node --check lib/crm-model.js && node tests/judicial-intelligence.test.js && node tests/sheet-scope.test.js && node tests/task-priority.test.js && node tests/crm-model.test.js"
+    "test": "node --check app.js && node --check api/sheets.js && node --check api/djen.js && node --check api/djen-search.js && node --check api/datajud.js && node --check api/datajud-search.js && node --check api/datajud-status.js && node --check api/judicial-scan.js && node --check api/v1/comunicacao.js && node --check lib/bridge-auth.js && node --check lib/datajud.js && node --check lib/djen.js && node --check lib/judicial-intelligence.js && node --check lib/task-priority.js && node --check lib/suggest-response.js && node --check lib/crm-model.js && node tests/judicial-intelligence.test.js && node tests/sheet-scope.test.js && node tests/task-priority.test.js && node tests/crm-model.test.js && node tests/routes-f5.test.js"
   },
   "engines": {
     "node": "22.x"

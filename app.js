@@ -5,7 +5,7 @@ const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnB
 const DB_NAME="lexispredict-secure-cache-v3";
 const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
 const CACHE_TTL_MS=5*60*1000;
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -335,11 +335,11 @@ function titleFor(v){return {
   report:["EXECUTIVO","Report"],
   scanner:["REDE JUDICIAL","DataJud + DJEN"]
 }[v]||["LEXISPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",processos:"/processos",empresa:"/processos-empresa",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
-function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
+const viewPaths={dashboard:"/",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
+function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";if(p==="/processos-empresa")return"empresa";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
 function setView(v,push=true){
   state.view=v;
-  $$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
+  $$$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
   const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;
   if(push&&viewPaths[v]&&location.pathname!==viewPaths[v])history.pushState({view:v},"",viewPaths[v]);
   render();
@@ -361,6 +361,10 @@ function render(){
 }
 async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
+function isRecentDate(v,days=7){
+  const d=parseDate(v);if(!d)return false;
+  return Date.now()-d.getTime()<=days*86400000&&Date.now()>=d.getTime()-86400000;
+}
 function renderDashboard(){
   const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
   const critical=tasks().slice(0,10);
@@ -368,18 +372,22 @@ function renderDashboard(){
   const noSell=state.rows.filter(r=>commercialStatus(r).includes("NÃO VENDER")).length;
   const clientFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="CLIENTE").length;
   const bankFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="BANCO").length;
+  const atendidosSemana=state.rows.filter(r=>pick(r,"AtendidoPor")&&isRecentDate(pick(r,"Último Retorno"),7)).length;
+  const tribunalSemana=state.rows.filter(r=>isRecentDate(pick(r,"Última Sincronização"),7)&&(pick(r,"DataJud • Último Movimento")||pick(r,"DJEN • Última Publicação"))).length;
+  const vencidos=state.rows.filter(r=>statusRet(r)==="VENCIDO").length;
   $("#content").innerHTML=
-  '<div class="command-strip"><div><span class="eyebrow">CARTEIRA EM TEMPO REAL</span><h2>Command Center Jurídico</h2><p>Processos, prazos, rede judicial e oportunidade comercial na mesma visão.</p></div><div class="command-actions"><button class="btn" data-goto="report">Abrir report</button><button class="btn primary" data-goto="scanner">Auditar tribunal</button></div></div>'+
-  '<div class="kpi-grid">'+
+  '<div class="lexis-page-shell"><div class="lexis-page-header"><div><span class="eyebrow">COMMAND CENTER</span><h2>Dashboard</h2><p>Visão da carteira · Google Sheets + DataJud + DJEN</p></div><div class="command-actions"><button class="btn" data-goto="report">Dossiê operacional</button><button class="btn" data-goto="processos">Meus processos</button><button class="btn primary" data-goto="scanner">DataJud + DJEN</button></div></div>'+
+  '<div class="lexis-tabbar"><button class="active">Visão da carteira</button><button data-goto="empresa">Processos da empresa</button><button data-goto="tarefas">Fila</button><button data-goto="report">Report</button></div>'+
+  '<div class="kpi-grid dashboard-kpis">'+
     kpi("Processos",m.total,m.active+" ativos")+
-    kpi("Vencidos",m.venc,m.attention+" em atenção","bad")+
+    kpi("Vencidos",vencidos,m.attention+" em atenção","bad")+
+    kpi("Atendidos sem.",atendidosSemana,"últimos 7 dias","good")+
+    kpi("Tribunal sem.",tribunalSemana,"DataJud/DJEN")+
     kpi("Novidades",m.newer,"após último retorno",m.newer?"warn":"good")+
-    kpi("Potencial comercial",potential,"triagem DataJud/DJEN",potential?"good":"")+
-    kpi("Não vender",noSell,bankFav+" com banco favorecido",noSell?"bad":"")+
-    kpi("Cobertura judicial",Math.round((m.dj+m.djen)/(Math.max(1,m.total*2))*100)+"%",m.dj+" DataJud • "+m.djen+" DJEN")+
+    kpi("Potencial",potential,"triagem comercial",potential?"good":"")+
   '</div>'+
-  '<div class="dashboard-layout"><div class="card"><div class="card-head"><div><span class="eyebrow">PRIORIDADE</span><h3>Fila crítica</h3></div><button class="btn sm" data-goto="tarefas">Ver todas</button></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Prioridade</th><th>Cliente</th><th>CNJ</th><th>Motivo</th><th>Comercial</th></tr></thead><tbody>'+
-  critical.map(x=>'<tr><td>'+badge(priority(x.w),x.w>=1000?"bad":x.w>=850?"warn":"blue")+'</td><td><div class="cell-main">'+esc(pick(x.r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(x.r,"Assistente"))+'</div></td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(taskLabel(x.r))+'</td><td>'+commercialHtml(x.r)+'</td></tr>').join("")+
+  '<div class="dashboard-layout"><div class="card"><div class="card-head"><div><span class="eyebrow">PRIORIDADE</span><h3>Fila crítica da carteira</h3></div><button class="btn sm" data-goto="tarefas">Ver fila completa</button></div><div class="table-wrap flat dashboard-table"><table class="table compact"><thead><tr><th>Prioridade</th><th>Cliente</th><th>CNJ</th><th>Motivo</th><th>Retorno</th><th>Ações</th></tr></thead><tbody>'+
+  critical.map(x=>{const key=keyOf(x.r);return '<tr><td>'+badge(priority(x.w),x.w>=950?"bad":x.w>=800?"warn":"blue")+'</td><td><div class="cell-main">'+esc(pick(x.r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(x.r,"Assistente"))+'</div></td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(taskLabel(x.r))+'</td><td>'+badge(statusRet(x.r),statusRet(x.r)==="VENCIDO"?"bad":statusRet(x.r)==="ATENÇÃO"?"warn":"gray")+'</td><td class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico</button><button class="icon-action" data-attendance="'+esc(key)+'">Atendimento</button></td></tr>'}).join("")+
   '</tbody></table></div></div>'+
   '<div class="stack"><div class="card"><div class="card-head"><div><span class="eyebrow">REDE JUDICIAL</span><h3>Cobertura</h3></div></div><div class="card-body metric-list">'+
     metricRow("DataJud",djPct+"%",m.dj+" processos com movimento")+
@@ -387,12 +395,14 @@ function renderDashboard(){
     metricRow("Procedência",procPct+"%",classified+" resultados classificados")+
     metricRow("Cliente favorecido",clientFav,bankFav+" banco favorecido")+
   '</div></div>'+
-  '<div class="card"><div class="card-head"><div><span class="eyebrow">COMERCIAL</span><h3>Esteira de oportunidade</h3></div></div><div class="card-body metric-list">'+
+  '<div class="card"><div class="card-head"><div><span class="eyebrow">COMERCIAL</span><h3>Esteira</h3></div></div><div class="card-body metric-list">'+
     metricRow("Potencial",potential,"crédito/direito a revisar")+
     metricRow("Não vender",noSell,"resultado adverso ou fase encerrada")+
     metricRow("Revisar",state.rows.length-potential-noSell,"sem gatilho conclusivo")+
-  '</div></div></div></div>';
+  '</div></div></div></div></div>';
   bindGotos();
+  $$$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $$$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
 }
 function metricRow(label,value,sub){return '<div class="metric-row"><div><div class="cell-main">'+esc(label)+'</div><div class="cell-sub">'+esc(sub)+'</div></div><strong>'+esc(value)+'</strong></div>'}
 function filteredRows(source=state.rows){
@@ -410,7 +420,7 @@ function processTable(rows,{company=false}={}){
   rows.map(r=>{
     const key=keyOf(r),move=String(latestMove(r)||"Sem movimentação em cache").slice(0,180);
     const moveDate=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data");
-    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="actions"><button class="icon-action" data-edit="'+esc(key)+'">Editar</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-contact="'+esc(key)+'">Atendido</button></td></tr>';
+    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="actions process-actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></td></tr>';
   }).join("")+
   '</tbody></table></div>';
 }
@@ -422,6 +432,8 @@ function bindProcessList(renderFn){
   $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
   $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
   $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
+  $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
   $$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
   $$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
@@ -470,16 +482,17 @@ function taskCardHtml(x){
     '<div class="case-box"><div class="case-box-label">Em linguagem simples</div><strong>'+esc(plainStatus(r))+'</strong><p>'+esc(String(latestMove(r)||"").slice(0,260))+'</p>'+deadline+'</div>'+
     '<div class="case-box publication-box"><div class="publication-text"><div class="case-box-label">Publicação / último dado judicial</div>'+esc(String(pub).slice(0,240))+'</div><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button></div>'+
     '<div class="quick-box"><div class="case-box-label">Atendimento rápido (1 → 2 → 3)</div><p>'+esc(msg)+'</p><div class="quick-actions"><button data-copy="'+esc(key)+'">1. Copiar</button><a target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">2. WhatsApp</a><button class="contacted" data-contact="'+esc(key)+'">3. Contatado</button></div></div></div>'+
-    '<div class="task-card-foot"><div class="task-icon-actions"><button class="task-icon suggest" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button><a class="task-icon wa" target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">WhatsApp</a><button class="task-icon" data-edit="'+esc(key)+'">Editar</button></div><button class="task-icon task-manage" data-edit="'+esc(key)+'">Gerir ›</button></div></article>';
+    '<div class="task-card-foot"><div class="task-icon-actions"><button class="task-icon suggest" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button><button class="task-icon audit" data-history="'+esc(key)+'">Histórico</button><a class="task-icon wa" target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">WhatsApp</a><button class="task-icon" data-edit="'+esc(key)+'">Editar</button></div><button class="task-icon task-manage" data-edit="'+esc(key)+'">Gerir ›</button></div></article>';
 }
 function bindTaskActions(){
-  $$("[data-copy]").forEach(b=>b.onclick=async()=>{
+  $$$("[data-copy]").forEach(b=>b.onclick=async()=>{
     const r=findRow(b.dataset.copy),msg=window.LexisSuggest?.quickMessage?window.LexisSuggest.quickMessage(r):"";
     try{await navigator.clipboard.writeText(msg);showBanner("Mensagem copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
-  $$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
+  $$$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
   $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
   $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
+  $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
   $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
 }
 function renderTarefas(){
@@ -526,7 +539,7 @@ function renderClientes(){
       return '<tr><td><div class="cell-main">'+esc(c.Nome||"SEM NOME")+'</div><div class="cell-sub mono">'+esc(c.ClienteId||"")+'</div></td><td><div class="cell-main">'+esc(c.Telefone_Principal||"—")+'</div><div class="cell-sub">'+esc(c.Email||"")+'</div></td><td>'+badge(procs.length,"blue")+'</td><td>'+esc(c.Responsavel||"—")+'</td><td>'+esc(c.ultimoRetorno||"—")+'</td><td>'+esc(c.proximoRetorno||"—")+'</td><td>'+badge(pipe.Etapa||"Triagem",pipe.Etapa==="Perdido"?"bad":pipe.Etapa==="Oportunidade"?"good":"gray")+'</td><td><button class="icon-action" data-client-open="'+esc(c.ClienteId)+'">Abrir 360°</button></td></tr>';
     }).join("")+'</tbody></table></div>';
   $("#clientSearch").oninput=e=>{state.query=e.target.value;renderClientes()};
-  $("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;state.query="";renderClientes()});
+  $$("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;state.query="";renderClientes()});
 }
 function renderCliente360(id){
   const c=clientById(id);if(!c){state.clientId=null;renderClientes();return}
@@ -548,7 +561,7 @@ function renderCliente360(id){
   $("#clientNewProcess").onclick=()=>openProcess("");
   $("#clientWhatsApp").onclick=()=>{const tel=window.LexisCRM?.normalizePhone(c.Telefone_Principal)||"";if(!tel)return showBanner("Cliente sem telefone válido.","bad");window.open("https://wa.me/"+digits(tel),"_blank","noopener")};
   $("#saveInteractionBtn").onclick=()=>saveClientInteraction(c);
-  $("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
+  $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
 }
 async function saveClientInteraction(c){
   const text=String($("#interactionText")?.value||"").trim();if(!text){showBanner("Escreva o conteúdo da interação.","bad");return}
@@ -571,7 +584,7 @@ function renderPipeline(){
     const items=rows.filter(x=>normalized(x.Etapa)===stage);
     return '<section class="pipeline-col"><header><strong>'+esc(stage)+'</strong><span>'+items.length+'</span></header><div>'+items.slice(0,80).map(x=>{const cl=clientById(x.ClienteId);return '<button class="pipeline-card" data-client-open="'+esc(x.ClienteId||"")+'"><strong>'+esc(cl?.Nome||x.Cliente||"Cliente")+'</strong><small>'+esc(x.Servico||x.Origem||"")+'</small>'+(x.ValorEstimado?'<span>'+esc(money(parseMoney(x.ValorEstimado)))+'</span>':'')+'</button>'}).join("")+'</div></section>';
   }).join("")+'</div>';
-  $("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;setView("clientes")});
+  $$("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;setView("clientes")});
 }
 function renderAgenda(){
   const explicit=[...(state.crm.AgendaCRM||[])].map(x=>({...x,_source:"CRM"}));
@@ -616,13 +629,22 @@ function renderReport(){
     const e=String(pick(r,"_ExecStatus")||"INDEFINIDO");execs[e]=(execs[e]||0)+1;
   });
   const topA=Object.entries(assistants).sort((a,b)=>b[1]-a[1]).slice(0,12),topT=Object.entries(tribs).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  const topCrit=tasks().slice(0,10),myVenc=state.rows.filter(r=>statusRet(r)==="VENCIDO").slice(0,12),myNews=state.rows.filter(r=>boolish(pick(r,"Nova Atualização","Novo Andamento","Novo_Andamento"))).slice(0,12);
   $("#content").innerHTML=
-    '<div class="report-head"><div><span class="eyebrow">DOSSIÊ OPERACIONAL</span><h2>Relatório executivo da carteira</h2><p>Resumo consolidado do app, planilha, DataJud e DJEN.</p></div><button class="btn primary" id="printReport">Imprimir / PDF</button></div>'+
-    '<div class="kpi-grid">'+kpi("Carteira",m.total,m.active+" ativos")+kpi("Vencidos",m.venc,"retornos","bad")+kpi("Potencial",potential.length,"triagem comercial","good")+kpi("Não vender",blocked.length,"bloqueios","bad")+kpi("DataJud",m.dj,"processos auditados")+kpi("DJEN",m.djen,"processos com publicação")+'</div>'+
+    '<div class="lexis-page-shell report-page"><div class="report-head lexis-page-header"><div><span class="eyebrow">DOSSIÊ OPERACIONAL</span><h2>Relatório executivo da carteira</h2><p>Resumo consolidado do app, Google Sheets, DataJud e DJEN.</p></div><div class="command-actions"><button class="btn" data-goto="dashboard">Dashboard</button><button class="btn primary" id="printReport">Imprimir / PDF</button></div></div>'+
+    '<div class="kpi-grid">'+kpi("Carteira",m.total,m.active+" ativos")+kpi("Vencidos",m.venc,"retornos","bad")+kpi("Novidades",m.newer,"pós-retorno",m.newer?"warn":"good")+kpi("Potencial",potential.length,"triagem comercial","good")+kpi("DataJud",m.dj,"processos auditados")+kpi("DJEN",m.djen,"processos com publicação")+'</div>'+
+    '<section class="report-sheet"><div class="report-band"><div><span class="eyebrow">CRITICIDADE</span><h3>Top 10 · prioridade por movimentação e prazo</h3></div></div><div class="table-wrap flat report-table"><table class="table"><thead><tr><th>#</th><th>Cliente / CNJ</th><th>Motivo</th><th>Retorno</th><th>Tribunal</th><th>Ações</th></tr></thead><tbody>'+
+      topCrit.map((x,i)=>{const r=x.r,key=keyOf(r);return '<tr><td><strong>'+(i+1)+'</strong></td><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div></td><td>'+esc(taskLabel(r))+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":"gray")+'</td><td>'+esc(pick(r,"Tribunal")||"—")+'</td><td class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico inteiro</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button></td></tr>'}).join("")+
+    '</tbody></table></div></section>'+
     '<div class="analysis-grid report-grid"><div class="analysis-tile"><h4>Por assistente</h4>'+bars(topA,m.total)+'</div><div class="analysis-tile"><h4>Por tribunal</h4>'+bars(topT,m.total)+'</div><div class="analysis-tile"><h4>Execução / cumprimento</h4>'+bars(Object.entries(execs).sort((a,b)=>b[1]-a[1]),m.total)+'</div></div>'+
+    '<section class="report-sheet"><div class="report-band neutral"><div><span class="eyebrow">AUDITORIA DE RESPONSABILIDADE</span><h3>Minha carteira</h3></div><div>'+badge(myVenc.length+" vencidos","bad")+badge(myNews.length+" novidades","blue")+'</div></div><div class="grid-2 responsibility-grid"><div><h4>Meus prazos vencidos</h4><div class="report-list">'+(myVenc.length?myVenc.map(r=>{const key=keyOf(r);return '<div class="report-list-item danger"><div><strong>'+esc(pick(r,"Cliente"))+'</strong><small>'+esc(cnjFormatted(pick(r,"Protocolo")))+' · '+esc(pick(r,"Próximo Retorno")||"sem data")+'</small></div><button class="icon-action" data-attendance="'+esc(key)+'">Atender</button></div>'}).join(""):'<div class="empty">Nenhum prazo vencido.</div>')+'</div></div>'+
+    '<div><h4>Novidades pendentes</h4><div class="report-list">'+(myNews.length?myNews.map(r=>{const key=keyOf(r);return '<div class="report-list-item info"><div><strong>'+esc(pick(r,"Cliente"))+'</strong><small>'+esc(String(latestMove(r)||"").slice(0,120))+'</small></div><button class="icon-action" data-history="'+esc(key)+'">Ver tribunal</button></div>'}).join(""):'<div class="empty">Nenhuma novidade pendente.</div>')+'</div></div></div></section>'+
     '<div class="grid-2 report-sections"><div class="card"><div class="card-head"><h3>Oportunidades</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Cliente</th><th>CNJ</th><th>Produto</th></tr></thead><tbody>'+potential.slice(0,30).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Produto / Oportunidade"))+'</td></tr>').join("")+'</tbody></table></div></div>'+
-    '<div class="card"><div class="card-head"><h3>Bloqueios comerciais</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Cliente</th><th>CNJ</th><th>Motivo</th></tr></thead><tbody>'+blocked.slice(0,30).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Produto / Oportunidade","_CommercialReason"))+'</td></tr>').join("")+'</tbody></table></div></div></div>';
+    '<div class="card"><div class="card-head"><h3>Bloqueios comerciais</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Cliente</th><th>CNJ</th><th>Motivo</th></tr></thead><tbody>'+blocked.slice(0,30).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Produto / Oportunidade","_CommercialReason"))+'</td></tr>').join("")+'</tbody></table></div></div></div></div>';
   $("#printReport").onclick=()=>window.print();
+  bindGotos();
+  $$$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $$$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
 }
 function renderScanner(){
   const valid=state.rows.filter(r=>digits(pick(r,"Protocolo")).length===20);
@@ -744,7 +766,7 @@ async function scanQueue(){
   state.scanning=false;state.scanStop=false;logQueue("Fila finalizada/pausada.");renderScanner();
 }
 
-function bindGotos(){$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
+function bindGotos(){$$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
 function findRow(key){return state.companyRows.find(x=>keyOf(x)===key)||state.rows.find(x=>keyOf(x)===key)||null}
 function todayBrazil(){
   const parts=new Intl.DateTimeFormat("pt-BR",{timeZone:"America/Sao_Paulo",day:"2-digit",month:"2-digit",year:"numeric"}).formatToParts(new Date());
@@ -773,6 +795,128 @@ async function markContacted(key){
   if(!navigator.onLine){showBanner("Atendimento e histórico CRM salvos no cache. Serão enviados quando a conexão voltar.","good");return}
   try{await flushOutbox();await flushCrmOutbox().catch(()=>{});showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
   catch(e){showBanner("Atendimento ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
+}
+
+function dateInputValue(v){
+  const d=parseDate(v);if(!d)return"";
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");
+  return y+"-"+m+"-"+day;
+}
+function brDateFromInput(v){
+  const m=String(v||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m?m[3]+"/"+m[2]+"/"+m[1]:String(v||"");
+}
+function openAttendance(key){
+  const row=findRow(key);if(!row)return;
+  $("#attendanceKey").value=key;
+  $("#attendanceTitle").textContent="Registrar atendimento • "+(pick(row,"Cliente")||"Processo");
+  $("#attendanceResult").value=isClosed(row)?"ENCERRADO":"EM ANDAMENTO";
+  $("#attendanceNext").value=dateInputValue(pick(row,"Próximo Retorno"));
+  $("#attendanceNote").value="";
+  $("#attendanceStatus").textContent="";
+  $("#attendanceSummary").innerHTML='<strong>'+esc(pick(row,"Cliente")||"SEM NOME")+'</strong><span class="mono">'+esc(cnjFormatted(pick(row,"Protocolo")))+'</span><span>Assistente: '+esc(pick(row,"Assistente")||"—")+'</span><span>Último retorno: '+esc(pick(row,"Último Retorno")||"—")+'</span>';
+  $("#attendanceDialog").showModal();
+}
+async function saveAttendance(){
+  const key=$("#attendanceKey").value,row=findRow(key);if(!row)return;
+  const btn=$("#saveAttendanceBtn");btn.disabled=true;btn.textContent="Salvando…";
+  const actor=currentUser().nome||currentUser().usuario||"Usuário";
+  const nowIso=new Date().toISOString(),retorno=todayBrazil();
+  const result=$("#attendanceResult").value||"EM ANDAMENTO";
+  const next=brDateFromInput($("#attendanceNext").value);
+  const note=$("#attendanceNote").value.trim();
+  const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
+  const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
+  if(next)patch["Próximo Retorno"]=next;
+  if(result==="ENCERRADO"){patch["Status"]="Encerrado";patch["Situacao"]="ENCERRADO"}
+  else if(result!=="SEM CONTATO"){patch["Situacao"]="EM ANDAMENTO"}
+  if(note)patch["Observações"]=note;
+  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);await queueWrite(patch);
+  if(clientId){
+    const interaction={
+      InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),
+      ClienteId:clientId,Protocolo:pick(row,"Protocolo"),Canal:"Atendimento",Tipo:"Retorno",
+      Assunto:result==="ENCERRADO"?"Atendimento e encerramento":"Atendimento registrado",
+      Conteudo:note||("Resultado: "+result),Usuario:actor,DataHora:nowIso,Resultado:result,
+      ProximoPasso:next?"Retorno em "+next:"",DataProximoPasso:next,OptOut:""
+    };
+    await crmWrite("Interacoes",interaction,{quiet:true});
+  }
+  render();
+  try{
+    if(navigator.onLine){await flushOutbox();await flushCrmOutbox().catch(()=>{})}
+    $("#attendanceDialog").close();
+    showBanner("Atendimento registrado por "+actor+" sem transferir o processo.","good");
+  }catch(e){
+    $("#attendanceDialog").close();
+    showBanner("Atendimento salvo no cache e pendente para a planilha: "+(e.message||String(e)),"bad");
+  }finally{btn.disabled=false;btn.textContent="Registrar atendimento"}
+}
+function historyDate(raw){
+  const d=parseDate(raw);return d&&!Number.isNaN(d.getTime())?d:new Date(0);
+}
+function buildTribunalTimeline(scan,row){
+  const out=[];
+  const movs=scan?.datajud?.movimentos||scan?.movimentos||[];
+  for(const m of movs){
+    const date=m?.dataHora||m?.data||m?.dataMovimento||m?.data_hora||"";
+    const title=m?.nome||m?.nomeMovimento||m?.descricao||m?.movimento||"Movimentação";
+    const detail=[m?.complemento,m?.observacao,m?.descricao].filter(Boolean).join(" — ");
+    out.push({source:"DataJud",date,title,detail,link:""});
+  }
+  const pubs=scan?.djen?.items||scan?.comunicacoes||[];
+  for(const d of pubs){
+    const date=d?.data_disponibilizacao||d?.dataDisponibilizacao||d?.data||"";
+    const title=d?.tipoComunicacao||d?.tipoDocumento||"Publicação DJEN";
+    const detail=String(d?.texto||d?.conteudo||d?.inteiroTeor||"");
+    out.push({source:"DJEN",date,title,detail,link:d?.link||""});
+  }
+  if(!out.length&&row){
+    if(latestMove(row))out.push({source:"Planilha / DataJud",date:pick(row,"DataJud • Data","Data da Movimentação","Data_Movimentacao"),title:"Último movimento salvo",detail:String(latestMove(row)),link:""});
+    const pub=pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo");
+    if(pub)out.push({source:"Planilha / DJEN",date:pick(row,"DJEN • Data","_DJENDate"),title:"Última publicação salva",detail:String(pub),link:""});
+  }
+  return out.sort((a,b)=>historyDate(b.date).getTime()-historyDate(a.date).getTime());
+}
+function renderHistoryDialog(){
+  const row=findRow(state.historyKey);if(!row)return;
+  const items=buildTribunalTimeline(state.historyScan,row),scan=state.historyScan;
+  $("#historyTitle").textContent="Histórico inteiro • "+(pick(row,"Cliente")||"Processo");
+  $("#historyMeta").innerHTML='<span class="mono">'+esc(cnjFormatted(pick(row,"Protocolo")))+'</span><span>'+esc(pick(row,"Tribunal")||"Tribunal não informado")+'</span><span>'+items.length+' evento(s)</span>'+(state.historyLoading?'<span class="history-loading">Atualizando…</span>':'');
+  if(state.historyLoading&&!scan){
+    $("#historyContent").innerHTML='<div class="history-empty">Consultando DataJud + DJEN e montando a cronologia completa…</div>';return;
+  }
+  if(!items.length){
+    $("#historyContent").innerHTML='<div class="history-empty">Nenhum histórico retornado. Use “Atualizar DataJud + DJEN”.</div>';return;
+  }
+  $("#historyContent").innerHTML='<div class="history-list">'+items.map((x,i)=>
+    '<article class="history-item '+(x.source.includes("DJEN")?"djen":"court")+'"><div class="history-index">'+(i+1)+'</div><div class="history-body"><div class="history-item-head"><strong>'+esc(x.title)+'</strong><span>'+esc(x.source)+'</span></div><small>'+esc(x.date||"Data não informada")+'</small><p>'+esc(x.detail||"Sem complemento.")+'</p>'+(x.link?'<a target="_blank" rel="noopener" href="'+esc(x.link)+'">Abrir publicação oficial</a>':'')+'</div></article>'
+  ).join("")+'</div>';
+}
+async function loadHistory(key,{force=false}={}){
+  const row=findRow(key);if(!row)return;
+  if(state.historyLoading)return;
+  if(state.historyScan&&!force){renderHistoryDialog();return}
+  const cnj=digits(pick(row,"Protocolo"));
+  if(cnj.length!==20){showBanner("CNJ inválido para consultar histórico.","bad");return}
+  if(!navigator.onLine){renderHistoryDialog();return}
+  state.historyLoading=true;renderHistoryDialog();
+  try{
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:"both"}),cache:"no-store"});
+    const j=await r.json();state.historyScan=j;
+    if(j.patch){
+      Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
+      await queueWrite({"Protocolo":pick(row,"Protocolo"),...j.patch});
+      if(navigator.onLine)await flushOutbox().catch(()=>{});
+    }
+    if(!r.ok&&r.status!==207&&r.status!==429)showBanner(j.error||"Histórico retornou resultado parcial.","bad");
+  }catch(e){state.historyScan={error:e.message||String(e)}}
+  finally{state.historyLoading=false;renderHistoryDialog();render()}
+}
+function openHistory(key){
+  const row=findRow(key);if(!row)return;
+  state.historyKey=key;state.historyScan=null;state.historyLoading=false;
+  $("#historyDialog").showModal();renderHistoryDialog();void loadHistory(key);
 }
 function auditCached(row){
   return {
@@ -810,12 +954,13 @@ function renderAuditDialog(){
     '<section class="audit-panel"><h4>Leitura simples</h4><div class="audit-source"><strong>'+esc(plainStatus(row))+'</strong><br><br>'+esc(String(move).slice(0,900))+'</div></section></div>'+
     (state.auditSuggest?'<section class="audit-panel"><h4>Sugestões de resposta</h4><div class="suggestions">'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar resposta</button></div></div>').join("")+'</div></section>':'')+
     (scan?.error?'<div class="banner bad">'+esc(scan.error)+'</div>':'')+
-    '<div class="audit-actions"><button class="btn" id="auditEditBtn">Editar cadastro</button><button class="btn" id="auditContactBtn">Registrar atendimento</button><button class="btn" id="auditSuggestBtn">Sugerir resposta</button><button class="btn primary" id="auditRefreshBtn">Atualizar DataJud + DJEN</button></div>';
+    '<div class="audit-actions"><button class="btn" id="auditHistoryBtn">Histórico inteiro do tribunal</button><button class="btn" id="auditEditBtn">Editar cadastro</button><button class="btn" id="auditContactBtn">Registrar atendimento</button><button class="btn" id="auditSuggestBtn">Sugerir resposta</button><button class="btn primary" id="auditRefreshBtn">Atualizar DataJud + DJEN</button></div>';
+  $("#auditHistoryBtn").onclick=()=>openHistory(state.auditKey);
   $("#auditEditBtn").onclick=()=>{ $("#auditDialog").close();openProcess(state.auditKey) };
-  $("#auditContactBtn").onclick=()=>markContacted(state.auditKey);
+  $("#auditContactBtn").onclick=()=>openAttendance(state.auditKey);
   $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;renderAuditDialog()};
   $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
-  $$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
+  $$$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
     const s=suggestions[Number(b.dataset.copySuggestion)];if(!s)return;
     try{await navigator.clipboard.writeText(s.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
@@ -905,10 +1050,28 @@ function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date()
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
 async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
+  const savedSidebar=localStorage.getItem("lexis_sidebar_collapsed")==="1";
+  document.body.classList.toggle("sidebar-collapsed",savedSidebar);
+  const toggle=$("#sidebarToggle");
+  if(toggle){
+    toggle.textContent=savedSidebar?"›":"‹";
+    toggle.onclick=()=>{
+      const collapsed=!document.body.classList.contains("sidebar-collapsed");
+      document.body.classList.toggle("sidebar-collapsed",collapsed);
+      localStorage.setItem("lexis_sidebar_collapsed",collapsed?"1":"0");
+      toggle.textContent=collapsed?"›":"‹";
+    };
+  }
   $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
   $("#newProcessBtn").onclick=()=>openProcess("");
   $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
+  $("#closeAttendanceBtn").onclick=()=>$("#attendanceDialog").close();
+  $("#cancelAttendanceBtn").onclick=()=>$("#attendanceDialog").close();
+  $("#saveAttendanceBtn").onclick=saveAttendance;
+  $("#closeHistoryBtn").onclick=()=>$("#historyDialog").close();
+  $("#historyRefreshBtn").onclick=()=>state.historyKey&&loadHistory(state.historyKey,{force:true});
+  $("#historyAttendanceBtn").onclick=()=>{const key=state.historyKey;$("#historyDialog").close();if(key)openAttendance(key)};
   $("#logoutBtn").onclick=async()=>{
     stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}
     saveSession(null);state.rows=[];state.companyRows=[];state.crm={Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]};state.lastSync=null;state.lastSyncAt=0;state.clientId=null;

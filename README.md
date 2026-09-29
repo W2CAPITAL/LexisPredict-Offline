@@ -156,9 +156,28 @@ A rota `/clientes` reúne processos, contatos, interações, pipeline, agenda e 
 O navegador mantém `Processos` e as entidades CRM em IndexedDB. Edições offline usam outbox separado para processos e CRM. O Google Sheets continua sendo a fonte persistente; IndexedDB é apenas réplica/cache.
 
 
+## SheetsPredict v1.8 — interface Lexis + rotas SPA
+
+A interface operacional foi alinhada ao `W1CAPITAL/LexisPredict` sem trocar a arquitetura Google Sheets:
+
+- `/cases` = **Processos** da carteira atribuída ao usuário;
+- `/processos` = **Processos da empresa**, visível a todos os usuários autenticados;
+- `/` = Dashboard operacional;
+- `/report` = dossiê executivo;
+- sidebar recolhível, com scroll próprio;
+- único scanner do menu: **DataJud + DJEN**;
+- listas de processos com scroll vertical e horizontal;
+- botão **Histórico tribunal** abre a cronologia completa retornada por DataJud + DJEN;
+- botão **Registrar atendimento** abre o fluxo detalhado e não altera `Assistente`;
+- o Service Worker não armazena respostas 404;
+- as rotas principais possuem rewrite para `index.html`, evitando 404 ao atualizar/F5.
+
+A atualização do bridge do Google Apps Script é documentada em `docs/APPS-SCRIPT-DEPLOY.md`.
+
+
 ## Status
 
-**v1.7.0 — CRM Sheets com Cliente 360°, pipeline, agenda, interações, financeiro e auditoria, mantendo Google Sheets como fonte da verdade.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
+**v1.8.0 — interface operacional Lexis, /cases + /processos, histórico completo do tribunal, atendimento detalhado e correção de F5/SPA.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
 
 
 ## DJEN — fonte oficial

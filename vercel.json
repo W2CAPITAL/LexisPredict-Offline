@@ -12,6 +12,15 @@
       ]
     },
     {
+      "source": "/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
       "source": "/api/(.*)",
       "headers": [
         {
@@ -23,11 +32,15 @@
   ],
   "rewrites": [
     {
-      "source": "/processos",
+      "source": "/",
       "destination": "/index.html"
     },
     {
-      "source": "/tarefas",
+      "source": "/cases",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/processos",
       "destination": "/index.html"
     },
     {
@@ -35,15 +48,7 @@
       "destination": "/index.html"
     },
     {
-      "source": "/analise",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/report",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/scanner",
+      "source": "/tarefas",
       "destination": "/index.html"
     },
     {
@@ -61,6 +66,19 @@
     {
       "source": "/financeiro",
       "destination": "/index.html"
+    },
+    {
+      "source": "/analise",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/report",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/scanner",
+      "destination": "/index.html"
     }
-  ]
+  ],
+  "$schema": "https://openapi.vercel.sh/vercel.json"
 }
