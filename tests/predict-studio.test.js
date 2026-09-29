@@ -9,13 +9,15 @@ vm.runInNewContext(catalogJs,sandbox);
 const c=sandbox.window.PredictStudioCatalog;
 assert.ok(c,"catálogo PredictLM deve existir");
 assert.deepEqual(Array.from(c.surfaces).map(x=>x.id),["chat","legal","build","work","tutor","research","imagine","report"]);
-assert.equal(c.skills.length,80,"snapshot deve conter todas as 80 skills registradas no PredictLM");
+assert.equal(c.skills.length,81,"snapshot deve conter as 81 skills registradas no PredictLM");
 assert.equal(c.agents.length,16,"Agent Fabric deve expor 16 papéis");
 assert.equal(c.cores.length,4,"Four-core control deve expor Fly/Mouse/Macaque/Human");
 assert.ok(c.localRuntimes.length>=10,"Runtime Federation deve listar motores locais");
 assert.ok(c.providers.length>=10,"Provider Mesh deve listar providers conhecidos");
+assert.ok(c.providers.includes("ashna"),"AshnaAI deve estar no catálogo de providers");
 assert.ok(c.fusionRepositories.length>=70,"Capability Fusion deve preservar registry amplo");
-for(const id of ["predictlm-master","provider-mesh","runtime-federation","agent-fabric","report-architect","deep-research","tutor-mode","grok-imagine-parity","neurocore","datajud"]){
+assert.ok(c.fusionRepositories.includes("Graphify-Labs/graphify"),"Graphify deve constar na fusão de conhecimento");
+for(const id of ["predictlm-master","provider-mesh","runtime-federation","agent-fabric","report-architect","deep-research","tutor-mode","grok-imagine-parity","neurocore","datajud","graphify-brain"]){
   assert.ok(c.skills.some(x=>x.id===id),"skill ausente: "+id);
 }
 
