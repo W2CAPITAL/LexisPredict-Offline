@@ -38,11 +38,12 @@ O proxy **não tenta burlar rate limit**. HTTP 429 é devolvido ao cliente e o s
 
 1. Abra a planilha.
 2. Extensões → Apps Script.
-3. Adicione o arquivo [apps-script/LexisSheetsBridge.gs](apps-script/LexisSheetsBridge.gs).
+3. Siga [apps-script/ROUTER-INSTALACAO.md](apps-script/ROUTER-INSTALACAO.md) para deixar apenas um `doGet`, um `doPost` e um `onOpen` no projeto.
 4. Em **Configurações do projeto → Propriedades do script**, crie `LEXIS_SHEETS_TOKEN`.
-5. Implantar → Nova implantação → Aplicativo da web.
-6. Copie a URL terminada em `/exec`.
-7. No LexisPredict Offline → **Configurações → Google Sheets**, informe URL + token.
+5. Na Vercel, crie a Environment Variable `LEXIS_SHEETS_TOKEN` com exatamente o mesmo valor.
+6. Implantar → Gerenciar implantações → Nova versão do Aplicativo da web.
+7. Copie a URL terminada em `/exec`.
+8. No LexisPredict Offline → **Configurações → Google Sheets**, informe somente a URL `/exec` e a URL da planilha. O token fica fixo no backend da Vercel.
 
 O bridge preserva colunas não alteradas ao editar um processo.
 
@@ -61,7 +62,7 @@ O scanner V6 já concatena `/api/v1/comunicacao`. Essa rota usa primeiro o endpo
 ## Segurança
 
 - O repositório não contém token do Apps Script.
-- O token do bridge fica no navegador que você configurar.
+- O token do bridge não é enviado ao navegador; fica nas Environment Variables da Vercel e nas Script Properties do Apps Script.
 - `/api/sheets` aceita somente URLs HTTPS de Apps Script.
 - Não versionar chaves privadas.
 - A autenticação é validada pela aba `Usuarios` através do Apps Script.
@@ -85,7 +86,7 @@ As rotas `/api` são Vercel Functions e funcionam integralmente quando publicada
 
 ## Status
 
-**v1.0.0 — base funcional.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
+**v1.2.0 — base funcional com router único do Apps Script e token server-side.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
 
 
 ## DJEN — fonte oficial
