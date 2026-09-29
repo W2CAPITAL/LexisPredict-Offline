@@ -1,4 +1,4 @@
-const PROD="https://comunicacaoapi.cnj.jus.br/api/v1/comunicacao";
+const PROD="https://comunicaapi.pje.jus.br/api/v1/comunicacao";
 const HOM="https://hcomunicaapi.cnj.jus.br/api/v1/comunicacao";
 
 function digits(v){return String(v||"").replace(/\D/g,"")}
