@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+<title id="title">SheetsPredict Brain Map</title>
+<desc id="desc">Mapa cerebral da arquitetura SheetsPredict, ligando operação, planilha, inteligência, fontes judiciais, WhatsApp e verificação.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#08111f"/><stop offset="1" stop-color="#111827"/></linearGradient>
+  <linearGradient id="l" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0ea5e9"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+  <linearGradient id="r" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#14b8a6"/><stop offset="1" stop-color="#22c55e"/></linearGradient>
+  <filter id="s"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity=".26"/></filter>
+  <style>
+    .t{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#edf5ff}.m{fill:#9fb0c6}.n{fill:#0f1d2e;stroke:#2e4966;stroke-width:1.5}.c{fill:#0d2338;stroke:#38bdf8;stroke-width:2}.e{fill:none;stroke:#66809d;stroke-width:2;stroke-linecap:round;opacity:.8}.e2{fill:none;stroke:#34d399;stroke-width:2;stroke-linecap:round;opacity:.82}.h{font-size:30px;font-weight:850;letter-spacing:-.03em}.l{font-size:15px;font-weight:780}.sm{font-size:12px}
+  </style>
+</defs>
+<rect width="1200" height="720" rx="28" fill="url(#bg)"/>
+<text x="54" y="60" class="t h">SheetsPredict · SaaS Brain Map</text>
+<text x="54" y="86" class="t m sm">Graphify-oriented architecture · Google Sheets remains the operational source of truth</text>
+
+<path d="M594 122 C505 88 405 113 347 184 C278 188 226 248 231 318 C187 355 190 430 241 468 C244 548 317 603 394 589 C447 641 541 643 594 600 Z" fill="url(#l)" opacity=".13" stroke="#38bdf8" stroke-width="3"/>
+<path d="M606 122 C695 88 795 113 853 184 C922 188 974 248 969 318 C1013 355 1010 430 959 468 C956 548 883 603 806 589 C753 641 659 643 606 600 Z" fill="url(#r)" opacity=".13" stroke="#34d399" stroke-width="3"/>
+<path d="M600 126 L600 602" stroke="#526b88" stroke-width="2" stroke-dasharray="6 8"/>
+
+<path class="e" d="M600 181 L600 236"/><path class="e" d="M600 290 C515 310 456 333 400 360"/><path class="e2" d="M600 290 C685 310 744 333 800 360"/>
+<path class="e" d="M400 414 C458 444 505 465 552 488"/><path class="e2" d="M800 414 C742 444 695 465 648 488"/>
+<path class="e" d="M600 529 L600 573"/><path class="e2" d="M800 385 C862 396 897 430 912 468"/><path class="e" d="M400 385 C338 396 303 430 288 468"/>
+
+<rect x="426" y="138" width="348" height="76" rx="18" class="c" filter="url(#s)"/>
+<text x="600" y="166" text-anchor="middle" class="t l">CÓRTEX DE OPERAÇÃO</text>
+<text x="600" y="189" text-anchor="middle" class="t m sm">Dashboard · Processos · Clientes · Tarefas · Agenda · Report</text>
+
+<rect x="450" y="236" width="300" height="62" rx="16" class="n"/>
+<text x="600" y="262" text-anchor="middle" class="t l">ROUTER / APP STATE</text>
+<text x="600" y="283" text-anchor="middle" class="t m sm">app.js · rotas · filtros · paginação · UX</text>
+
+<rect x="270" y="342" width="260" height="82" rx="18" class="n"/>
+<text x="400" y="369" text-anchor="middle" class="t l">MEMÓRIA OPERACIONAL</text>
+<text x="400" y="391" text-anchor="middle" class="t sm">Google Sheets · Apps Script</text>
+<text x="400" y="411" text-anchor="middle" class="t m sm">IndexedDB · outbox · CRM</text>
+
+<rect x="670" y="342" width="260" height="82" rx="18" class="n"/>
+<text x="800" y="369" text-anchor="middle" class="t l">INTELIGÊNCIA</text>
+<text x="800" y="391" text-anchor="middle" class="t sm">Predict Studio · PredictLM</text>
+<text x="800" y="411" text-anchor="middle" class="t m sm">AshnaAI · skills · agents · runtimes</text>
+
+<rect x="461" y="476" width="278" height="72" rx="18" class="c"/>
+<text x="600" y="502" text-anchor="middle" class="t l">GRAPH BRAIN / CONTEXTO</text>
+<text x="600" y="524" text-anchor="middle" class="t sm">Graphify · mapas · impacto · provenance</text>
+
+<rect x="190" y="458" width="210" height="70" rx="16" class="n"/>
+<text x="295" y="484" text-anchor="middle" class="t l">REDE JUDICIAL</text>
+<text x="295" y="506" text-anchor="middle" class="t m sm">DataJud · DJEN · histórico</text>
+
+<rect x="800" y="458" width="210" height="70" rx="16" class="n"/>
+<text x="905" y="484" text-anchor="middle" class="t l">COMUNICAÇÃO</text>
+<text x="905" y="506" text-anchor="middle" class="t m sm">WA.Auto · WhatsApp · retornos</text>
+
+<rect x="380" y="570" width="440" height="72" rx="18" class="n"/>
+<text x="600" y="598" text-anchor="middle" class="t l">VERIFICATION CORTEX</text>
+<text x="600" y="620" text-anchor="middle" class="t m sm">Graphify update · tests · F5 routes · reconciliation · PWA · CI</text>
+
+<text x="600" y="679" text-anchor="middle" class="t m sm">Fonte de verdade: Sheets + tribunais + serviços confirmados · grafo orienta navegação, não inventa estado</text>
+</svg>
