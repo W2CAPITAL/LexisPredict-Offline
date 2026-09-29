@@ -3,7 +3,7 @@
 
 const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit";
 const DB_NAME="lexispredict-secure-cache-v2";
-const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,serverCfg:{},djenBlockedUntil:0};
+const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -54,12 +54,27 @@ async function apiSheets(payload){
   return j;
 }
 async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
-async function syncFromCloud(){
-  showBanner("Sincronizando carteira com o Google Sheets…","good");
+async function syncFromCloud(opts={}){
+  if(state.syncing)return;
+  state.syncing=true;
+  if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
+  try{
   const j=await apiSheets({action:"list",limit:8000});
   const rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
   state.rows=rows;await saveRows(rows);state.lastSync=now();await idbPut("meta",{key:"lastSync",value:state.lastSync});
-  await flushOutbox();showBanner("Sincronização concluída: "+rows.length+" processos carregados.","good");render();
+  await flushOutbox();if(!opts.quiet)showBanner("Sincronização concluída: "+rows.length+" processos carregados.","good");render();
+  } finally { state.syncing=false; }
+}
+function startAutoSync(){
+  if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
+  state.autoSyncTimer=setInterval(async()=>{
+    if(!state.session||!navigator.onLine||document.hidden||state.syncing)return;
+    try{await syncFromCloud({quiet:true})}catch(_){}
+  },60000);
+}
+function stopAutoSync(){
+  if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
+  state.autoSyncTimer=null;
 }
 async function flushOutbox(){
   const list=await idbAll("outbox");if(!list.length)return;
@@ -237,7 +252,7 @@ function setupEvents(){
   $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
   $("#newProcessBtn").onclick=()=>openProcess("");
-  $("#logoutBtn").onclick=async()=>{try{await apiSheets({action:"logout"})}catch(_){}saveSession(null);state.rows=[];setLogged(false);updateSyncUi()};
+  $("#logoutBtn").onclick=async()=>{stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}saveSession(null);state.rows=[];setLogged(false);updateSyncUi()};
   $("#saveProcessBtn").onclick=saveProcess;
   $("#loginBtn").onclick=async()=>{
     const u=$("#loginUser").value.trim(),p=$("#loginPass").value;
@@ -252,6 +267,7 @@ function setupEvents(){
       setLogged(true);
       applyUser();
       render();
+      startAutoSync();
       $("#loginStatus").textContent="";
     }catch(e){
       saveSession(null);
@@ -260,8 +276,9 @@ function setupEvents(){
       $("#loginStatus").textContent=e.message||String(e);
     }
   };
-  window.addEventListener("online",()=>{updateSyncUi();if(state.session)showBanner("Conexão restaurada. Sincronize a carteira.","good")});
+  window.addEventListener("online",async()=>{updateSyncUi();if(state.session){showBanner("Conexão restaurada. Sincronizando…","good");try{await syncFromCloud({quiet:true})}catch(_){}}});
   window.addEventListener("offline",()=>{updateSyncUi();showBanner("Sem conexão. Novo login e sincronização exigem acesso ao servidor.","bad")});
+  window.addEventListener("focus",async()=>{if(state.session&&navigator.onLine&&!state.syncing){try{await syncFromCloud({quiet:true})}catch(_){}}});
 }
 function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
 
@@ -277,6 +294,7 @@ async function boot(){
     setLogged(true);
     applyUser();
     render();
+    startAutoSync();
   }catch(_){
     saveSession(null);
     state.rows=[];
