@@ -1,7 +1,7 @@
 :root{
   --bg:#f4f6f9;--surface:#ffffff;--surface2:#f8fafc;--ink:#111827;--muted:#667085;--muted2:#98a2b3;
   --line:#e4e7ec;--line2:#eef1f4;--nav:#0b1220;--nav2:#151e2e;--primary:#1677d2;--primary2:#0d5fae;
-  --cyan:#0ea5e9;--cyanbg:#e8f6fd;--green:#16804a;--greenbg:#eaf7ef;--amber:#9a6700;--amberbg:#fff5dd;
+  --cyan:#0ea5e9;--cyanbg:#e8f6fd;--green:#16804a;--greenbg:#eaf7ef;--amber:#8f5e00;--amberbg:#fff5dd;
   --red:#b42318;--redbg:#fff0ee;--blue:#175cd3;--bluebg:#eaf2ff;--shadow:0 8px 24px rgba(15,23,42,.06);
   --card:#ffffff;--border:#e4e7ec;--on-primary:#ffffff;--focus-ring:rgba(22,119,210,.20);
   --r:12px;--sans:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
@@ -318,7 +318,7 @@ html[data-theme="clean"]{
 }
 html[data-theme="dark"]{
   --bg:#0d1117;--surface:#161b22;--surface2:#1d2430;--ink:#e6edf3;--muted:#a6b0bf;--muted2:#7d8999;
-  --line:#30363d;--line2:#262d36;--nav:#090d13;--nav2:#161b22;--primary:#3b82f6;--primary2:#2563eb;--cyan:#38bdf8;--cyanbg:#112b3c;
+  --line:#30363d;--line2:#262d36;--nav:#090d13;--nav2:#161b22;--primary:#3b82f6;--primary2:#60a5fa;--cyan:#38bdf8;--cyanbg:#112b3c;
   --green:#3fb950;--greenbg:#12261a;--amber:#e3b341;--amberbg:#2b2414;--red:#f85149;--redbg:#301719;--blue:#58a6ff;--bluebg:#10243d;
   --shadow:0 10px 28px rgba(0,0,0,.28);--card:#161b22;--border:#30363d;
   --on-primary:#07111f;--focus-ring:rgba(88,166,255,.28);
@@ -332,28 +332,28 @@ html[data-theme="midnight"]{
 }
 html[data-theme="graphite"]{
   --bg:#151515;--surface:#202020;--surface2:#292929;--ink:#f2f2f2;--muted:#b3b3b3;--muted2:#858585;
-  --line:#383838;--line2:#303030;--nav:#0d0d0d;--nav2:#171717;--primary:#a3a3a3;--primary2:#7a7a7a;--cyan:#d4d4d4;--cyanbg:#2b2b2b;
+  --line:#383838;--line2:#303030;--nav:#0d0d0d;--nav2:#171717;--primary:#a3a3a3;--primary2:#8a8a8a;--cyan:#d4d4d4;--cyanbg:#2b2b2b;
   --green:#72c98c;--greenbg:#1d3023;--amber:#d6b15a;--amberbg:#322a18;--red:#ef7b74;--redbg:#361c1a;--blue:#9ab7d8;--bluebg:#222d38;
   --shadow:0 12px 30px rgba(0,0,0,.32);--card:#202020;--border:#383838;
   --on-primary:#111111;--focus-ring:rgba(212,212,212,.24);
 }
 html[data-theme="emerald"]{
   --bg:#f1f8f5;--surface:#ffffff;--surface2:#edf7f2;--ink:#10241d;--muted:#577066;--muted2:#83978f;
-  --line:#d3e4dc;--line2:#e6efeb;--nav:#06281f;--nav2:#0b392d;--primary:#059669;--primary2:#047857;--cyan:#14b8a6;--cyanbg:#e6faf5;
-  --green:#07864f;--greenbg:#e8f8ef;--amber:#9a6700;--amberbg:#fff7df;--red:#b42318;--redbg:#fff0ee;--blue:#0f766e;--bluebg:#e9faf7;
+  --line:#d3e4dc;--line2:#e6efeb;--nav:#06281f;--nav2:#0b392d;--primary:#047857;--primary2:#065f46;--cyan:#14b8a6;--cyanbg:#e6faf5;
+  --green:#047857;--greenbg:#e8f8ef;--amber:#9a6700;--amberbg:#fff7df;--red:#b42318;--redbg:#fff0ee;--blue:#0f766e;--bluebg:#e9faf7;
   --shadow:0 8px 24px rgba(5,80,55,.07);--card:#ffffff;--border:#d3e4dc;
   --on-primary:#ffffff;--focus-ring:rgba(5,150,105,.24);
 }
 html[data-theme="wine"]{
   --bg:#f7f2ef;--surface:#fffdf9;--surface2:#f3eae6;--ink:#2b1720;--muted:#755b65;--muted2:#9b858d;
   --line:#e4d5d9;--line2:#efe4e7;--nav:#35111d;--nav2:#4b1728;--primary:#8b1e3f;--primary2:#6f1632;--cyan:#c74969;--cyanbg:#fbe9ee;
-  --green:#477a5a;--greenbg:#edf6ef;--amber:#9d6c14;--amberbg:#fff5dd;--red:#a51d2d;--redbg:#fbe9eb;--blue:#704b67;--bluebg:#f2eaf0;
+  --green:#477a5a;--greenbg:#edf6ef;--amber:#8a5a00;--amberbg:#fff5dd;--red:#a51d2d;--redbg:#fbe9eb;--blue:#704b67;--bluebg:#f2eaf0;
   --shadow:0 8px 24px rgba(75,23,40,.08);--card:#fffdf9;--border:#e4d5d9;
   --on-primary:#ffffff;--focus-ring:rgba(139,30,63,.24);
 }
 html[data-theme="violet"]{
   --bg:#100d1c;--surface:#1a162b;--surface2:#241e39;--ink:#f1edff;--muted:#b6abd2;--muted2:#897fa5;
-  --line:#392f55;--line2:#302746;--nav:#0c0915;--nav2:#171126;--primary:#8b5cf6;--primary2:#7c3aed;--cyan:#a78bfa;--cyanbg:#281c49;
+  --line:#392f55;--line2:#302746;--nav:#0c0915;--nav2:#171126;--primary:#7c3aed;--primary2:#6d28d9;--cyan:#a78bfa;--cyanbg:#281c49;
   --green:#6ee7b7;--greenbg:#173127;--amber:#facc15;--amberbg:#342b0e;--red:#fb7185;--redbg:#38151d;--blue:#a78bfa;--bluebg:#261c43;
   --shadow:0 12px 32px rgba(0,0,0,.35);--card:#1a162b;--border:#392f55;
   --on-primary:#ffffff;--focus-ring:rgba(139,92,246,.28);
