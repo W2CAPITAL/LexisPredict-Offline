@@ -8,6 +8,28 @@ const CACHE_TTL_MS=5*60*1000;
 const PAGE_DEFAULT=200;
 const DJEN_GEO_BLOCK_MS=10*60*1000;
 const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
+const THEME_KEY="sheetspredict_theme_v1";
+const THEMES=[
+  {id:"default",name:"SheetsPredict",desc:"Azul jurídico claro",mode:"Claro",accent:"#1677d2",bg:"#f4f6f9",surface:"#ffffff",nav:"#0b1220",meta:"#0b1220"},
+  {id:"clean",name:"Clean",desc:"Branco, cinza e azul discreto",mode:"Claro",accent:"#2563eb",bg:"#f8fafc",surface:"#ffffff",nav:"#111827",meta:"#111827"},
+  {id:"dark",name:"Dark",desc:"Escuro neutro para uso prolongado",mode:"Escuro",accent:"#3b82f6",bg:"#0d1117",surface:"#161b22",nav:"#090d13",meta:"#090d13"},
+  {id:"midnight",name:"Midnight",desc:"Azul-marinho profundo",mode:"Escuro",accent:"#38bdf8",bg:"#07111f",surface:"#0d1b2a",nav:"#050b14",meta:"#050b14"},
+  {id:"graphite",name:"Graphite",desc:"Grafite corporativo",mode:"Escuro",accent:"#a3a3a3",bg:"#151515",surface:"#202020",nav:"#0d0d0d",meta:"#0d0d0d"},
+  {id:"emerald",name:"Emerald",desc:"Verde sóbrio e operacional",mode:"Claro",accent:"#059669",bg:"#f1f8f5",surface:"#ffffff",nav:"#06281f",meta:"#06281f"},
+  {id:"wine",name:"Vinho Jurídico",desc:"Bordô, marfim e acabamento clássico",mode:"Claro",accent:"#8b1e3f",bg:"#f7f2ef",surface:"#fffdf9",nav:"#35111d",meta:"#35111d"},
+  {id:"violet",name:"Executive Violet",desc:"Roxo executivo moderno",mode:"Escuro",accent:"#8b5cf6",bg:"#100d1c",surface:"#1a162b",nav:"#0c0915",meta:"#0c0915"},
+  {id:"gold",name:"Imperial Gold",desc:"Preto, dourado e marfim",mode:"Escuro",accent:"#d4a72c",bg:"#11100d",surface:"#1b1913",nav:"#080806",meta:"#080806"},
+  {id:"contrast",name:"Alto Contraste",desc:"Máxima separação entre texto e fundo",mode:"Acessível",accent:"#00a8ff",bg:"#000000",surface:"#0a0a0a",nav:"#000000",meta:"#000000"}
+];
+function savedTheme(){try{return THEMES.some(t=>t.id===localStorage.getItem(THEME_KEY))?localStorage.getItem(THEME_KEY):"default"}catch(_){return"default"}}
+function applyTheme(id,{persist=true}={}){
+  const theme=THEMES.find(t=>t.id===id)||THEMES[0];
+  document.documentElement.dataset.theme=theme.id;
+  document.documentElement.style.colorScheme=["dark","midnight","graphite","violet","gold","contrast"].includes(theme.id)?"dark":"light";
+  const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute("content",theme.meta);
+  if(persist)try{localStorage.setItem(THEME_KEY,theme.id)}catch(_){}
+  return theme;
+}
 const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
@@ -470,9 +492,10 @@ function titleFor(v){return {
   tarefas:["OPERAÇÃO","Tarefas"],
   analise:["INTELIGÊNCIA","Análise"],
   report:["EXECUTIVO","Report"],
-  scanner:["REDE JUDICIAL","DataJud + DJEN"]
+  scanner:["REDE JUDICIAL","DataJud + DJEN"],
+  settings:["PREFERÊNCIAS","Configurações"]
 }[v]||["SHEETSPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",hub:"/central",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
+const viewPaths={dashboard:"/",hub:"/central",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner",settings:"/configuracoes"};
 function pathView(){
   const rawHash=String(location.hash||"").replace(/^#/,"").replace(/\/+$/,"");
   if(rawHash){
@@ -508,6 +531,7 @@ function render(){
   else if(state.view==="analise")renderAnalise();
   else if(state.view==="report")renderReport();
   else if(state.view==="scanner")renderScanner();
+  else if(state.view==="settings")renderSettings();
   else setView("dashboard",false);
   scheduleGlobalXScroll();
 }
@@ -516,6 +540,35 @@ function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+es
 function isRecentDate(v,days=7){
   const d=parseDate(v);if(!d)return false;
   return Date.now()-d.getTime()<=days*86400000&&Date.now()>=d.getTime()-86400000;
+}
+
+function themePreview(theme){
+  return '<div class="theme-preview" style="--preview-bg:'+esc(theme.bg)+';--preview-surface:'+esc(theme.surface)+';--preview-nav:'+esc(theme.nav)+';--preview-accent:'+esc(theme.accent)+'">'+
+    '<div class="theme-preview-nav"><i></i><i></i><i></i><i></i></div>'+
+    '<div class="theme-preview-main"><span></span><div class="theme-preview-kpis"><b></b><b></b><b></b></div><div class="theme-preview-table"><i></i><i></i><i></i><i></i></div></div>'+
+  '</div>';
+}
+function renderSettings(){
+  const current=savedTheme();
+  $("#content").innerHTML=
+    '<div class="settings-shell"><div class="lexis-page-header"><div><span class="eyebrow">PREFERÊNCIAS</span><h2>Configurações</h2><p>Personalize a aparência do SheetsPredict neste navegador.</p></div><div class="command-actions"><button class="btn" id="resetThemeBtn">Restaurar padrão</button></div></div>'+
+    '<section class="card settings-section"><div class="card-head"><div><span class="eyebrow">APARÊNCIA</span><h3>Tema do aplicativo</h3></div><span class="settings-current">Atual: <strong>'+esc((THEMES.find(t=>t.id===current)||THEMES[0]).name)+'</strong></span></div>'+
+    '<div class="theme-grid">'+THEMES.map(t=>'<button class="theme-card '+(t.id===current?'selected':'')+'" type="button" data-theme-choice="'+esc(t.id)+'" aria-pressed="'+(t.id===current?'true':'false')+'">'+
+      themePreview(t)+
+      '<div class="theme-card-copy"><div><strong>'+esc(t.name)+'</strong><span class="theme-mode">'+esc(t.mode)+'</span></div><p>'+esc(t.desc)+'</p></div>'+
+      '<span class="theme-check">'+(t.id===current?'✓':'')+'</span>'+
+    '</button>').join("")+'</div></section>'+
+    '<section class="card settings-section"><div class="card-head"><div><span class="eyebrow">COMPORTAMENTO</span><h3>Como funciona</h3></div></div><div class="settings-info">'+
+      '<div><strong>Aplicação imediata</strong><span>O tema muda sem recarregar a página.</span></div>'+
+      '<div><strong>Preferência local</strong><span>Fica salvo somente neste navegador e não altera a planilha.</span></div>'+
+      '<div><strong>Todas as telas</strong><span>Dashboard, processos, CRM, DataJud/DJEN, Central Integrada e diálogos usam o mesmo tema.</span></div>'+
+    '</div></section></div>';
+  $("[data-theme-choice]").forEach(b=>b.onclick=()=>{
+    const theme=applyTheme(b.dataset.themeChoice);
+    showBanner("Tema "+theme.name+" aplicado.","good");
+    renderSettings();
+  });
+  $("#resetThemeBtn").onclick=()=>{applyTheme("default");showBanner("Tema padrão restaurado.","good");renderSettings()};
 }
 function renderDashboard(){
   const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
@@ -1651,6 +1704,7 @@ function setupEvents(){
 function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
 
 async function boot(){
+  applyTheme(savedTheme(),{persist:false});
   setupEvents();
   restoreDjenBlock();
   state.view=pathView();
