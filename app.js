@@ -15,9 +15,9 @@ const THEMES=[
   {id:"dark",name:"Dark",desc:"Escuro neutro para uso prolongado",mode:"Escuro",accent:"#3b82f6",bg:"#0d1117",surface:"#161b22",nav:"#090d13",meta:"#090d13"},
   {id:"midnight",name:"Midnight",desc:"Azul-marinho profundo",mode:"Escuro",accent:"#38bdf8",bg:"#07111f",surface:"#0d1b2a",nav:"#050b14",meta:"#050b14"},
   {id:"graphite",name:"Graphite",desc:"Grafite corporativo",mode:"Escuro",accent:"#a3a3a3",bg:"#151515",surface:"#202020",nav:"#0d0d0d",meta:"#0d0d0d"},
-  {id:"emerald",name:"Emerald",desc:"Verde sóbrio e operacional",mode:"Claro",accent:"#059669",bg:"#f1f8f5",surface:"#ffffff",nav:"#06281f",meta:"#06281f"},
+  {id:"emerald",name:"Emerald",desc:"Verde sóbrio e operacional",mode:"Claro",accent:"#047857",bg:"#f1f8f5",surface:"#ffffff",nav:"#06281f",meta:"#06281f"},
   {id:"wine",name:"Vinho Jurídico",desc:"Bordô, marfim e acabamento clássico",mode:"Claro",accent:"#8b1e3f",bg:"#f7f2ef",surface:"#fffdf9",nav:"#35111d",meta:"#35111d"},
-  {id:"violet",name:"Executive Violet",desc:"Roxo executivo moderno",mode:"Escuro",accent:"#8b5cf6",bg:"#100d1c",surface:"#1a162b",nav:"#0c0915",meta:"#0c0915"},
+  {id:"violet",name:"Executive Violet",desc:"Roxo executivo moderno",mode:"Escuro",accent:"#a78bfa",bg:"#100d1c",surface:"#1a162b",nav:"#0c0915",meta:"#0c0915"},
   {id:"gold",name:"Imperial Gold",desc:"Preto, dourado e marfim",mode:"Escuro",accent:"#d4a72c",bg:"#11100d",surface:"#1b1913",nav:"#080806",meta:"#080806"},
   {id:"contrast",name:"Alto Contraste",desc:"Máxima separação entre texto e fundo",mode:"Acessível",accent:"#00a8ff",bg:"#000000",surface:"#0a0a0a",nav:"#000000",meta:"#000000"}
 ];
