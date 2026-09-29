@@ -1,3 +1,4 @@
+const {scopeRows,isElevated}=require("../lib/sheet-scope");
 function safeUrl(raw){
   let u;try{u=new URL(String(raw||""))}catch{throw new Error("LEXIS_APPS_SCRIPT_URL inválida ou ausente na Vercel.")}
   const okHost=u.hostname==="script.google.com"||u.hostname.endsWith(".script.google.com")||u.hostname==="script.googleusercontent.com";
@@ -62,6 +63,18 @@ module.exports=async(req,res)=>{
     if(data&&/sessao invalida|sessão inválida|sessao expirada|sessão expirada/i.test(String(data.error||""))){
       clearSessionCookie(res);
       return res.status(401).json({ok:false,error:data.error});
+    }
+
+    if(action==="list"&&data&&data.ok){
+      const user=data.user||null;
+      if(!user)return res.status(502).json({ok:false,error:"O bridge não retornou o usuário da sessão para aplicar o escopo da carteira."});
+      const source=Array.isArray(data.rows)?data.rows:(Array.isArray(data.todas)?data.todas:[]);
+      const scoped=scopeRows(source,user);
+      data.rows=scoped;
+      data.minhas=scoped;
+      data.count=scoped.length;
+      data.scope={field:isElevated(user.perfil)?"ALL":"Assistente",value:isElevated(user.perfil)?"*":(user.nome||user.usuario||""),sourceCount:source.length};
+      delete data.todas;
     }
 
     if((action==="write"||action==="upsert_batch")&&data){
