@@ -1515,7 +1515,9 @@ function writeRecords_(rows, actor, allowInsert) {
 
     SpreadsheetApp.flush();
 
-    var written = updates - rejected.length;
+    // updates já conta somente registros efetivamente processados.
+    // rejected é contabilizado separadamente; subtrair novamente gerava falso 409 no bridge.
+    var written = updates;
 
     return {
 
