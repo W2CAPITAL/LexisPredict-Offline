@@ -17,7 +17,11 @@ module.exports=async(req,res)=>{
       cliente:body.cliente||""
     });
     const rateLimited=!!result?.djen?.isRateLimited;
+    const dataJudOk=!!result?.datajud&&!result.datajud.error;
     if(rateLimited&&result.djen.retryAfterMs)res.setHeader("Retry-After",String(Math.ceil(result.djen.retryAfterMs/1000)));
-    return res.status(rateLimited?429:result.ok?200:result.partial?207:502).json(result);
+    // Se o DataJud respondeu, DJEN 429 é degradação parcial e não falha da requisição.
+    // Isso mantém o scanner funcional e evita o navegador tratar o turno inteiro como erro.
+    const status=rateLimited?(dataJudOk?207:429):(result.ok?200:result.partial?207:502);
+    return res.status(status).json(rateLimited&&dataJudOk?{...result,partial:true,djenDeferred:true}:result);
   }catch(e){return res.status(500).json({ok:false,error:e?.message||String(e)})}
 };
