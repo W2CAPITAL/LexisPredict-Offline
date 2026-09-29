@@ -2,7 +2,7 @@
 
 **SheetsPredict** é o cockpit operacional da carteira jurídica conectado ao Google Sheets. A planilha continua sendo a fonte de verdade; o navegador mantém uma réplica local para velocidade e continuidade, enquanto Vercel Functions e Apps Script fazem a ponte segura com serviços externos.
 
-**Versão atual: 3.1.2**
+**Versão atual: 4.0.0**
 
 ## Visão geral
 
@@ -15,6 +15,7 @@ O aplicativo reúne em uma única interface:
 - DataJud + DJEN, Audit 3D e histórico do tribunal.
 - Cache IndexedDB, outbox e funcionamento offline-first.
 - Central Integrada com PredictLM, GREY, WA.Auto, SyncCRM, LEADCHECKIN, Leadcheck e regras do LexisPredict.
+- **Predict Studio** com Chat, Legal, Build, Work, Tutor, Research, Imagine e Report, mais catálogo completo de skills/agentes/plugins e Runtime Federation local opt-in.
 - Configurações com temas claros, escuros, jurídicos e de alto contraste.
 
 A regra operacional central continua sendo:
@@ -78,6 +79,7 @@ Isso permite trabalhar em zoom de navegador de 100% sem precisar descer até o f
 |---|---|
 | `/` | Dashboard |
 | `/central` | Central Integrada |
+| `/studio` | Predict Studio |
 | `/cases` | Processos da carteira |
 | `/processos` | Processos da empresa |
 | `/clientes` | Clientes |
@@ -176,6 +178,96 @@ LEXISPREDICT_TOKEN=
 
 O envio de WhatsApp só acontece por ação explícita do usuário e continua sujeito às regras de fila/opt-out do WA.Auto.
 
+## Predict Studio
+
+A rota `/studio` traz a camada de execução do PredictLM para dentro do SheetsPredict sem incorporar o Next.js inteiro nem acoplar o CRM ao runtime de IA.
+
+### Superfícies
+
+| Superfície | Execução |
+|---|---|
+| **Chat** | `PredictLM /api/chat` com contexto opcional da carteira |
+| **Legal** | `/api/legal/process` + geração de dossiê HTML |
+| **Build** | `/api/agent`: explorer → architect → implementer → reviewers → verifier |
+| **Work** | Chat com contrato de continuidade, critérios de conclusão e bloqueios |
+| **Tutor** | Chat com ciclo probe → teach/practice → assess → review |
+| **Research** | `/api/research` com árvore de pesquisa, fontes e cobertura |
+| **Imagine** | `/api/media/generate` com reference/identity grounding |
+| **Report** | `/api/report-dossier/generate` com FORGE + AEGIS + PARALLAX + Chair/Council |
+
+O proxy `/api/predict-studio` possui uma allowlist fixa de rotas. O navegador não pode fornecer uma URL/path arbitrária de upstream. `PREDICTLM_ACCESS_TOKEN`, quando usado, permanece no backend da Vercel.
+
+### Skill Federation
+
+O SheetsPredict mantém um snapshot auditável do registro real do PredictLM, associado ao commit de origem. Na integração inicial são:
+
+- **80 skills/capabilities registradas**;
+- **16 papéis de Agent Fabric**;
+- **4 controladores Four-Core**: Fly, Mouse, Macaque e Human;
+- **17 rotas conhecidas do Provider Mesh**;
+- **75 repositórios registrados no Capability Fusion**;
+- catálogo de runtimes WebLLM, Transformers.js compatibility, FreeLLMAPI, Ollama, OpenAI-compatible, llama.cpp/llamafile e LowRAM.
+
+A presença no catálogo **não significa que um adapter externo esteja configurado**. A aba Plugins distingue `built-in`, `bridge` e `external`, e o runtime remoto é validado separadamente.
+
+O snapshot é derivado de:
+
+```text
+W2CAPITAL/PredictLm
+├─ src/lib/skills.ts
+├─ src/lib/agent-runtime/agentic-fabric.ts
+├─ src/lib/fusion/capability-fabric.ts
+└─ skills/predictlm-master/manifest.json
+```
+
+### Runtime Federation local
+
+Motores locais são explicitamente opt-in. O SheetsPredict não faz port scanning.
+
+**WebLLM / WebGPU**
+
+- Lite: Qwen3 1.7B;
+- Smart: Qwen3.5 4B;
+- Power: Qwen3.5 9B;
+- seleção Auto usa apenas hints de hardware e o carregamento real faz self-test;
+- nenhum modelo é baixado até o usuário clicar em **Carregar**;
+- modelos grandes podem consumir vários GB e podem ser descarregados pela interface.
+
+**Runtime local manual**
+
+- FreeLLMAPI / API OpenAI-compatible;
+- Ollama;
+- llama.cpp/llamafile e outros servidores compatíveis através do adapter;
+- URL manual em loopback ou HTTPS;
+- sem descoberta automática de portas;
+- credencial local não passa pelo backend do SheetsPredict.
+
+Transformers.js/ONNX permanece no catálogo de compatibilidade do PredictLM; o runtime direto do SheetsPredict prioriza WebLLM ou um endpoint local explicitamente configurado para não duplicar vários modelos grandes na memória do navegador.
+
+### Isolamento de falhas
+
+O Predict Studio é um módulo separado do `app.js` e não participa da inicialização de Processos, Clientes, Tarefas ou DataJud/DJEN.
+
+```text
+app.js
+  └─ delega /studio
+
+lib/predict-studio.js
+  ├─ UI e estado do Studio
+  ├─ Chat / Work / Tutor
+  ├─ Legal / Build / Research / Imagine / Report
+  └─ catálogo Skills / Agentes / Plugins / Motores
+
+lib/predict-runtime.js
+  ├─ WebLLM opt-in
+  └─ runtime local manual
+
+api/predict-studio.js
+  └─ proxy server-side com allowlist para PredictLM
+```
+
+Se `PREDICTLM_URL` não estiver configurada, o restante do SheetsPredict continua operando. A interface deixa claro que as superfícies remotas estão indisponíveis; Skills/Agentes/Plugins e os runtimes locais opt-in continuam acessíveis.
+
 ## Temas e acessibilidade
 
 `Configurações → Tema do aplicativo` oferece:
@@ -258,6 +350,9 @@ O pipeline valida, entre outros pontos:
 - CRM;
 - deep-links/F5;
 - Central Integrada;
+- Predict Studio com oito superfícies do PredictLM;
+- Skill Federation com catálogo auditável de skills/agentes/plugins;
+- Runtime Federation local opt-in;
 - temas e contraste;
 - comportamento de navegação/scroll.
 
@@ -271,7 +366,7 @@ Após uma alteração grande de frontend, um `Ctrl+Shift+R` pode ser usado uma v
 
 ## Estado atual
 
-**SheetsPredict 3.1.2**
+**SheetsPredict 4.0.0**
 
 Foco da versão:
 
@@ -284,4 +379,5 @@ Foco da versão:
 - temas com contraste validado;
 - uma única rolagem vertical de conteúdo;
 - uma única barra horizontal útil para tabelas largas;
-- correções de F5/deep-link/PWA.
+- correções de F5/deep-link/PWA;
+- isolamento da camada de IA para preservar o núcleo operacional em falhas de provider.
