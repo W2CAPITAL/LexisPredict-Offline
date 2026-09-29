@@ -326,12 +326,16 @@ function titleFor(v){return {
   dashboard:["COMMAND CENTER","Dashboard"],
   processos:["CARTEIRA","Processos"],
   empresa:["EMPRESA","Processos da empresa"],
+  clientes:["CRM","Clientes"],
+  pipeline:["CRM","Pipeline"],
+  agenda:["CRM","Agenda"],
+  financeiro:["CRM","Financeiro"],
   tarefas:["OPERAÇÃO","Tarefas"],
   analise:["INTELIGÊNCIA","Análise"],
   report:["EXECUTIVO","Report"],
   scanner:["REDE JUDICIAL","DataJud + DJEN"]
 }[v]||["LEXISPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",processos:"/processos",empresa:"/processos-empresa",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
+const viewPaths={dashboard:"/",processos:"/processos",empresa:"/processos-empresa",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
 function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
 function setView(v,push=true){
   state.view=v;
@@ -341,10 +345,14 @@ function setView(v,push=true){
   render();
 }
 function render(){
-  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
+  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navClientes").textContent=crmClients().length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
   if(state.view==="dashboard")renderDashboard();
   else if(state.view==="processos")renderProcessos();
   else if(state.view==="empresa")renderEmpresa();
+  else if(state.view==="clientes")renderClientes();
+  else if(state.view==="pipeline")renderPipeline();
+  else if(state.view==="agenda")renderAgenda();
+  else if(state.view==="financeiro")renderFinanceiro();
   else if(state.view==="tarefas")renderTarefas();
   else if(state.view==="analise")renderAnalise();
   else if(state.view==="report")renderReport();
