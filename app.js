@@ -657,7 +657,7 @@ function renderHub(){
     (state.hub.tab==="ai"?hubAiHtml():state.hub.tab==="whatsapp"?hubWaHtml():state.hub.tab==="leads"?hubLeadsHtml():state.hub.tab==="revisional"?hubRevisionalHtml():state.hub.tab==="sheets"?hubSheetsHtml():state.hub.tab==="integrations"?hubIntegrationsHtml():hubOverviewHtml())+
   '</div></div>';
   bindGotos();
-  $("[data-hub-tab],[data-hub-open]").forEach(b=>b.onclick=()=>{state.hub.tab=b.dataset.hubTab||b.dataset.hubOpen;renderHub()});
+  document.querySelectorAll("[data-hub-tab],[data-hub-open]").forEach(b=>b.onclick=()=>{state.hub.tab=b.dataset.hubTab||b.dataset.hubOpen;renderHub()});
   if(!state.hub.status&&!state.hub.loading)void loadHubStatus();
   if($("#hubStatusRefresh"))$("#hubStatusRefresh").onclick=()=>loadHubStatus(true);
   if($("#hubAiSend"))$("#hubAiSend").onclick=hubRunAi;
@@ -685,10 +685,10 @@ function hubContext(cnj){
 }
 async function hubRunAi(){
   if(state.hub.aiBusy)return;const prompt=String($("#hubAiPrompt")?.value||"").trim();if(!prompt)return;
-  const cnj=String($("#hubAiCnj")?.value||state.hub.selectedCnj||"");state.hub.selectedCnj=cnj;
+  const cnj=String($("#hubAiCnj")?.value||state.hub.selectedCnj||""),deep=!!$("#hubAiDeep")?.checked;state.hub.selectedCnj=cnj;
   state.hub.ai.push({role:"user",content:prompt});state.hub.aiBusy=true;renderHub();
   try{
-    const j=await hubApi({action:"ai_chat",prompt,context:hubContext(cnj),deep:!!$("#hubAiDeep")?.checked,messages:state.hub.ai.slice(-8).map(x=>({role:x.role,content:x.content})),sessionId:String(currentUser().usuario||currentUser().nome||"sheetspredict")});
+    const j=await hubApi({action:"ai_chat",prompt,context:hubContext(cnj),deep,messages:state.hub.ai.slice(-8).map(x=>({role:x.role,content:x.content})),sessionId:String(currentUser().usuario||currentUser().nome||"sheetspredict")});
     state.hub.ai.push({role:"assistant",content:j.content||"Sem resposta.",engine:j.engine,provider:j.provider});
   }catch(e){state.hub.ai.push({role:"assistant",content:"Falha: "+(e.message||String(e)),engine:"Central Integrada"})}
   finally{state.hub.aiBusy=false;if(state.view==="hub")renderHub()}
