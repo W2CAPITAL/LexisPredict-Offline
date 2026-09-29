@@ -31,6 +31,10 @@
       "destination": "/index.html"
     },
     {
+      "source": "/processos-empresa",
+      "destination": "/index.html"
+    },
+    {
       "source": "/analise",
       "destination": "/index.html"
     },
