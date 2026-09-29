@@ -5,7 +5,7 @@ assert.equal(rewrites[0]?.source,"/api/(.*)","API passthrough deve vir antes do 
 assert.equal(rewrites[0]?.destination,"/api/$1","API passthrough deve preservar Vercel Functions");
 assert.equal(rewrites.at(-1)?.source,"/(.*)","deve haver fallback SPA global");
 assert.equal(rewrites.at(-1)?.destination,"/index.html","fallback SPA deve servir index.html");
-for(const route of ["/","/cases","/processos","/report","/scanner","/tarefas","/clientes","/agenda","/financeiro","/central","/configuracoes"]){
+for(const route of ["/","/cases","/processos","/report","/scanner","/tarefas","/clientes","/agenda","/financeiro","/central","/studio","/configuracoes"]){
   const covered=rewrites.some(r=>r.source==="/*"||r.source==="/(.*)"||r.source===route);
   assert.equal(covered,true,"SPA fallback missing for "+route);
 }
