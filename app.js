@@ -6,8 +6,8 @@ const DB_NAME="lexispredict-secure-cache-v3";
 const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
 const CACHE_TTL_MS=5*60*1000;
 const PAGE_DEFAULT=200;
-const DJEN_GEO_BLOCK_MS=6*60*60*1000;
-const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v1";
+const DJEN_GEO_BLOCK_MS=10*60*1000;
+const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
 const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:""};
 
 const $=s=>document.querySelector(s);
@@ -901,7 +901,7 @@ async function scanOne(cnj,quiet=false){
       }catch(e){j.sheetError=e.message||String(e)}
     }
     if((j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403)&&!j?.djen?.success){
-      setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Pausa de 6h; DataJud continua.";
+      setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Nova tentativa em até 10 min; DataJud continua.";
       if(!quiet)showBanner(j.djenPauseMessage,"bad");
     }else if(r.status===429||j?.djen?.isRateLimited){
       const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);
@@ -929,7 +929,7 @@ async function scanQueue(){
     const cnj=pick(row,"Protocolo");logQueue("DataJud + DJEN • "+cnjFormatted(cnj));
     const j=await scanOne(cnj,true);done++;const p=$("#scanProgress");if(p)p.style.width=Math.round(done/list.length*100)+"%";
     if(j?.sheetError){logQueue("Salvamento pendente • "+j.sheetError);showBanner(j.sheetError,"bad");break;}
-    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403)logQueue("DJEN HTTP 403 • pausa de 6h; DataJud continua");
+    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403)logQueue("DJEN HTTP 403 • nova tentativa em até 10 min; DataJud continua");
     else if(j?.retry)logQueue("DJEN em pausa • DataJud continua");
     await sleep(j?.djenPaused?1500:6000);
     if(done%10===0)logQueue("Checkpoint • "+done+" processos");
@@ -1052,15 +1052,20 @@ function buildTribunalTimeline(scan,row){
 function renderHistoryDialog(){
   const row=findRow(state.historyKey);if(!row)return;
   const items=buildTribunalTimeline(state.historyScan,row),scan=state.historyScan;
+  const djCount=scan?.datajud?.movimentos?.length||0,djenCount=scan?.djen?.items?.length||0;
+  const djError=scan?.datajud?.error?(scan.datajud.message||scan.datajud.error):"";
+  const djenError=scan?.djen&&scan.djen.success===false?(scan.djen.error||"DJEN indisponível"):"";
   $("#historyTitle").textContent="Histórico inteiro • "+(pick(row,"Cliente")||"Processo");
-  $("#historyMeta").innerHTML='<span class="mono">'+esc(cnjFormatted(pick(row,"Protocolo")))+'</span><span>'+esc(pick(row,"Tribunal")||"Tribunal não informado")+'</span><span>'+items.length+' evento(s)</span>'+(state.historyLoading?'<span class="history-loading">Atualizando…</span>':'');
+  $("#historyMeta").innerHTML='<span class="mono">'+esc(cnjFormatted(pick(row,"Protocolo")))+'</span><span>'+esc(pick(row,"Tribunal")||"Tribunal não informado")+'</span><span>'+items.length+' evento(s)</span><span>'+djCount+' DataJud</span><span>'+djenCount+' DJEN</span>'+(state.historyLoading?'<span class="history-loading">Atualizando…</span>':'');
   if(state.historyLoading&&!scan){
-    $("#historyContent").innerHTML='<div class="history-empty">Consultando DataJud + DJEN e montando a cronologia completa…</div>';return;
+    $("#historyContent").innerHTML='<div class="history-empty">Consultando o histórico completo no DataJud e as publicações DJEN…</div>';return;
   }
+  const warnings=[djError?'<div class="banner bad"><strong>DataJud ao vivo:</strong> '+esc(djError)+'</div>':'',djenError?'<div class="offline-note"><strong>DJEN:</strong> '+esc(djenError)+'</div>':''].filter(Boolean).join("");
   if(!items.length){
-    $("#historyContent").innerHTML='<div class="history-empty">Nenhum histórico retornado. Use “Atualizar DataJud + DJEN”.</div>';return;
+    $("#historyContent").innerHTML=warnings+'<div class="history-empty">Nenhum evento judicial foi retornado ou persistido para este CNJ.</div>';return;
   }
-  $("#historyContent").innerHTML='<div class="history-list">'+items.map((x,i)=>
+  const partial=(djCount<=1&&!!djError)?'<div class="offline-note"><strong>Histórico parcial:</strong> exibindo o que já está salvo na planilha; a consulta completa do DataJud falhou nesta tentativa.</div>':'';
+  $("#historyContent").innerHTML=warnings+partial+'<div class="history-list">'+items.map((x,i)=>
     '<article class="history-item '+(x.source.includes("DJEN")?"djen":"court")+'"><div class="history-index">'+(i+1)+'</div><div class="history-body"><div class="history-item-head"><strong>'+esc(x.title)+'</strong><span>'+esc(x.source)+'</span></div><small>'+esc(x.date||"Data não informada")+'</small><p>'+esc(x.detail||"Sem complemento.")+'</p>'+(x.link?'<a target="_blank" rel="noopener" href="'+esc(x.link)+'">Abrir publicação oficial</a>':'')+'</div></article>'
   ).join("")+'</div>';
 }
@@ -1182,7 +1187,7 @@ async function refreshAudit(keepSuggest=false){
       if(navigator.onLine)await flushOutbox();
     }
     if((j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403)&&!j?.djen?.success){
-      setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Pausa de 6h; DataJud continua.";showBanner(j.djenPauseMessage,"bad");
+      setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Nova tentativa em até 10 min; DataJud continua.";showBanner(j.djenPauseMessage,"bad");
     }else if(r.status===429||j?.djen?.isRateLimited){
       const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);setDjenBlock(ms);
     }
