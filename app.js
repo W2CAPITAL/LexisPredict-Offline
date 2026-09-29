@@ -1365,6 +1365,7 @@ async function markContacted(key){
   updateLocalRow(row);await saveRows(state.companyRows);
   const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
   await queueWrite(patch);
+  if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
   if(clientId){
     const interaction={InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),ClienteId:clientId,Protocolo:pick(row,"Protocolo"),Canal:"Atendimento",Tipo:"Retorno",Assunto:"Atendimento registrado",Conteudo:"Cliente marcado como contatado no SheetsPredict.",Usuario:actor,DataHora:nowIso,Resultado:"Contatado",ProximoPasso:"",DataProximoPasso:"",OptOut:""};
     await crmWrite("Interacoes",interaction,{quiet:true});
