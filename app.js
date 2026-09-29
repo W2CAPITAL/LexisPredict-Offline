@@ -199,6 +199,7 @@ async function syncFromCloud(opts={}){
   if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
   try{
     try{await flushOutbox()}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
+    try{await flushCrmOutbox()}catch(_){}
     const payload={action:"list",limit:8000,scope:"company"};
     const j=await apiSheets(payload);
     let rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
@@ -212,6 +213,7 @@ async function syncFromCloud(opts={}){
       showBanner("Sincronização concluída: "+rows.length+" processos da empresa em cache"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
     }
     render();
+    void syncCRM({quiet:true}).catch(()=>{});
   } finally { state.syncing=false; }
 }
 function startAutoSync(){
