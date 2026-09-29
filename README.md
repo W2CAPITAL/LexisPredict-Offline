@@ -36,14 +36,9 @@ O proxy **não tenta burlar rate limit**. HTTP 429 é devolvido ao cliente e o s
 
 ## Conectar à planilha
 
-1. Abra a planilha.
-2. Extensões → Apps Script.
-3. Copie os quatro arquivos de `apps-script/` para o projeto vinculado à planilha: `Code.gs`, `LEXIS-SYNC-AppsScript.gs`, `LexisApp.gs` e `LexisSheet.gs`.
-4. Em **Configurações do projeto → Propriedades do script**, crie `LEXIS_SHEETS_TOKEN`.
-5. Na Vercel, crie a Environment Variable `LEXIS_SHEETS_TOKEN` com exatamente o mesmo valor.
-6. Implantar → Gerenciar implantações → Nova versão do Aplicativo da web.
-7. Copie a URL terminada em `/exec`.
-8. No LexisPredict Offline → **Configurações → Google Sheets**, informe somente a URL `/exec` e a URL da planilha. O token fica fixo no backend da Vercel.
+A integração com a planilha é feita por um Apps Script privado vinculado ao arquivo. O código-fonte do bridge não é distribuído neste repositório público.
+
+Configure no backend da Vercel as variáveis de ambiente necessárias e use a implantação `/exec` do Apps Script privado.
 
 O bridge preserva colunas não alteradas ao editar um processo.
 
@@ -61,11 +56,11 @@ O scanner V6 já concatena `/api/v1/comunicacao`. Essa rota usa primeiro o endpo
 
 ## Segurança
 
-- O repositório não contém token do Apps Script.
+- O repositório público não contém o código-fonte do Apps Script privado.
 - O token do bridge não é enviado ao navegador; fica nas Environment Variables da Vercel e nas Script Properties do Apps Script.
 - `/api/sheets` aceita somente URLs HTTPS de Apps Script.
-- Não versionar chaves privadas.
-- A autenticação é validada pela aba `Usuarios` através do Apps Script.
+- Não versionar chaves, tokens, URLs privadas de implantação ou credenciais.
+- A autenticação é validada pelo bridge privado conectado à planilha.
 
 ## Base usada
 
