@@ -2,7 +2,7 @@
 
 **SheetsPredict** é o cockpit operacional da carteira jurídica conectado ao Google Sheets. A planilha continua sendo a fonte de verdade; o navegador mantém uma réplica local para velocidade e continuidade, enquanto Vercel Functions e Apps Script fazem a ponte segura com serviços externos.
 
-**Versão atual: 4.0.0**
+**Versão atual: 4.1.0**
 
 ## Visão geral
 
@@ -16,6 +16,7 @@ O aplicativo reúne em uma única interface:
 - Cache IndexedDB, outbox e funcionamento offline-first.
 - Central Integrada com PredictLM, GREY, WA.Auto, SyncCRM, LEADCHECKIN, Leadcheck e regras do LexisPredict.
 - **Predict Studio** com Chat, Legal, Build, Work, Tutor, Research, Imagine e Report, mais catálogo completo de skills/agentes/plugins e Runtime Federation local opt-in.
+- **WA.Auto nativo** com a interface operacional do WA.Auto adaptada aos temas do SheetsPredict, sessão WhatsApp cloud e automação DataJud/DJEN baseada no último retorno.
 - Configurações com temas claros, escuros, jurídicos e de alto contraste.
 
 A regra operacional central continua sendo:
@@ -80,6 +81,7 @@ Isso permite trabalhar em zoom de navegador de 100% sem precisar descer até o f
 | `/` | Dashboard |
 | `/central` | Central Integrada |
 | `/studio` | Predict Studio |
+| `/wa-auto` | WA.Auto integrado |
 | `/cases` | Processos da carteira |
 | `/processos` | Processos da empresa |
 | `/clientes` | Clientes |
@@ -176,7 +178,85 @@ LEXISPREDICT_URL=
 LEXISPREDICT_TOKEN=
 ```
 
-O envio de WhatsApp só acontece por ação explícita do usuário e continua sujeito às regras de fila/opt-out do WA.Auto.
+O envio avulso continua exigindo ação explícita. A automação processual só envia depois que o usuário habilita o interruptor no módulo WA.Auto e continua sujeita às regras de fila/opt-out do WA.Auto.
+
+## WA.Auto integrado
+
+A rota `/wa-auto` incorpora a operação do repositório `W2CAPITAL/Wa.Auto` ao SheetsPredict sem abrir um segundo cliente WhatsApp.
+
+A interface reproduz a hierarquia operacional do WA.Auto:
+
+```text
+Campanhas · WhatsApp · Clientes · Histórico · Processos · Configurações
+```
+
+Ela usa os tokens de tema do SheetsPredict, portanto Dark, Midnight, Graphite, Vinho Jurídico, Alto Contraste e os demais temas continuam aplicados. A navegação interna é horizontal para evitar uma segunda sidebar.
+
+### Sessão WhatsApp
+
+O SheetsPredict usa `WA_AUTO_URL` como backend. QR Code, pareamento, sessão Baileys, lista de não contatar, fila, ACKs e recuperação permanecem no WA.Auto.
+
+```text
+SheetsPredict /#/wa-auto
+       ↓
+/api/wa-auto
+       ↓ HTTPS
+WA.Auto Cloud
+       ├─ sessão WhatsApp
+       ├─ fila segura
+       ├─ opt-out
+       └─ monitor DataJud + DJEN
+```
+
+O navegador nunca recebe o CSRF interno do WA.Auto. O proxy server-side obtém o token de bootstrap e só permite uma lista fixa de ações.
+
+### Automação de atualização processual
+
+A automação é **desligada por padrão**. Ao ativá-la na interface:
+
+1. o SheetsPredict sincroniza primeiro toda a carteira em lotes de **200**;
+2. cada processo envia CNJ, cliente, telefone, último/próximo retorno, último DataJud salvo e último DJEN salvo;
+3. clientes marcados como opt-out/NÃO CONTATAR são sincronizados como bloqueio;
+4. somente depois dessa sincronização o WA.Auto libera `notify_whatsapp`;
+5. o WA.Auto continua consultando **seu próprio DataJud + DJEN**;
+6. somente eventos posteriores ao limite `max(Último Retorno, Último Aviso)` entram na fila;
+7. eventos antigos viram linha de base ou `covered_by_return`;
+8. se o WhatsApp estiver desconectado, a novidade fica aguardando em vez de ser perdida;
+9. após envio confirmado, o WA.Auto atualiza seu limite de retorno para impedir repetição.
+
+Formato-base do aviso:
+
+```text
+📌 ATUALIZAÇÃO PROCESSUAL
+
+Cliente: <cliente>
+Processo: <CNJ>
+Fonte: DataJud ou DJEN
+Nova movimentação: <evento>
+Detalhe: <quando houver>
+Data/Hora: <data>
+
+Mensagem automática de acompanhamento.
+Responda SAIR se não quiser receber novos avisos.
+```
+
+Quando várias novidades do mesmo processo estão pendentes, o WA.Auto envia um digest único em vez de uma mensagem por evento.
+
+### Último retorno sincronizado
+
+Registrar atendimento no SheetsPredict também sincroniza imediatamente aquele processo com o WA.Auto. Isso evita que uma movimentação anterior ao contato humano seja enviada depois como se fosse novidade.
+
+A sincronização completa também roda em segundo plano depois da atualização do Google Sheets quando a automação estiver habilitada, com throttle para não reenviar milhares de registros desnecessariamente.
+
+### Segurança operacional
+
+- ativar é uma ação explícita do usuário;
+- opt-out/NÃO CONTATAR sempre bloqueia o envio;
+- falha ambígua durante o envio vira `uncertain` e não é reenviada automaticamente;
+- nenhum evento é inventado quando DataJud/DJEN falha;
+- o DJEN usado para a automação é o runtime do WA.Auto;
+- uma campanha comum ativa continua tendo precedência sobre alertas jurídicos;
+- o primeiro scan não dispara histórico antigo.
 
 ## Predict Studio
 
@@ -351,6 +431,7 @@ O pipeline valida, entre outros pontos:
 - deep-links/F5;
 - Central Integrada;
 - Predict Studio com oito superfícies do PredictLM;
+- WA.Auto integrado com sessão cloud, clientes da carteira e automação DataJud/DJEN opt-in;
 - Skill Federation com catálogo auditável de skills/agentes/plugins;
 - Runtime Federation local opt-in;
 - temas e contraste;
@@ -366,7 +447,7 @@ Após uma alteração grande de frontend, um `Ctrl+Shift+R` pode ser usado uma v
 
 ## Estado atual
 
-**SheetsPredict 4.0.0**
+**SheetsPredict 4.1.0**
 
 Foco da versão:
 
