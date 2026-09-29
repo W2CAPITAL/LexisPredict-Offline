@@ -2,9 +2,8 @@
 "use strict";
 
 const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit";
-const DB_NAME="lexispredict-offline-v1";
-const LS={session:"lexis.offline.session"};
-const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,serverCfg:{}};
+const DB_NAME="lexispredict-secure-cache-v2";
+const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,serverCfg:{},djenBlockedUntil:0};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -57,7 +56,7 @@ async function apiSheets(payload){
 async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
 async function syncFromCloud(){
   showBanner("Sincronizando carteira com o Google Sheets…","good");
-  const j=await apiSheets({action:"list",limit:8000,sess:state.session?.sess||state.session?.session||""});
+  const j=await apiSheets({action:"list",limit:8000});
   const rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
   state.rows=rows;await saveRows(rows);state.lastSync=now();await idbPut("meta",{key:"lastSync",value:state.lastSync});
   await flushOutbox();showBanner("Sincronização concluída: "+rows.length+" processos carregados.","good");render();
@@ -65,13 +64,13 @@ async function syncFromCloud(){
 async function flushOutbox(){
   const list=await idbAll("outbox");if(!list.length)return;
   const rows=list.map(x=>x.row);
-  const j=await apiSheets({action:"write",rows,sess:state.session?.sess||state.session?.session||"",actor:state.session?.user?.usuario||"offline"});
+  const j=await apiSheets({action:"write",rows});
   if(j.ok!==false)await idbClear("outbox");
 }
 function showBanner(msg,type=""){const b=$("#banner");b.textContent=msg;b.className="banner "+type;b.classList.remove("hidden");clearTimeout(showBanner.t);showBanner.t=setTimeout(()=>b.classList.add("hidden"),7000)}
 function setLogged(on){$("#login").classList.toggle("hidden",on);$("#app").classList.toggle("hidden",!on)}
-function saveSession(s){state.session=s;sessionStorage.setItem(LS.session,JSON.stringify(s||{}))}
-function restoreSession(){try{const s=JSON.parse(sessionStorage.getItem(LS.session)||"null");if(s&&Object.keys(s).length)state.session=s}catch{}}
+function saveSession(s){state.session=s||null}
+function restoreSession(){state.session=null}
 
 function metrics(rows=state.rows){
   const m={total:rows.length,active:0,closed:0,venc:0,attention:0,good:0,neutral:0,bad:0,newer:0,djen:0,dj:0,scoreSum:0,scoreN:0,proc:0,improc:0};
@@ -171,10 +170,15 @@ function renderScanResult(x){
 }
 async function scanOne(cnj,quiet=false){
   const d=digits(cnj);if(d.length!==20){if(!quiet)showBanner("CNJ inválido. Use 20 dígitos.","bad");return null}
+  if(state.djenBlockedUntil>Date.now()){
+    const wait=Math.max(1,Math.ceil((state.djenBlockedUntil-Date.now())/1000));
+    const j={ok:false,error:"DJEN em pausa por limite oficial. Tente novamente em "+wait+"s.",retry:true,retryAfterMs:wait*1000};
+    state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);return j;
+  }
   try{
     const r=await fetch("/api/djen?cnj="+encodeURIComponent(cnjFormatted(d)),{cache:"no-store"});const j=await r.json();state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);
     if(j.ok&&j.found){const row=state.rows.find(x=>digits(pick(x,"Protocolo"))===d);if(row){const y=j.latest||{};row["DJEN • Última Publicação"]=[y.tipoComunicacao,y.tipoDocumento,y.nomeOrgao,y.texto].filter(Boolean).join(" — ").slice(0,2000);row["DJEN • Data"]=y.data_disponibilizacao||"";row["_DJENId"]=String(y.id||y.hash||"");row["_DJENDate"]=y.data_disponibilizacao||"";row["Fonte"]=pick(row,"Fonte")?String(pick(row,"Fonte"))+" + DJEN":"DJEN";row["Última Sincronização"]=now();await saveRows(state.rows);await queueWrite(row)}}
-    if(r.status===429)return {...j,retry:true};return j;
+    if(r.status===429){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);state.djenBlockedUntil=Date.now()+ms;return {...j,retry:true,retryAfterMs:ms}}return j;
   }catch(e){const j={ok:false,error:e.message||String(e)};state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);return j}
 }
 function logQueue(msg){const el=$("#queueLog");if(!el)return;const d=document.createElement("div");d.textContent=new Date().toLocaleTimeString("pt-BR")+" • "+msg;el.appendChild(d);el.scrollTop=el.scrollHeight}
@@ -186,7 +190,7 @@ async function scanQueue(){
   for(const row of list){
     if(state.scanStop)break;const cnj=pick(row,"Protocolo");logQueue("Consultando "+cnjFormatted(cnj));
     const j=await scanOne(cnj,true);done++;const p=$("#scanProgress");if(p)p.style.width=Math.round(done/list.length*100)+"%";
-    if(j?.retry){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);logQueue("HTTP 429 • pausa de "+Math.ceil(ms/1000)+"s");await sleep(ms)}else await sleep(1100);
+    if(j?.retry){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);logQueue("HTTP 429 • pausa de "+Math.ceil(ms/1000)+"s");await sleep(ms)}else await sleep(5000);
     if(done%10===0){try{await flushOutbox();logQueue("Checkpoint salvo • "+done+" processos")}catch(e){logQueue("Sync adiado: "+e.message)}}
   }
   state.scanning=false;state.scanStop=false;try{await flushOutbox()}catch{}logQueue("Fila finalizada/pausada.");renderScanner();
@@ -198,10 +202,33 @@ function openProcess(key){
   $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");$("#fAssistente").value=pick(r,"Assistente");$("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações");$("#processStatus").textContent="";$("#processDialog").showModal()
 }
 async function saveProcess(){
-  const key=$("#editKey").value;let r=state.rows.find(x=>keyOf(x)===key);if(!r){r={};state.rows.unshift(r)}
-  Object.assign(r,{"Cliente":$("#fCliente").value.trim(),"Protocolo":$("#fProtocolo").value.trim(),"Assistente":$("#fAssistente").value.trim(),"Advogado":$("#fAdvogado").value.trim(),"Escritório":$("#fEscritorio").value.trim(),"Tribunal":$("#fTribunal").value.trim(),"Status":$("#fStatus").value.trim(),"Telefone":$("#fTelefone").value.trim(),"Último Retorno":$("#fRetorno").value.trim(),"Próximo Retorno":$("#fProximo").value.trim(),"Observações":$("#fObs").value.trim()});
-  if(digits(r["Protocolo"]).length===20){r["Automação"]="PENDENTE";r["Próxima Sincronização"]=""}
-  await saveRows(state.rows);await queueWrite(r);$("#processDialog").close();showBanner("Processo salvo e colocado na fila de sincronização.","good");render()
+  const key=$("#editKey").value;
+  const current=state.rows.find(x=>keyOf(x)===key)||{};
+  const next={...current,
+    "Cliente":$("#fCliente").value.trim(),
+    "Protocolo":$("#fProtocolo").value.trim(),
+    "Assistente":$("#fAssistente").value.trim(),
+    "Advogado":$("#fAdvogado").value.trim(),
+    "Escritório":$("#fEscritorio").value.trim(),
+    "Tribunal":$("#fTribunal").value.trim(),
+    "Status":$("#fStatus").value.trim(),
+    "Telefone":$("#fTelefone").value.trim(),
+    "Último Retorno":$("#fRetorno").value.trim(),
+    "Próximo Retorno":$("#fProximo").value.trim(),
+    "Observações":$("#fObs").value.trim()
+  };
+  if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
+  $("#processStatus").textContent="Salvando na planilha…";
+  try{
+    const j=await apiSheets({action:"write",rows:[next]});
+    if(j.ok===false)throw new Error(j.error||"A planilha recusou a alteração.");
+    $("#processDialog").close();
+    showBanner("Alteração salva na planilha.","good");
+    await syncFromCloud();
+  }catch(e){
+    $("#processStatus").textContent=e.message||String(e);
+    showBanner("Não foi possível salvar na planilha: "+(e.message||String(e)),"bad");
+  }
 }
 function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.rows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
@@ -210,7 +237,7 @@ function setupEvents(){
   $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
   $("#newProcessBtn").onclick=()=>openProcess("");
-  $("#logoutBtn").onclick=()=>{saveSession(null);state.rows=[];setLogged(false);updateSyncUi()};
+  $("#logoutBtn").onclick=async()=>{try{await apiSheets({action:"logout"})}catch(_){}saveSession(null);state.rows=[];setLogged(false);updateSyncUi()};
   $("#saveProcessBtn").onclick=saveProcess;
   $("#loginBtn").onclick=async()=>{
     const u=$("#loginUser").value.trim(),p=$("#loginPass").value;
@@ -218,8 +245,7 @@ function setupEvents(){
     if(!u||!p){$("#loginStatus").textContent="Informe usuário e senha.";return}
     try{
       const j=await loginCloud(u,p);
-      const next={user:j.user||j.usuario||{usuario:u},sess:j.sess||j.session||j.token||""};
-      if(!next.sess)throw new Error("O servidor não retornou uma sessão válida.");
+      const next={user:j.user||j.usuario||{usuario:u}};
       saveSession(next);
       state.rows=[];
       await syncFromCloud();
@@ -243,21 +269,17 @@ async function boot(){
   setupEvents();
   restoreSession();
   if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
-  if(state.session?.sess){
-    try{
-      const check=await apiSheets({action:"auto",sess:state.session.sess});
-      if(!check?.ok)throw new Error(check?.error||"Sessão inválida");
-      if(check.user)state.session.user=check.user;
-      await syncFromCloud();
-      setLogged(true);
-      applyUser();
-      render();
-    }catch(_){
-      saveSession(null);
-      state.rows=[];
-      setLogged(false);
-    }
-  }else{
+  try{
+    const check=await apiSheets({action:"auto"});
+    if(!check?.ok)throw new Error(check?.error||"Sessão inválida");
+    saveSession({user:check.user||{}});
+    await syncFromCloud();
+    setLogged(true);
+    applyUser();
+    render();
+  }catch(_){
+    saveSession(null);
+    state.rows=[];
     setLogged(false);
   }
   updateSyncUi();
