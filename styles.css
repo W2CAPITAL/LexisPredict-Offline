@@ -3,6 +3,7 @@
   --line:#e4e7ec;--line2:#eef1f4;--nav:#0b1220;--nav2:#151e2e;--primary:#1677d2;--primary2:#0d5fae;
   --cyan:#0ea5e9;--cyanbg:#e8f6fd;--green:#16804a;--greenbg:#eaf7ef;--amber:#9a6700;--amberbg:#fff5dd;
   --red:#b42318;--redbg:#fff0ee;--blue:#175cd3;--bluebg:#eaf2ff;--shadow:0 8px 24px rgba(15,23,42,.06);
+  --card:#ffffff;--border:#e4e7ec;--on-primary:#ffffff;--focus-ring:rgba(22,119,210,.20);
   --r:12px;--sans:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
 }
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px}
@@ -313,54 +314,63 @@ html[data-theme="clean"]{
   --line:#dfe5ec;--line2:#edf1f5;--nav:#111827;--nav2:#1f2937;--primary:#2563eb;--primary2:#1d4ed8;--cyan:#38bdf8;
   --green:#15803d;--greenbg:#ecfdf3;--amber:#a16207;--amberbg:#fffbeb;--red:#b91c1c;--redbg:#fef2f2;--blue:#1d4ed8;--bluebg:#eff6ff;
   --shadow:0 8px 24px rgba(15,23,42,.05);--card:#ffffff;--border:#dfe5ec;
+  --on-primary:#ffffff;--focus-ring:rgba(37,99,235,.24);
 }
 html[data-theme="dark"]{
   --bg:#0d1117;--surface:#161b22;--surface2:#1d2430;--ink:#e6edf3;--muted:#a6b0bf;--muted2:#7d8999;
   --line:#30363d;--line2:#262d36;--nav:#090d13;--nav2:#161b22;--primary:#3b82f6;--primary2:#2563eb;--cyan:#38bdf8;--cyanbg:#112b3c;
   --green:#3fb950;--greenbg:#12261a;--amber:#e3b341;--amberbg:#2b2414;--red:#f85149;--redbg:#301719;--blue:#58a6ff;--bluebg:#10243d;
   --shadow:0 10px 28px rgba(0,0,0,.28);--card:#161b22;--border:#30363d;
+  --on-primary:#07111f;--focus-ring:rgba(88,166,255,.28);
 }
 html[data-theme="midnight"]{
   --bg:#07111f;--surface:#0d1b2a;--surface2:#11263a;--ink:#e6f1ff;--muted:#94a9bf;--muted2:#6f879e;
   --line:#20384f;--line2:#172d42;--nav:#050b14;--nav2:#0c1928;--primary:#0ea5e9;--primary2:#0284c7;--cyan:#38bdf8;--cyanbg:#0b2b40;
   --green:#34d399;--greenbg:#0c2b24;--amber:#fbbf24;--amberbg:#33260b;--red:#fb7185;--redbg:#35131b;--blue:#60a5fa;--bluebg:#102a4b;
   --shadow:0 12px 30px rgba(0,0,0,.3);--card:#0d1b2a;--border:#20384f;
+  --on-primary:#06111d;--focus-ring:rgba(56,189,248,.28);
 }
 html[data-theme="graphite"]{
   --bg:#151515;--surface:#202020;--surface2:#292929;--ink:#f2f2f2;--muted:#b3b3b3;--muted2:#858585;
   --line:#383838;--line2:#303030;--nav:#0d0d0d;--nav2:#171717;--primary:#a3a3a3;--primary2:#7a7a7a;--cyan:#d4d4d4;--cyanbg:#2b2b2b;
   --green:#72c98c;--greenbg:#1d3023;--amber:#d6b15a;--amberbg:#322a18;--red:#ef7b74;--redbg:#361c1a;--blue:#9ab7d8;--bluebg:#222d38;
   --shadow:0 12px 30px rgba(0,0,0,.32);--card:#202020;--border:#383838;
+  --on-primary:#111111;--focus-ring:rgba(212,212,212,.24);
 }
 html[data-theme="emerald"]{
   --bg:#f1f8f5;--surface:#ffffff;--surface2:#edf7f2;--ink:#10241d;--muted:#577066;--muted2:#83978f;
   --line:#d3e4dc;--line2:#e6efeb;--nav:#06281f;--nav2:#0b392d;--primary:#059669;--primary2:#047857;--cyan:#14b8a6;--cyanbg:#e6faf5;
   --green:#07864f;--greenbg:#e8f8ef;--amber:#9a6700;--amberbg:#fff7df;--red:#b42318;--redbg:#fff0ee;--blue:#0f766e;--bluebg:#e9faf7;
   --shadow:0 8px 24px rgba(5,80,55,.07);--card:#ffffff;--border:#d3e4dc;
+  --on-primary:#ffffff;--focus-ring:rgba(5,150,105,.24);
 }
 html[data-theme="wine"]{
   --bg:#f7f2ef;--surface:#fffdf9;--surface2:#f3eae6;--ink:#2b1720;--muted:#755b65;--muted2:#9b858d;
   --line:#e4d5d9;--line2:#efe4e7;--nav:#35111d;--nav2:#4b1728;--primary:#8b1e3f;--primary2:#6f1632;--cyan:#c74969;--cyanbg:#fbe9ee;
   --green:#477a5a;--greenbg:#edf6ef;--amber:#9d6c14;--amberbg:#fff5dd;--red:#a51d2d;--redbg:#fbe9eb;--blue:#704b67;--bluebg:#f2eaf0;
   --shadow:0 8px 24px rgba(75,23,40,.08);--card:#fffdf9;--border:#e4d5d9;
+  --on-primary:#ffffff;--focus-ring:rgba(139,30,63,.24);
 }
 html[data-theme="violet"]{
   --bg:#100d1c;--surface:#1a162b;--surface2:#241e39;--ink:#f1edff;--muted:#b6abd2;--muted2:#897fa5;
   --line:#392f55;--line2:#302746;--nav:#0c0915;--nav2:#171126;--primary:#8b5cf6;--primary2:#7c3aed;--cyan:#a78bfa;--cyanbg:#281c49;
   --green:#6ee7b7;--greenbg:#173127;--amber:#facc15;--amberbg:#342b0e;--red:#fb7185;--redbg:#38151d;--blue:#a78bfa;--bluebg:#261c43;
   --shadow:0 12px 32px rgba(0,0,0,.35);--card:#1a162b;--border:#392f55;
+  --on-primary:#ffffff;--focus-ring:rgba(139,92,246,.28);
 }
 html[data-theme="gold"]{
   --bg:#11100d;--surface:#1b1913;--surface2:#252219;--ink:#f5eedc;--muted:#c0b38f;--muted2:#8f8469;
   --line:#403a29;--line2:#332f22;--nav:#080806;--nav2:#15130e;--primary:#d4a72c;--primary2:#af861e;--cyan:#e8c963;--cyanbg:#332b14;
   --green:#8fbf74;--greenbg:#23301d;--amber:#e3b341;--amberbg:#352b10;--red:#e98078;--redbg:#351a17;--blue:#d4b86a;--bluebg:#30291a;
   --shadow:0 12px 34px rgba(0,0,0,.38);--card:#1b1913;--border:#403a29;
+  --on-primary:#11100d;--focus-ring:rgba(212,167,44,.30);
 }
 html[data-theme="contrast"]{
   --bg:#000000;--surface:#0a0a0a;--surface2:#151515;--ink:#ffffff;--muted:#e5e5e5;--muted2:#bdbdbd;
   --line:#666666;--line2:#3f3f3f;--nav:#000000;--nav2:#111111;--primary:#00a8ff;--primary2:#007fc2;--cyan:#00e5ff;--cyanbg:#002c33;
   --green:#53ff8c;--greenbg:#003514;--amber:#ffd84d;--amberbg:#3b3100;--red:#ff6565;--redbg:#3f0000;--blue:#57bfff;--bluebg:#002d4a;
   --shadow:0 0 0 1px #666;--card:#0a0a0a;--border:#666666;
+  --on-primary:#000000;--focus-ring:rgba(0,229,255,.38);
 }
 
 /* Faz os temas alcançarem também componentes que historicamente usavam cores fixas. */
@@ -471,3 +481,148 @@ html[data-theme] ::selection{background:color-mix(in srgb,var(--primary) 45%,tra
 @media(max-width:1250px){.theme-grid{grid-template-columns:repeat(3,minmax(180px,1fr))}}
 @media(max-width:900px){.theme-grid{grid-template-columns:repeat(2,minmax(170px,1fr))}.settings-info{grid-template-columns:1fr}.settings-info>div{border-right:0;border-bottom:1px solid var(--line2)}}
 @media(max-width:560px){.theme-grid{grid-template-columns:1fr}.theme-preview{height:105px}}
+
+
+/* SheetsPredict 3.1.1 — camada universal de contraste */
+html[data-theme]{
+  --control-bg:var(--surface);
+  --control-hover:var(--surface2);
+  --text-main:var(--ink);
+  --text-soft:var(--muted);
+  --text-faint:var(--muted2);
+}
+html[data-theme] body,
+html[data-theme] button,
+html[data-theme] input,
+html[data-theme] select,
+html[data-theme] textarea{color:var(--text-main)}
+html[data-theme] input::placeholder,
+html[data-theme] textarea::placeholder{color:var(--text-faint);opacity:1}
+html[data-theme] .btn.primary,
+html[data-theme] .quick-actions .contacted,
+html[data-theme] .hub-tabs button.active{
+  background:var(--primary)!important;color:var(--on-primary)!important;border-color:var(--primary)!important
+}
+html[data-theme] .btn.primary:hover{background:var(--primary2)!important;color:var(--on-primary)!important}
+
+/* Superfícies principais: nenhuma pode continuar branca/fixa em temas escuros. */
+html[data-theme] :is(
+  .lexis-page-header,.task-header,.task-card,.case-box,.quick-box,.analysis-tile,
+  .crm360-head,.pipeline-col,.pipeline-card,.permission-card,.report-sheet,
+  .report-list-item,.attendance-summary,.attendance-rule,.history-meta span,
+  .history-item,.audit-hero,.audit-panel,.suggestion,.decision-card,.offline-note,
+  .calendar-card,.agenda-day-panel,.agenda-event-card,.agenda-compose,
+  .hub-tabs,.hub-source-card,.hub-action,.hub-chat,.hub-msg,.lead-contact-list span,
+  .integration-env code,.search-field,.source-card,.publication,.record-toolbar,
+  .table-wrap,.card,.kpi,.dialog-card,.settings-section
+){
+  background:var(--surface)!important;
+  color:var(--text-main)!important;
+  border-color:var(--line)!important;
+}
+
+/* Superfícies secundárias */
+html[data-theme] :is(
+  .table th,.sync-indicator,.scanner-health span,.company-note,.empty-state,.history-empty,
+  .pipeline-col,.global-x-scroll,.task-searchbar,.calendar-weekdays,.score,.b-gray,
+  .search-field:focus-within,.report-band.neutral
+){
+  background:var(--surface2)!important;
+  color:var(--text-soft)!important;
+  border-color:var(--line)!important;
+}
+html[data-theme] .table tr:hover td{background:var(--surface2)!important}
+
+/* Texto principal. */
+html[data-theme] :is(
+  .lexis-page-header h2,.task-client,.task-meta strong,.case-box strong,.quick-box p,
+  .task-manage,.audit-kv strong,.audit-source,.pipeline-card strong,.permission-card h2,
+  .attendance-summary strong,.history-item-head strong,.hub-source-card strong,
+  .hub-action strong,.lead-result strong,.theme-card-copy strong,.timeline-item strong,
+  .record-title strong,.card-head h3,.empty-state strong,.decision-card h3,.decision-card p,
+  .report-list-item strong,.publication h4,.publication p
+){color:var(--text-main)!important}
+
+/* Texto secundário. */
+html[data-theme] :is(
+  .lexis-page-header p,.task-meta,.case-owner,.case-box-label,.case-box p,.publication-box .publication-text,
+  .audit-hero p,.audit-kv span,.crm360-head p,.timeline-item small,.timeline-item p,
+  .pipeline-card small,.permission-card p,.responsibility-grid h4,.report-list-item small,
+  .attendance-summary span,.history-meta,.history-item-head span,.history-body small,.history-body p,
+  .hub-source-card p,.hub-source-card small,.hub-action span,.hub-form label,.hub-note,.hub-check,
+  .hub-msg-meta,.lead-result small,.lead-result p,.theme-card-copy p,.settings-info span,.field-hint,
+  .cell-sub,.record-title>span:last-child,.section-title p
+){color:var(--text-soft)!important}
+
+/* Controles e códigos */
+html[data-theme] :is(
+  input,select,textarea,.btn,.icon-action,.cnj-chip,.quick-actions button,.quick-actions a,
+  .integration-env code,.search-field input,.pagination-actions input
+){
+  background:var(--control-bg)!important;color:var(--text-main)!important;border-color:var(--line)!important
+}
+html[data-theme] :is(.btn,.icon-action,.quick-actions button,.quick-actions a):hover{
+  background:var(--control-hover)!important;color:var(--text-main)!important
+}
+html[data-theme] input:focus,
+html[data-theme] select:focus,
+html[data-theme] textarea:focus,
+html[data-theme] .search-field:focus-within{
+  border-color:var(--primary)!important;box-shadow:0 0 0 3px var(--focus-ring)!important
+}
+html[data-theme] input[readonly],
+html[data-theme] input:disabled{background:var(--surface2)!important;color:var(--text-soft)!important}
+
+/* Estados semânticos continuam distinguíveis com contraste em claro e escuro. */
+html[data-theme] .suggestion{background:var(--amberbg)!important;border-color:color-mix(in srgb,var(--amber) 45%,var(--line))!important}
+html[data-theme] .suggestion h5,
+html[data-theme] .suggestion p{color:var(--amber)!important}
+html[data-theme] .report-list-item.danger{background:color-mix(in srgb,var(--redbg) 82%,var(--surface))!important;border-left-color:var(--red)!important}
+html[data-theme] .report-list-item.info{background:color-mix(in srgb,var(--bluebg) 82%,var(--surface))!important;border-left-color:var(--blue)!important}
+html[data-theme] .attendance-rule,
+html[data-theme] .decision-card,
+html[data-theme] .audit-hero,
+html[data-theme] .hub-msg.user{
+  background:color-mix(in srgb,var(--bluebg) 72%,var(--surface))!important;
+  border-color:color-mix(in srgb,var(--blue) 38%,var(--line))!important
+}
+html[data-theme] .history-index{background:var(--bluebg)!important;color:var(--blue)!important}
+html[data-theme] .history-item.djen .history-index{background:color-mix(in srgb,#7c3aed 20%,var(--surface))!important;color:color-mix(in srgb,#a78bfa 82%,var(--ink))!important}
+html[data-theme] .timeline-dot{background:var(--primary)!important;border-color:color-mix(in srgb,var(--primary) 30%,var(--surface))!important}
+html[data-theme] .timeline-item:after{background:var(--line)!important}
+
+/* Navegação lateral mantém seu próprio contraste. */
+html[data-theme] .sidebar{color:#f8fafc}
+html[data-theme] .side-brand,
+html[data-theme] .sidebar-foot strong{color:#ffffff!important}
+html[data-theme] .nav-item{color:#c5d0df}
+html[data-theme] .nav-item:hover{color:#ffffff;background:rgba(255,255,255,.08)}
+html[data-theme] .nav-item.active{color:#ffffff!important}
+html[data-theme="gold"] .nav-item.active,
+html[data-theme="contrast"] .nav-item.active,
+html[data-theme="graphite"] .nav-item.active{color:var(--on-primary)!important}
+html[data-theme] .sidebar-toggle{color:#dbe5f0}
+
+/* Scrollbars acompanham o tema. */
+html[data-theme] .table-wrap,
+html[data-theme] #nav,
+html[data-theme] .content{scrollbar-color:var(--muted2) var(--surface2)}
+html[data-theme] .table-wrap::-webkit-scrollbar-track,
+html[data-theme] .global-x-scroll::-webkit-scrollbar-track{background:var(--surface2)}
+html[data-theme] .table-wrap::-webkit-scrollbar-thumb,
+html[data-theme] .global-x-scroll::-webkit-scrollbar-thumb{background:var(--muted2);border-color:var(--surface2)}
+
+/* Alto contraste precisa ser realmente alto contraste, sem transparências lavadas. */
+html[data-theme="contrast"] .topbar{background:#000000!important;border-color:#ffffff!important}
+html[data-theme="contrast"] :is(.card,.kpi,.record-toolbar,.table-wrap,.lexis-page-header,.dialog-card,.settings-section,.task-card,.hub-source-card,.hub-action){
+  border-color:#8a8a8a!important
+}
+html[data-theme="contrast"] .eyebrow,
+html[data-theme="contrast"] .muted,
+html[data-theme="contrast"] .cell-sub{color:#e5e5e5!important}
+html[data-theme="contrast"] a{color:#57c7ff!important;text-decoration:underline}
+html[data-theme="contrast"] :focus-visible{outline:3px solid #00e5ff!important;outline-offset:2px}
+
+/* Cabeçalhos de relatório: sempre legíveis no fundo de destaque. */
+html[data-theme] .report-band:not(.neutral){background:var(--nav2)!important;color:#ffffff!important}
+html[data-theme] .report-band:not(.neutral) .eyebrow{color:#dbeafe!important}
