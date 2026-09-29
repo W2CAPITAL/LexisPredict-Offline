@@ -1,5 +1,15 @@
 # LexisPredict Offline Web
 
+## Correção de históricos e navegação (29/09/2026)
+
+- Corrigidos os seletores de listas que causavam `$(...).forEach is not a function`.
+- Scanner, histórico e Audit enviam os eventos retornados pelo DataJud e DJEN às abas `Movimentações_DataJud` e `Publicações_DJEN`, além do resumo em `Processos`.
+- A gravação preserva os registros anteriores e elimina repetições por CNJ + chave/ID. Falhas mantêm o histórico na fila local para nova tentativa.
+- É necessário atualizar **também** o Apps Script com `installer-script.txt` e publicar uma nova versão da implantação existente. Uma versão antiga recebe o resumo, mas o app mantém o histórico pendente e informa a atualização necessária.
+- O instalador inclui os pontos de entrada `doGet` e `doPost`. Se o projeto já possui um roteador com esses nomes, mantenha um único roteador delegando para `syncDoGet_` / `syncDoPost_`, preservando os demais scripts do scanner.
+
+Validação: `npm test` inclui navegação com zero/vários botões, persistência e deduplicação de históricos, crescimento das abas e falhas de gravação. Consultas externas podem retornar resultados parciais ou limite de requisições; isso não equivale a ausência de movimentação.
+
 Versão **offline-first** do LexisPredict para Vercel, usando a planilha jurídica como fonte de verdade operacional.
 
 ## O que está implementado

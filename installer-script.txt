@@ -64,6 +64,99 @@ var MAX_WRITE_ROWS = 3600;
 
 var INDEX_SHEET = "__LEXIS_INDEX";
 
+// Entradas públicas do Web App. Mantenha apenas uma definição de cada no projeto.
+function doPost(e) { return syncDoPost_(e); }
+function doGet(e) { return syncDoGet_(e); }
+
+var JUDICIAL_TABLES = {
+  datajud: { name: "Movimentações_DataJud", headers: ["Data/Hora", "CNJ", "Data Movimento", "Movimento", "Órgão Julgador", "Chave"], key: "Chave" },
+  djen: { name: "Publicações_DJEN", headers: ["Data/Hora", "CNJ", "Data Disponibilização", "Tipo", "Órgão", "Destinatário", "Resumo", "ID", "Abrir publicação"], key: "ID" }
+};
+
+function judicialText_(value) {
+  var text = String(value == null ? "" : value);
+  if (text.length > 49000) throw new Error("Evento judicial excede o limite da célula; histórico mantido pendente.");
+  return text.charAt(0) === "=" ? "'" + text : text;
+}
+
+function judicialDate_(value) {
+  if (!value) return "";
+  var text = String(value);
+  // Horários DataJud sem offset e datas DJEN são locais à planilha.
+  var zone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return Utilities.parseDate(text, zone, "yyyy-MM-dd");
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)) return Utilities.parseDate(text, zone, "yyyy-MM-dd'T'HH:mm:ss");
+  var date = new Date(text);
+  return isNaN(date.getTime()) ? judicialText_(text) : date;
+}
+
+// Chamado dentro do mesmo ScriptLock de writeRecords_. Não remove histórico existente.
+function appendJudicialHistory_(records) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), counts = {datajud:0,djen:0};
+  Object.keys(JUDICIAL_TABLES).forEach(function(source) {
+    var cfg = JUDICIAL_TABLES[source], candidates = [];
+    records.forEach(function(record) {
+      var cnj = digits(protocolFromRecord_(record));
+      if (cnj.length !== 20) throw new Error("CNJ inválido para gravar histórico.");
+      var events = record._JudicialHistory && record._JudicialHistory[source];
+      if (!Array.isArray(events)) return;
+      events.forEach(function(event) {
+        if (!event || typeof event !== "object") return;
+        var eventCnj = digits(event.numero_processo || event.numeroProcesso || "");
+        if (eventCnj && eventCnj !== cnj) throw new Error("Histórico recebido pertence a outro CNJ.");
+        var row = {"Data/Hora":new Date(),"CNJ":cnj};
+        if (source === "datajud") {
+          var name = event.nome || event.descricao || "", date = event.dataHora || event.data || "";
+          if (!name) return;
+          row["Data Movimento"] = judicialDate_(date);
+          row["Movimento"] = judicialText_(name + (event.complemento ? " — " + event.complemento : ""));
+          row["Órgão Julgador"] = judicialText_(event.orgaoJulgador || "");
+          row["Chave"] = [date,event.codigo || event.codigoMovimento || "0",name].join("|");
+        } else {
+          var text = event.texto || event.resumo || "", date = event.data_disponibilizacao || event.dataDisponibilizacao || "";
+          if (!text) return;
+          row["Data Disponibilização"] = judicialDate_(date);
+          row["Tipo"] = judicialText_(event.tipoComunicacao || event.tipoDocumento || "");
+          row["Órgão"] = judicialText_(event.nomeOrgao || "");
+          row["Destinatário"] = judicialText_((Array.isArray(event.destinatarios) ? event.destinatarios : []).map(function(d){return d.nome || "";}).filter(Boolean).join("; "));
+          row["Resumo"] = judicialText_(text);
+          row["ID"] = judicialText_(event.id != null ? event.id : event.hash || [date,event.tipoComunicacao || "",text].join("|"));
+          row["Abrir publicação"] = /^https?:\/\//i.test(event.link || "") ? event.link : "";
+        }
+        candidates.push(row);
+      });
+    });
+    if (!candidates.length) return;
+    ensureSheetWithHeaders_(ss,cfg.name,cfg.headers);
+    var sh = ss.getSheetByName(cfg.name), headers = headers_(sh), map = headerMap_(headers);
+    var cnjCol = findCol_(map,["CNJ"]), keyCol = findCol_(map,[cfg.key]);
+    var seen = Object.create(null), end = sh.getLastRow();
+    if (end > HEADER_ROW) {
+      var existing = sh.getRange(HEADER_ROW+1,1,end-HEADER_ROW,headers.length).getValues();
+      existing.forEach(function(row){seen[digits(row[cnjCol])+"|"+String(row[keyCol])] = true;});
+    }
+    var rows = [];
+    candidates.forEach(function(record){
+      var key = record.CNJ + "|" + String(record[cfg.key]);
+      if (seen[key]) return;
+      seen[key] = true;
+      rows.push(headers.map(function(header){return record[header] == null ? "" : record[header];}));
+    });
+    if (!rows.length) return;
+    var first = end + 1, needed = end + rows.length;
+    if (needed > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(),needed-sh.getMaxRows());
+    sh.getRange(first,cnjCol+1,rows.length,1).setNumberFormat("@");
+    sh.getRange(first,keyCol+1,rows.length,1).setNumberFormat("@");
+    sh.getRange(first,1,rows.length,headers.length).setValues(rows);
+    ["Data/Hora",source === "datajud" ? "Data Movimento" : "Data Disponibilização"].forEach(function(header){
+      var col = findCol_(map,[header]);
+      if(col >= 0) sh.getRange(first,col+1,rows.length,1).setNumberFormat(header === "Data/Hora" ? "dd/MM/yyyy HH:mm:ss" : "dd/MM/yyyy");
+    });
+    counts[source] = rows.length;
+  });
+  return counts;
+}
+
 
 
 var USER_HEADERS = [
@@ -982,6 +1075,7 @@ function writeRecords_(rows, actor, allowInsert) {
 
     var rejected = [];
     var processAudit = [];
+    var judicialRecords = [];
 
 
 
@@ -1137,6 +1231,7 @@ function writeRecords_(rows, actor, allowInsert) {
 
 
       touched[targetRow] = current;
+      if (record._JudicialHistory) judicialRecords.push(record);
 
       if (!index.sheet) return;
 
@@ -1180,6 +1275,7 @@ function writeRecords_(rows, actor, allowInsert) {
 
     appendIndexRows_(index.sheet, indexAdds);
     if (processAudit.length) auditRows_(processAudit.slice(0, 5000));
+    var historyCounts = appendJudicialHistory_(judicialRecords);
 
     SpreadsheetApp.flush();
 
@@ -1188,6 +1284,9 @@ function writeRecords_(rows, actor, allowInsert) {
     return {
 
       ok: true,
+
+      history_saved: true,
+      history_counts: historyCounts,
 
       updated: updates,
 

@@ -168,8 +168,34 @@ function crmClients(){
 function clientById(id){return crmClients().find(c=>String(c.ClienteId)===String(id))||null}
 function crmRowsForClient(table,id){return (state.crm[table]||[]).filter(x=>String(x.ClienteId||x.cliente_id||"")===String(id))}
 
+function judicialWritePatch(row,scan){
+  const events={datajud:[],djen:[]};
+  if(!scan.datajud?.error&&Array.isArray(scan.datajud?.movimentos))events.datajud=scan.datajud.movimentos.map(m=>({...m,orgaoJulgador:scan.datajud.orgaoJulgador||""}));
+  if(Array.isArray(scan.djen?.items))events.djen=scan.djen.items;
+  const patch={Protocolo:pick(row,"Protocolo"),...scan.patch};
+  // O bridge preserva campos vazios; não os trate como alterações confirmáveis.
+  for(const key of Object.keys(patch))if(patch[key]==null||String(patch[key]).trim()==="")delete patch[key];
+  // Alias redundante sem coluna própria na planilha; a publicação já vai no campo DJEN.
+  delete patch["Publicação DJEN"];
+  if(events.datajud.length||events.djen.length)patch._JudicialHistory=events;
+  return patch;
+}
+function mergeQueuedWrite(previous,row){
+  const merged=Object.assign({},...previous,row);
+  const histories=[...previous,row].map(x=>x._JudicialHistory).filter(Boolean);
+  if(histories.length){
+    merged._JudicialHistory={};
+    for(const source of ["datajud","djen"]){
+      const unique=new Map();
+      for(const h of histories)for(const event of h[source]||[])unique.set(JSON.stringify(event),event);
+      merged._JudicialHistory[source]=[...unique.values()];
+    }
+  }
+  return merged;
+}
 async function queueWrite(row){
   const list=await idbAll("outbox"),k=keyOf(row);
+  row=mergeQueuedWrite(list.filter(x=>keyOf(x.row)===k).map(x=>x.row),row);
   const db=await openDb();
   await new Promise((res,rej)=>{
     const tx=db.transaction("outbox","readwrite"),st=tx.objectStore("outbox");
@@ -244,7 +270,7 @@ async function verifySheetWrite(row){
   const j=await apiSheets({action:"get",protocolo});
   const saved=j.row||(Array.isArray(j.data)?j.data[0]:null);
   if(!saved)return {ok:false,error:"A gravação não apareceu na planilha após o envio."};
-  const keys=Object.keys(row).filter(k=>!["Automação","Próxima Sincronização"].includes(k));
+  const keys=Object.keys(row).filter(k=>!["Automação","Próxima Sincronização","_JudicialHistory"].includes(k));
   const bad=[];
   for(const k of keys){
     const expected=comparable(row[k],k),actual=comparable(pick(saved,k),k);
@@ -262,11 +288,19 @@ async function flushOutbox(){
     const why=(j.rejected||[]).map(x=>x.motivo||x.reason).filter(Boolean).join("; ");
     throw new Error(why||j.error||"A planilha recusou uma ou mais alterações.");
   }
+  if(rows.some(row=>row._JudicialHistory)&&j.history_saved!==true){
+    throw new Error("Resumo salvo, mas o Apps Script publicado ainda não grava os históricos. Atualize o bridge e publique uma Nova versão. Os eventos continuam pendentes neste navegador.");
+  }
   for(const row of rows){
     const verify=await verifySheetWrite(row);
     if(!verify.ok)throw new Error(verify.error);
   }
-  await idbClear("outbox");
+  const db=await openDb();
+  await new Promise((resolve,reject)=>{
+    const tx=db.transaction("outbox","readwrite");
+    list.forEach(item=>tx.objectStore("outbox").delete(item.id));
+    tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+  });
   return {...j,written:Number(j.written??j.updated??rows.length),verified:true};
 }
 function showBanner(msg,type=""){const b=$("#banner");b.textContent=msg;b.className="banner "+type;b.classList.remove("hidden");clearTimeout(showBanner.t);showBanner.t=setTimeout(()=>b.classList.add("hidden"),7000)}
@@ -339,7 +373,7 @@ const viewPaths={dashboard:"/",processos:"/cases",empresa:"/processos",clientes:
 function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";if(p==="/processos-empresa")return"empresa";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
 function setView(v,push=true){
   state.view=v;
-  $(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
+  $$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
   const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;
   if(push&&viewPaths[v]&&location.pathname!==viewPaths[v])history.pushState({view:v},"",viewPaths[v]);
   render();
@@ -401,8 +435,8 @@ function renderDashboard(){
     metricRow("Revisar",state.rows.length-potential-noSell,"sem gatilho conclusivo")+
   '</div></div></div></div></div>';
   bindGotos();
-  $("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
-  $("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
+  $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
 }
 function metricRow(label,value,sub){return '<div class="metric-row"><div><div class="cell-main">'+esc(label)+'</div><div class="cell-sub">'+esc(sub)+'</div></div><strong>'+esc(value)+'</strong></div>'}
 function filteredRows(source=state.rows){
@@ -485,11 +519,11 @@ function taskCardHtml(x){
     '<div class="task-card-foot"><div class="task-icon-actions"><button class="task-icon suggest" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button><button class="task-icon audit" data-history="'+esc(key)+'">Histórico</button><a class="task-icon wa" target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">WhatsApp</a><button class="task-icon" data-edit="'+esc(key)+'">Editar</button></div><button class="task-icon task-manage" data-edit="'+esc(key)+'">Gerir ›</button></div></article>';
 }
 function bindTaskActions(){
-  $("[data-copy]").forEach(b=>b.onclick=async()=>{
+  $$("[data-copy]").forEach(b=>b.onclick=async()=>{
     const r=findRow(b.dataset.copy),msg=window.LexisSuggest?.quickMessage?window.LexisSuggest.quickMessage(r):"";
     try{await navigator.clipboard.writeText(msg);showBanner("Mensagem copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
-  $("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
+  $$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
   $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
   $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
   $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
@@ -643,8 +677,8 @@ function renderReport(){
     '<div class="card"><div class="card-head"><h3>Bloqueios comerciais</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Cliente</th><th>CNJ</th><th>Motivo</th></tr></thead><tbody>'+blocked.slice(0,30).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Produto / Oportunidade","_CommercialReason"))+'</td></tr>').join("")+'</tbody></table></div></div></div></div>';
   $("#printReport").onclick=()=>window.print();
   bindGotos();
-  $("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
-  $("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
+  $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
 }
 function renderScanner(){
   const valid=state.rows.filter(r=>digits(pick(r,"Protocolo")).length===20);
@@ -728,10 +762,9 @@ async function scanOne(cnj,quiet=false){
       Object.assign(row,j.patch);
       refreshScopes();
       await saveRows(state.companyRows);
-      const writePatch={"Protocolo":pick(row,"Protocolo"),...j.patch};
       try{
-        const wr=await apiSheets({action:"write",rows:[writePatch]});
-        if(Number(wr.rejected_count||0)>0)throw new Error((wr.rejected||[]).map(x=>x.motivo).filter(Boolean).join("; ")||"Alteração recusada");
+        await queueWrite(judicialWritePatch(row,j));
+        await flushOutbox();
       }catch(e){j.sheetError=e.message||String(e)}
     }
     if(r.status===429||j?.djen?.isRateLimited){
@@ -759,6 +792,7 @@ async function scanQueue(){
     if(state.scanStop)break;
     const cnj=pick(row,"Protocolo");logQueue("DataJud + DJEN • "+cnjFormatted(cnj));
     const j=await scanOne(cnj,true);done++;const p=$("#scanProgress");if(p)p.style.width=Math.round(done/list.length*100)+"%";
+    if(j?.sheetError){logQueue("Salvamento pendente • "+j.sheetError);showBanner(j.sheetError,"bad");break;}
     if(j?.retry){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);logQueue("DJEN 429 • pausa de "+Math.ceil(ms/1000)+"s");await sleep(ms)}
     else await sleep(6000);
     if(done%10===0)logQueue("Checkpoint • "+done+" processos");
@@ -766,7 +800,7 @@ async function scanQueue(){
   state.scanning=false;state.scanStop=false;logQueue("Fila finalizada/pausada.");renderScanner();
 }
 
-function bindGotos(){$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
+function bindGotos(){$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
 function findRow(key){return state.companyRows.find(x=>keyOf(x)===key)||state.rows.find(x=>keyOf(x)===key)||null}
 function todayBrazil(){
   const parts=new Intl.DateTimeFormat("pt-BR",{timeZone:"America/Sao_Paulo",day:"2-digit",month:"2-digit",year:"numeric"}).formatToParts(new Date());
@@ -906,11 +940,11 @@ async function loadHistory(key,{force=false}={}){
     const j=await r.json();state.historyScan=j;
     if(j.patch){
       Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
-      await queueWrite({"Protocolo":pick(row,"Protocolo"),...j.patch});
-      if(navigator.onLine)await flushOutbox().catch(()=>{});
+      await queueWrite(judicialWritePatch(row,j));
+      if(navigator.onLine)await flushOutbox();
     }
     if(!r.ok&&r.status!==207&&r.status!==429)showBanner(j.error||"Histórico retornou resultado parcial.","bad");
-  }catch(e){state.historyScan={error:e.message||String(e)}}
+  }catch(e){state.historyScan={...(state.historyScan||{}),error:e.message||String(e)};showBanner(e.message||String(e),"bad")}
   finally{state.historyLoading=false;renderHistoryDialog();render()}
 }
 function openHistory(key){
@@ -960,7 +994,7 @@ function renderAuditDialog(){
   $("#auditContactBtn").onclick=()=>openAttendance(state.auditKey);
   $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;renderAuditDialog()};
   $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
-  $("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
+  $$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
     const s=suggestions[Number(b.dataset.copySuggestion)];if(!s)return;
     try{await navigator.clipboard.writeText(s.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
@@ -982,13 +1016,13 @@ async function refreshAudit(keepSuggest=false){
     const j=await r.json();state.auditScan=j;state.auditSuggest=!!keepSuggest;
     if(j.patch){
       Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
-      await queueWrite({"Protocolo":pick(row,"Protocolo"),...j.patch});
+      await queueWrite(judicialWritePatch(row,j));
       if(navigator.onLine)await flushOutbox();
     }
     if(r.status===429||j?.djen?.isRateLimited){
       const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);state.djenBlockedUntil=Date.now()+ms;
     }
-  }catch(e){state.auditScan={ok:false,error:e.message||String(e)}}
+  }catch(e){state.auditScan={...(state.auditScan||{}),ok:false,error:e.message||String(e)};showBanner(e.message||String(e),"bad")}
   renderAuditDialog();render();
 }
 function openProcess(key){

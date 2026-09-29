@@ -6,7 +6,7 @@ O SheetsPredict usa um Web App do Google Apps Script como bridge privado entre a
 
 1. Abra a planilha oficial do SheetsPredict.
 2. Vá em **Extensões → Apps Script**.
-3. No projeto vinculado à planilha, substitua o conteúdo do bridge pelo arquivo privado atualizado **LEXIS-SYNC-AppsScript.gs**.
+3. No projeto vinculado à planilha, atualize o arquivo do bridge com **installer-script.txt**, disponível neste repositório e na página `/installer` do app. Preserve os outros arquivos, configurações e gatilhos do scanner. Deve existir apenas uma função pública `doPost` e uma `doGet`: se houver um roteador próprio, mantenha-o delegando as ações do bridge para `syncDoPost_` e `syncDoGet_`.
 4. Confirme em **Configurações do projeto → Propriedades do script** que existe `LEXIS_SHEETS_TOKEN`. Não publique esse valor no GitHub nem no navegador.
 5. Clique em **Implantar → Gerenciar implantações**.
 6. Abra a implantação existente do tipo **App da Web** e clique em **Editar**.
@@ -28,6 +28,10 @@ Depois da publicação:
 5. Abra um processo e registre um atendimento.
 6. Confirme que `AtendidoPor` e `Último Retorno` foram atualizados, enquanto `Assistente` permaneceu igual.
 7. Confirme que `AuditoriaLogsApp` recebeu a alteração.
+8. No scanner, consulte um processo e confira os eventos em `Movimentações_DataJud` e `Publicações_DJEN`. Repita a consulta: os mesmos eventos não devem gerar novas linhas.
+9. Se aparecer o aviso de Apps Script antigo, a implantação `/exec` ainda não recebeu a nova versão. Os eventos permanecem na fila do navegador; depois da publicação, clique em **Sincronizar**.
+
+As duas abas recebem apenas eventos efetivamente retornados. Resposta vazia, erro ou limite de requisições do DJEN não apaga o histórico existente nem cria uma publicação fictícia.
 
 ## Ações esperadas na versão CRM do bridge
 
