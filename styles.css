@@ -353,10 +353,10 @@ html[data-theme="wine"]{
 }
 html[data-theme="violet"]{
   --bg:#100d1c;--surface:#1a162b;--surface2:#241e39;--ink:#f1edff;--muted:#b6abd2;--muted2:#897fa5;
-  --line:#392f55;--line2:#302746;--nav:#0c0915;--nav2:#171126;--primary:#7c3aed;--primary2:#6d28d9;--cyan:#a78bfa;--cyanbg:#281c49;
+  --line:#392f55;--line2:#302746;--nav:#0c0915;--nav2:#171126;--primary:#a78bfa;--primary2:#9f7aea;--cyan:#c4b5fd;--cyanbg:#281c49;
   --green:#6ee7b7;--greenbg:#173127;--amber:#facc15;--amberbg:#342b0e;--red:#fb7185;--redbg:#38151d;--blue:#a78bfa;--bluebg:#261c43;
   --shadow:0 12px 32px rgba(0,0,0,.35);--card:#1a162b;--border:#392f55;
-  --on-primary:#ffffff;--focus-ring:rgba(139,92,246,.28);
+  --on-primary:#100d1c;--focus-ring:rgba(167,139,250,.30);
 }
 html[data-theme="gold"]{
   --bg:#11100d;--surface:#1b1913;--surface2:#252219;--ink:#f5eedc;--muted:#c0b38f;--muted2:#8f8469;
@@ -489,7 +489,7 @@ html[data-theme]{
   --control-hover:var(--surface2);
   --text-main:var(--ink);
   --text-soft:var(--muted);
-  --text-faint:var(--muted2);
+  --text-faint:var(--muted);
 }
 html[data-theme] body,
 html[data-theme] button,
