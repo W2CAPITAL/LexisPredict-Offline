@@ -213,6 +213,28 @@ function clientProcessIndex(){
   clientProcessCache={company:state.companyRows,byId,byName};return clientProcessCache;
 }
 
+function officialDjen(row){return pick(row,"DJEN • Última Publicação")||""}
+function legacyDjenSummary(row){return pick(row,"Resumo DJEN","DJEN_Resumo")||""}
+function mergeJudicialScan(a,b){
+  a=a||{};b=b||{};const out={...a,...b,patch:{...(a.patch||{}),...(b.patch||{})}};
+  const dj=[...(a.datajud?.movimentos||[]),...(b.datajud?.movimentos||[])],dm=new Map();
+  for(const x of dj){const k=String(x?.hash||[x?.dataHora||x?.data||"",x?.codigo||"",x?.nome||x?.descricao||"",x?.complemento||""].join("|"));if(k&&!dm.has(k))dm.set(k,x)}
+  if(dm.size)out.datajud={...(a.datajud||{}),...(b.datajud||{}),error:false,movimentos:[...dm.values()].sort((x,y)=>historyDate(y?.dataHora||y?.data).getTime()-historyDate(x?.dataHora||x?.data).getTime())};
+  const dn=[...(a.djen?.items||[]),...(b.djen?.items||[])],pm=new Map();
+  for(const x of dn){const k=String(x?.id||x?.hash||[x?.data_disponibilizacao||x?.data||"",x?.tipoComunicacao||x?.tipoDocumento||"",x?.texto||""].join("|"));if(k&&!pm.has(k))pm.set(k,x)}
+  if(pm.size)out.djen={...(a.djen||{}),...(b.djen||{}),success:true,items:[...pm.values()].sort((x,y)=>historyDate(y?.data_disponibilizacao||y?.data).getTime()-historyDate(x?.data_disponibilizacao||x?.data).getTime())};
+  return out;
+}
+function storedHistoryScan(j){
+  return {datajud:{error:false,movimentos:Array.isArray(j?.datajud)?j.datajud:[]},djen:{success:true,items:Array.isArray(j?.djen)?j.djen:[]},stored:true};
+}
+async function djenViaSheetsBridge(cnj,row){
+  try{
+    const j=await apiSheets({action:"djen_fetch",protocolo:cnjFormatted(cnj),tribunal:row?pick(row,"Tribunal"):"",maxPages:20,itensPorPagina:100});
+    if(!j?.success)return {success:false,error:j?.error||"DJEN não retornou publicação pelo bridge da planilha."};
+    return {success:true,items:j.items||[],latest:j.latest||j.items?.[0]||null,patch:j.patch||{},saved:j.saved||null,source:j.source||"Google Apps Script"};
+  }catch(e){return {success:false,error:e.message||String(e)}}
+}
 function judicialWritePatch(row,scan){
   const events={datajud:[],djen:[]};
   if(!scan.datajud?.error&&Array.isArray(scan.datajud?.movimentos))events.datajud=scan.datajud.movimentos.map(m=>({...m,orgaoJulgador:scan.datajud.orgaoJulgador||""}));
@@ -568,13 +590,13 @@ function taskBadges(r,w){
 function taskCardHtml(x){
   const r=x.r||{},g=x.group||{cases:[r]},key=keyOf(r),msg=window.LexisSuggest?.quickMessage?window.LexisSuggest.quickMessage(r):"";
   const next=pick(r,"Próximo Retorno"),d=daysTo(next),deadline=d!==null&&d<0?'<span class="deadline">VENCIDO HÁ '+Math.abs(d)+' DIA(S)</span>':d===0?'<span class="deadline">VENCE HOJE</span>':"";
-  const pub=pick(r,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo")||"Sem publicação DJEN registrada no cache.";
+  const pub=officialDjen(r),legacy=legacyDjenSummary(r);
   const cls=x.w>=950?"critical":x.w>=800?"high":x.w>=600?"medium":"calm";
   return '<article class="task-card '+cls+'"><div class="task-card-head"><div><span class="eyebrow">FILA DE ATENDIMENTO</span></div><div class="task-card-badges">'+taskBadges(r,x.w)+'</div></div>'+
     '<div class="task-card-body"><div><h3 class="task-client">'+esc(pick(r,"Cliente")||"SEM NOME")+'</h3><div class="task-meta">'+esc(pick(r,"Advogado Atual","Advogado")||"NÃO ATRIBUÍDO")+' • '+esc(pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao")||"sem data")+' • '+esc(String(latestMove(r)||"sem movimentação").slice(0,120))+'</div><div class="task-meta"><strong>Tratar:</strong> '+esc(taskLabel(r))+'</div></div>'+
     '<span class="cnj-chip">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</span><div class="case-owner">▧ '+esc(pick(r,"Escritório","Escritorio")||"GERAL")+' · '+esc(pick(r,"Assistente")||"SEM ASSISTENTE")+(g.cases?.length>1?' · '+g.cases.length+' processos':'')+'</div>'+
     '<div class="case-box"><div class="case-box-label">Em linguagem simples</div><strong>'+esc(plainStatus(r))+'</strong><p>'+esc(String(latestMove(r)||"").slice(0,260))+'</p>'+deadline+'</div>'+
-    '<div class="case-box publication-box"><div class="publication-text"><div class="case-box-label">Publicação / último dado judicial</div>'+esc(String(pub).slice(0,240))+'</div><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button></div>'+
+    '<div class="case-box publication-box"><div class="publication-text"><div class="case-box-label">'+(pub?"Publicação DJEN oficial":"DJEN oficial ainda não salvo")+'</div>'+esc(String(pub||"Nenhuma publicação DJEN oficial persistida na planilha.").slice(0,240))+(legacy&&!pub?'<div class="cell-sub">Resumo legado: '+esc(String(legacy).slice(0,150))+'</div>':'')+'</div><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button></div>'+
     '<div class="quick-box"><div class="case-box-label">Atendimento rápido (1 → 2 → 3)</div><p>'+esc(msg)+'</p><div class="quick-actions"><button data-copy="'+esc(key)+'">1. Copiar</button><a target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">2. WhatsApp</a><button class="contacted" data-contact="'+esc(key)+'">3. Contatado</button></div></div></div>'+
     '<div class="task-card-foot"><div class="task-icon-actions"><button class="task-icon suggest" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button><button class="task-icon audit" data-history="'+esc(key)+'">Histórico</button><a class="task-icon wa" target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">WhatsApp</a><button class="task-icon" data-edit="'+esc(key)+'">Editar</button></div><button class="task-icon task-manage" data-edit="'+esc(key)+'">Gerir ›</button></div></article>';
 }
@@ -857,7 +879,18 @@ async function scanOne(cnj,quiet=false){
   try{
     const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",cliente:row?pick(row,"Cliente"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",lastDjenId:row?pick(row,"_DJENId"):"",lastDjenDate:row?pick(row,"_DJENDate","DJEN • Data"):"",mode:djenWasPaused?"datajud":"both"}),cache:"no-store"});
     const j=await r.json();state.lastScan=j;
-    if(djenWasPaused){j.djenPaused=true;j.djenPauseMessage=djenPauseText()}
+    const djenBlocked=djenWasPaused||j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403;
+    if(djenBlocked){
+      const fb=await djenViaSheetsBridge(d,row);
+      if(fb.success){
+        j.djen={success:true,items:fb.items,count:fb.items.length,source:fb.source};
+        j.patch={...(j.patch||{}),...(fb.patch||{})};
+        j.djenPaused=false;j.djenPauseMessage="";
+      }else{
+        setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem Vercel bloqueada e fallback da planilha indisponível. DataJud continua.";
+        j.djenFallbackError=fb.error;
+      }
+    }
     if(j.patch&&row){
       Object.assign(row,j.patch);
       refreshScopes();
@@ -867,7 +900,7 @@ async function scanOne(cnj,quiet=false){
         await flushOutbox();
       }catch(e){j.sheetError=e.message||String(e)}
     }
-    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403){
+    if((j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403)&&!j?.djen?.success){
       setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Pausa de 6h; DataJud continua.";
       if(!quiet)showBanner(j.djenPauseMessage,"bad");
     }else if(r.status===429||j?.djen?.isRateLimited){
@@ -1011,8 +1044,8 @@ function buildTribunalTimeline(scan,row){
   }
   if(!out.length&&row){
     if(latestMove(row))out.push({source:"Planilha / DataJud",date:pick(row,"DataJud • Data","Data da Movimentação","Data_Movimentacao"),title:"Último movimento salvo",detail:String(latestMove(row)),link:""});
-    const pub=pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo");
-    if(pub)out.push({source:"Planilha / DJEN",date:pick(row,"DJEN • Data","_DJENDate"),title:"Última publicação salva",detail:String(pub),link:""});
+    const pub=officialDjen(row);
+    if(pub)out.push({source:"Planilha / DJEN",date:pick(row,"DJEN • Data","_DJENDate"),title:"Última publicação DJEN oficial salva",detail:String(pub),link:""});
   }
   return out.sort((a,b)=>historyDate(b.date).getTime()-historyDate(a.date).getTime());
 }
@@ -1037,22 +1070,35 @@ async function loadHistory(key,{force=false}={}){
   if(state.historyScan&&!force){renderHistoryDialog();return}
   const cnj=digits(pick(row,"Protocolo"));
   if(cnj.length!==20){showBanner("CNJ inválido para consultar histórico.","bad");return}
-  if(!navigator.onLine){renderHistoryDialog();return}
   state.historyLoading=true;renderHistoryDialog();
   try{
+    // Primeiro lê TODO o histórico já persistido nas abas Movimentações_DataJud/Publicações_DJEN.
+    try{
+      const stored=await apiSheets({action:"judicial_history",protocolo:cnjFormatted(cnj)});
+      state.historyScan=mergeJudicialScan(state.historyScan,storedHistoryScan(stored));renderHistoryDialog();
+    }catch(_){}
+    if(!navigator.onLine)return;
     const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:djenPaused()?"datajud":"both"}),cache:"no-store"});
-    const j=await r.json();state.historyScan=j;
-    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403){
-      setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Pausa de 6h; DataJud continua.";
+    let j=await r.json();
+    if(djenPaused()||j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403){
+      const fb=await djenViaSheetsBridge(cnj,row);
+      if(fb.success)j=mergeJudicialScan(j,{djen:{success:true,items:fb.items,source:fb.source},patch:fb.patch});
+      else setDjenBlock(DJEN_GEO_BLOCK_MS);
     }else if(r.status===429||j?.djen?.isRateLimited){
       setDjenBlock(Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000));
     }
+    state.historyScan=mergeJudicialScan(state.historyScan,j);
     if(j.patch){
       Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
       await queueWrite(judicialWritePatch(row,j));
       if(navigator.onLine)await flushOutbox();
     }
-    if(!r.ok&&r.status!==207&&r.status!==429)showBanner(j.error||"Histórico retornou resultado parcial.","bad");
+    // Relê as abas após persistir para o modal refletir exatamente a fonte de verdade.
+    try{
+      const stored2=await apiSheets({action:"judicial_history",protocolo:cnjFormatted(cnj)});
+      state.historyScan=mergeJudicialScan(state.historyScan,storedHistoryScan(stored2));
+    }catch(_){}
+    if(!r.ok&&r.status!==207&&r.status!==429&&!(state.historyScan?.datajud?.movimentos?.length||state.historyScan?.djen?.items?.length))showBanner(j.error||"Histórico retornou resultado parcial.","bad");
   }catch(e){state.historyScan={...(state.historyScan||{}),error:e.message||String(e)};showBanner(e.message||String(e),"bad")}
   finally{state.historyLoading=false;renderHistoryDialog();render()}
 }
@@ -1065,7 +1111,8 @@ function auditCached(row){
   return {
     move:latestMove(row)||"Sem movimentação registrada no cache.",
     moveDate:pick(row,"DataJud • Data","Data da Movimentação","Data_Movimentacao")||"",
-    djen:pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo")||"",
+    djen:officialDjen(row),
+    djenLegacy:legacyDjenSummary(row),
     djenDate:pick(row,"DJEN • Data","_DJENDate")||"",
     owner:pick(row,"Assistente")||"—",
     attended:pick(row,"AtendidoPor")||"—",
@@ -1092,7 +1139,7 @@ function renderAuditDialog(){
   $("#auditContent").innerHTML=
     '<div class="audit-hero"><div><span class="eyebrow">CACHE-FIRST • GOOGLE SHEETS</span><h4>'+esc(pick(row,"Cliente")||"SEM NOME")+'</h4><p>'+esc(cnjFormatted(pick(row,"Protocolo")))+' · '+esc(pick(row,"Tribunal")||"")+' · Assistente '+esc(cached.owner)+'</p></div><div>'+badge(statusRet(row),statusRet(row)==="VENCIDO"?"bad":statusRet(row)==="ATENÇÃO"||statusRet(row)==="É HOJE"?"warn":"good")+'</div></div>'+
     '<div class="audit-grid"><section class="audit-panel"><h4>Movimentação mais recente</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.moveDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkMove?"DataJud atualizado agora":"Planilha / cache local")+'</strong></div><div class="audit-source">'+esc(move)+'</div></section>'+
-    '<section class="audit-panel"><h4>Publicação DJEN</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.djenDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkDjen?"DJEN atualizado agora":"Planilha / cache local")+'</strong></div><div class="audit-source">'+esc(djen||"Nenhuma publicação DJEN registrada.")+'</div></section></div>'+
+    '<section class="audit-panel"><h4>Publicação DJEN oficial</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.djenDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkDjen?"DJEN atualizado agora":cached.djen?"Planilha / DJEN oficial":"Ainda não persistido")+'</strong></div><div class="audit-source">'+esc(djen||"Nenhuma publicação DJEN oficial registrada na planilha.")+(cached.djenLegacy&&!djen?'<br><br><small>Resumo legado existente: '+esc(cached.djenLegacy)+'</small>':'')+'</div></section></div>'+
     '<div class="audit-grid"><section class="audit-panel"><h4>Operação</h4><div class="audit-kv"><span>Assistente</span><strong>'+esc(cached.owner)+'</strong></div><div class="audit-kv"><span>Atendido por</span><strong>'+esc(cached.attended)+'</strong></div><div class="audit-kv"><span>Último retorno</span><strong>'+esc(cached.lastReturn)+'</strong></div><div class="audit-kv"><span>Próximo retorno</span><strong>'+esc(cached.nextReturn)+'</strong></div></section>'+
     '<section class="audit-panel"><h4>Leitura simples</h4><div class="audit-source"><strong>'+esc(plainStatus(row))+'</strong><br><br>'+esc(String(move).slice(0,900))+'</div></section></div>'+
     (state.auditSuggest?'<section class="audit-panel"><h4>Sugestões de resposta</h4><div class="suggestions">'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar resposta</button></div></div>').join("")+'</div></section>':'')+
@@ -1112,8 +1159,8 @@ function openAudit(key,suggest=false){
   const row=findRow(key);if(!row)return;
   state.auditKey=key;state.auditScan=null;state.auditSuggest=!!suggest;
   $("#auditDialog").showModal();renderAuditDialog();
-  const hasCache=!!latestMove(row)||!!pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo");
-  if(!hasCache&&navigator.onLine)void refreshAudit(suggest);
+  const needsOfficial=!latestMove(row)||!officialDjen(row);
+  if(needsOfficial&&navigator.onLine)void refreshAudit(suggest);
 }
 async function refreshAudit(keepSuggest=false){
   const row=findRow(state.auditKey);if(!row)return;
@@ -1122,13 +1169,19 @@ async function refreshAudit(keepSuggest=false){
   const btn=$("#auditRefreshBtn");if(btn){btn.disabled=true;btn.textContent="Atualizando…"}
   try{
     const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:djenPaused()?"datajud":"both"}),cache:"no-store"});
-    const j=await r.json();state.auditScan=j;state.auditSuggest=!!keepSuggest;
+    let j=await r.json();state.auditSuggest=!!keepSuggest;
+    if(djenPaused()||j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403){
+      const fb=await djenViaSheetsBridge(cnj,row);
+      if(fb.success)j=mergeJudicialScan(j,{djen:{success:true,items:fb.items,source:fb.source},patch:fb.patch});
+      else{setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenFallbackError=fb.error}
+    }
+    state.auditScan=j;
     if(j.patch){
       Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
       await queueWrite(judicialWritePatch(row,j));
       if(navigator.onLine)await flushOutbox();
     }
-    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403){
+    if((j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403)&&!j?.djen?.success){
       setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Pausa de 6h; DataJud continua.";showBanner(j.djenPauseMessage,"bad");
     }else if(r.status===429||j?.djen?.isRateLimited){
       const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);setDjenBlock(ms);
