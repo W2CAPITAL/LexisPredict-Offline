@@ -46,7 +46,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0
 .field-hint{display:block;margin-top:2px;color:var(--muted2);font-size:9px;font-weight:650;text-transform:none;letter-spacing:0}
 input[readonly],input:disabled{background:#f2f4f7;color:#667085;cursor:not-allowed}
 .company-note{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:750;color:#475467;background:#f8fafc;border:1px solid var(--line);border-radius:9px;padding:9px 11px}
-.task-header{position:sticky;top:72px;z-index:12;background:rgba(244,246,249,.96);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.task-header{position:relative;top:auto;z-index:1;background:#f4f6f9;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .task-header h2{font-size:17px;margin:0;letter-spacing:-.025em}.task-header p{margin:2px 0 0;color:var(--muted);font-size:10px}
 .task-grid{display:grid;grid-template-columns:repeat(3,minmax(270px,1fr));gap:12px;align-items:stretch}
 .task-card{background:#fff;border:1px solid #d8e0ea;border-left:4px solid #94a3b8;border-radius:11px;box-shadow:0 2px 8px rgba(15,23,42,.045);display:flex;flex-direction:column;min-width:0;overflow:hidden}
@@ -67,7 +67,7 @@ input[readonly],input:disabled{background:#f2f4f7;color:#667085;cursor:not-allow
 .audit-source{white-space:pre-wrap;max-height:220px;overflow:auto;font-size:10px;line-height:1.5;color:#344054}
 
 @media(max-width:1180px){.task-grid{grid-template-columns:repeat(2,minmax(270px,1fr))}}
-@media(max-width:760px){.task-grid{grid-template-columns:1fr}.task-header{top:72px;align-items:flex-start;flex-direction:column}.audit-grid{grid-template-columns:1fr}.audit-hero{grid-template-columns:1fr}}
+@media(max-width:760px){.task-grid{grid-template-columns:1fr}.task-header{align-items:flex-start;flex-direction:column}.audit-grid{grid-template-columns:1fr}.audit-hero{grid-template-columns:1fr}}
 
 
 /* Sheets CRM */
