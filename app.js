@@ -95,15 +95,16 @@ async function syncFromCloud(opts={}){
   if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
   try{
     try{await flushOutbox()}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
-    const u=state.session?.user||{},role=norm(u.perfil||"");
     const payload={action:"list",limit:8000};
-    if(!/superadmin|supervisor|administrador/.test(role))payload.responsavel=u.nome||u.usuario||"";
     const j=await apiSheets(payload);
     let rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
     const pending=await idbAll("outbox");
     rows=mergePending(rows,pending);
     state.rows=rows;await saveRows(rows);state.lastSync=now();await idbPut("meta",{key:"lastSync",value:state.lastSync});
-    if(!opts.quiet)showBanner("Sincronização concluída: "+rows.length+" processos carregados"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
+    if(!opts.quiet){
+      const scope=j.scope?.field==="Assistente"?" • carteira de "+(j.scope.value||"assistente"):"";
+      showBanner("Sincronização concluída: "+rows.length+" processos carregados"+scope+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
+    }
     render();
   } finally { state.syncing=false; }
 }
