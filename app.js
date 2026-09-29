@@ -468,7 +468,7 @@ function pathView(){
 function viewUrl(v){const p=viewPaths[v]||"/";return p==="/"?"/#/":"/#"+p}
 function setView(v,push=true){
   state.view=v;
-  $(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
+  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
   const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;
   const target=viewUrl(v);
   if(push&&(location.pathname+location.hash)!==target)history.pushState({view:v},"",target);
