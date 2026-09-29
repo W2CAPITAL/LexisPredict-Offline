@@ -12,7 +12,7 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const norm=s=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
 const digits=s=>String(s??"").replace(/\D/g,"");
 const now=()=>new Date().toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"});
-const cfg=()=>{try{return {...{bridgeUrl:"",bridgeToken:"",sheetUrl:SHEET_DEFAULT},...JSON.parse(localStorage.getItem(LS.cfg)||"{}")}}catch{return{bridgeUrl:"",bridgeToken:"",sheetUrl:SHEET_DEFAULT}}};
+const cfg=()=>{try{return {...{bridgeUrl:"",sheetUrl:SHEET_DEFAULT},...JSON.parse(localStorage.getItem(LS.cfg)||"{}")}}catch{return{bridgeUrl:"",sheetUrl:SHEET_DEFAULT}}};
 const saveCfg=x=>localStorage.setItem(LS.cfg,JSON.stringify(x));
 const keyOf=r=>digits(pick(r,"Protocolo","protocolo","CNJ"))||"row:"+hash(JSON.stringify(r));
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(36)}
@@ -50,8 +50,8 @@ async function queueWrite(row){await idbPut("outbox",{row,ts:Date.now()});update
 async function outboxCount(){return (await idbAll("outbox")).length}
 
 async function apiSheets(payload){
-  const c=cfg();if(!c.bridgeUrl||!c.bridgeToken)throw new Error("Conexão com a planilha não configurada.");
-  const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:c.bridgeUrl,token:c.bridgeToken,payload})});
+  const c=cfg();if(!c.bridgeUrl)throw new Error("Conexão com a planilha não configurada.");
+  const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:c.bridgeUrl,payload})});
   const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));if(!r.ok||j.ok===false)throw new Error(j.error||"Falha ao acessar a planilha");return j;
 }
 async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
@@ -64,7 +64,7 @@ async function syncFromCloud(){
 }
 async function flushOutbox(){
   const list=await idbAll("outbox");if(!list.length)return;
-  const c=cfg();if(!c.bridgeUrl||!c.bridgeToken)return;
+  const c=cfg();if(!c.bridgeUrl)return;
   const rows=list.map(x=>x.row);
   const j=await apiSheets({action:"write",rows,sess:state.session?.sess||state.session?.session||"",actor:state.session?.user?.usuario||"offline"});
   if(j.ok!==false)await idbClear("outbox");
@@ -202,8 +202,8 @@ function renderConfig(){
   $("#cfgBridge").onclick=openSetup;$("#exportBtn").onclick=exportJson;$("#csvFile").onchange=importCsv;$("#clearCacheBtn").onclick=async()=>{if(confirm("Apagar dados locais deste navegador?")){await idbClear("rows");await idbClear("outbox");state.rows=[];render()}};bindGotos();
 }
 function bindGotos(){$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
-function openSetup(){const c=cfg();$("#bridgeUrl").value=c.bridgeUrl||"";$("#bridgeToken").value=c.bridgeToken||"";$("#sheetUrl").value=c.sheetUrl||SHEET_DEFAULT;$("#setupStatus").textContent="";$("#setupDialog").showModal()}
-async function testBridge(){const old=cfg(),tmp={bridgeUrl:$("#bridgeUrl").value.trim(),bridgeToken:$("#bridgeToken").value.trim(),sheetUrl:$("#sheetUrl").value.trim()||SHEET_DEFAULT};saveCfg(tmp);$("#setupStatus").textContent="Testando…";try{const j=await apiSheets({action:"ping"});$("#setupStatus").textContent=j.pong?"Conexão OK • bridge "+(j.v||""):"Bridge respondeu."}catch(e){$("#setupStatus").textContent="Falha: "+e.message}finally{saveCfg(tmp.bridgeUrl?tmp:old)}}
+function openSetup(){const c=cfg();$("#bridgeUrl").value=c.bridgeUrl||"";$("#sheetUrl").value=c.sheetUrl||SHEET_DEFAULT;$("#setupStatus").textContent="";$("#setupDialog").showModal()}
+async function testBridge(){const old=cfg(),tmp={bridgeUrl:$("#bridgeUrl").value.trim(),sheetUrl:$("#sheetUrl").value.trim()||SHEET_DEFAULT};saveCfg(tmp);$("#setupStatus").textContent="Testando…";try{const j=await apiSheets({action:"ping"});$("#setupStatus").textContent=j.pong?"Conexão OK • bridge "+(j.v||""):"Bridge respondeu."}catch(e){$("#setupStatus").textContent="Falha: "+e.message}finally{saveCfg(tmp.bridgeUrl?tmp:old)}}
 function openProcess(key){
   const r=state.rows.find(x=>keyOf(x)===key)||{};$("#editKey").value=key||"";$("#processDialogTitle").textContent=key?"Editar processo":"Novo processo";
   $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");$("#fAssistente").value=pick(r,"Assistente");$("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações");$("#processStatus").textContent="";$("#processDialog").showModal()
@@ -219,7 +219,7 @@ function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.l
 async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.rows=rows;await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
   $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));$("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};$("#newProcessBtn").onclick=()=>openProcess("");$("#logoutBtn").onclick=()=>{saveSession(null);setLogged(false)};$("#openSetupBtn").onclick=openSetup;$("#testBridgeBtn").onclick=testBridge;$("#saveProcessBtn").onclick=saveProcess;
-  $("#setupForm").addEventListener("submit",e=>{e.preventDefault();const c={bridgeUrl:$("#bridgeUrl").value.trim(),bridgeToken:$("#bridgeToken").value.trim(),sheetUrl:$("#sheetUrl").value.trim()||SHEET_DEFAULT};saveCfg(c);$("#setupDialog").close();showBanner("Conexão salva neste navegador.","good");updateSyncUi()});
+  $("#setupForm").addEventListener("submit",e=>{e.preventDefault();const c={bridgeUrl:$("#bridgeUrl").value.trim(),sheetUrl:$("#sheetUrl").value.trim()||SHEET_DEFAULT};saveCfg(c);$("#setupDialog").close();showBanner("Conexão salva neste navegador.","good");updateSyncUi()});
   $("#loginBtn").onclick=async()=>{const u=$("#loginUser").value.trim(),p=$("#loginPass").value;$("#loginStatus").textContent="Entrando…";try{const j=await loginCloud(u,p);saveSession({user:j.user||j.usuario||{usuario:u},sess:j.sess||j.session||j.token||""});await loadLocal();setLogged(true);applyUser();try{await syncFromCloud()}catch(e){showBanner("Entrou com cache local; sync falhou: "+e.message,"bad")}render()}catch(e){$("#loginStatus").textContent=e.message}};
   $("#offlineBtn").onclick=async()=>{await loadLocal();saveSession({user:{nome:"Modo local",perfil:"offline"}});setLogged(true);applyUser();render();if(!state.rows.length)showBanner("Cache vazio. Importe CSV ou configure a conexão com a planilha.","bad")};
   window.addEventListener("online",()=>{updateSyncUi();showBanner("Conexão restaurada. Você pode sincronizar a outbox.","good")});window.addEventListener("offline",()=>{updateSyncUi();showBanner("Sem internet: o LexisPredict continua no cache local.","")});
