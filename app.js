@@ -38,6 +38,26 @@ function badge(text,type){return '<span class="badge b-'+type+'">'+esc(text)+'</
 function qBadge(q){return q==="BOM"?badge("BOM","good"):q==="RUIM"?badge("RUIM","bad"):badge(q||"NEUTRO","warn")}
 function scoreHtml(n){const c=n>=70?"good":n<45?"bad":"warn";return '<span class="score '+c+'">'+Math.round(n)+'</span>'}
 
+function commercialStatus(r){return String(pick(r,"Comercial")||"REVISAR").toUpperCase()}
+function commercialHtml(r){
+  const s=commercialStatus(r);
+  return s.includes("NÃO VENDER")?badge("NÃO VENDER","bad"):s.includes("POTENCIAL")?badge("POTENCIAL","good"):s.includes("REVISAR ANTES")?badge("REVISAR ANTES","warn"):badge("REVISAR","gray");
+}
+function favoredHtml(r){
+  const f=String(pick(r,"_Favorecido")||"").toUpperCase();
+  if(f==="CLIENTE")return badge("CLIENTE","good");
+  if(f==="BANCO")return badge("BANCO","bad");
+  return badge("INDEFINIDO","gray");
+}
+function execHtml(r){
+  const e=String(pick(r,"_ExecStatus")||"").toUpperCase();
+  if(e==="ATIVO")return badge("ATIVO","blue");
+  if(e==="ENCERRADO")return badge("ENCERRADO","bad");
+  if(e==="CITACAO_APENAS")return badge("SÓ CITAÇÃO","warn");
+  if(e==="NAO_INSTAURADO")return badge("NÃO INSTAURADO","gray");
+  return badge(pick(r,"Cumprimento")==="SIM"?"CUMPRIMENTO":"—",pick(r,"Cumprimento")==="SIM"?"blue":"gray");
+}
+
 function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,1);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("rows"))db.createObjectStore("rows",{keyPath:"_key"});if(!db.objectStoreNames.contains("meta"))db.createObjectStore("meta",{keyPath:"key"});if(!db.objectStoreNames.contains("outbox"))db.createObjectStore("outbox",{keyPath:"id",autoIncrement:true})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
 async function idbAll(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly"),rq=tx.objectStore(store).getAll();rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error)})}
 async function idbPut(store,value){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).put(value);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
@@ -138,32 +158,66 @@ function taskLabel(r){
   if(/cumprimento|execu/.test(move))return"Cumprimento / execução";if(boolish(pick(r,"Nova Atualização")))return"Nova atualização";if(quality(r)==="RUIM")return"Qualidade processual ruim";return"Revisão operacional";
 }
 
-function titleFor(v){return {dashboard:["CARTEIRA JURÍDICA","Visão geral"],processos:["BASE PRINCIPAL","Processos"],tarefas:["FILA INTELIGENTE","Tarefas"],analise:["INTELIGÊNCIA OPERACIONAL","Análise"],scanner:["DATAJUD + DJEN","Scanner DJEN"]}[v]||["LEXISPREDICT","Painel"]}
-function setView(v){state.view=v;$$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;render()}
-function render(){const m=metrics();$("#navProcessos").textContent=m.total;$("#navTarefas").textContent=tasks().length;updateSyncUi();if(state.view==="dashboard")renderDashboard();else if(state.view==="processos")renderProcessos();else if(state.view==="tarefas")renderTarefas();else if(state.view==="analise")renderAnalise();else if(state.view==="scanner")renderScanner();else setView("dashboard")}
+function titleFor(v){return {
+  dashboard:["COMMAND CENTER","Dashboard"],
+  processos:["CARTEIRA","Processos"],
+  tarefas:["OPERAÇÃO","Tarefas"],
+  analise:["INTELIGÊNCIA","Análise"],
+  report:["EXECUTIVO","Report"],
+  scanner:["REDE JUDICIAL","DataJud + DJEN"]
+}[v]||["LEXISPREDICT","Dashboard"]}
+const viewPaths={dashboard:"/",processos:"/processos",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
+function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
+function setView(v,push=true){
+  state.view=v;
+  $$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
+  const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;
+  if(push&&viewPaths[v]&&location.pathname!==viewPaths[v])history.pushState({view:v},"",viewPaths[v]);
+  render();
+}
+function render(){
+  const m=metrics();$("#navProcessos").textContent=m.total;$("#navTarefas").textContent=tasks().length;updateSyncUi();
+  if(state.view==="dashboard")renderDashboard();
+  else if(state.view==="processos")renderProcessos();
+  else if(state.view==="tarefas")renderTarefas();
+  else if(state.view==="analise")renderAnalise();
+  else if(state.view==="report")renderReport();
+  else if(state.view==="scanner")renderScanner();
+  else setView("dashboard",false);
+}
 async function updateSyncUi(){const count=await outboxCount(),online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+(count?" • "+count+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function renderDashboard(){
   const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
-  const critical=tasks().slice(0,12);
+  const critical=tasks().slice(0,10);
+  const potential=state.rows.filter(r=>commercialStatus(r).includes("POTENCIAL")).length;
+  const noSell=state.rows.filter(r=>commercialStatus(r).includes("NÃO VENDER")).length;
+  const clientFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="CLIENTE").length;
+  const bankFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="BANCO").length;
   $("#content").innerHTML=
+  '<div class="command-strip"><div><span class="eyebrow">CARTEIRA EM TEMPO REAL</span><h2>Command Center Jurídico</h2><p>Processos, prazos, rede judicial e oportunidade comercial na mesma visão.</p></div><div class="command-actions"><button class="btn" data-goto="report">Abrir report</button><button class="btn primary" data-goto="scanner">Auditar tribunal</button></div></div>'+
   '<div class="kpi-grid">'+
-  kpi("Processos",m.total,m.active+" ativos")+
-  kpi("Encerrados",m.closed,(m.total?Math.round(m.closed/m.total*100):0)+"% da carteira")+
-  kpi("Vencidos",m.venc,m.attention+" para atenção","bad")+
-  kpi("Score médio",m.avg+"/100",m.bad+" RUIM • "+m.good+" BOM",m.avg<45?"bad":m.avg>=70?"good":"warn")+
-  kpi("DataJud",djPct+"%",m.dj+" com movimento","good")+
-  kpi("DJEN",djenPct+"%",m.djen+" com publicação",djenPct<10?"warn":"good")+
+    kpi("Processos",m.total,m.active+" ativos")+
+    kpi("Vencidos",m.venc,m.attention+" em atenção","bad")+
+    kpi("Novidades",m.newer,"após último retorno",m.newer?"warn":"good")+
+    kpi("Potencial comercial",potential,"triagem DataJud/DJEN",potential?"good":"")+
+    kpi("Não vender",noSell,bankFav+" com banco favorecido",noSell?"bad":"")+
+    kpi("Cobertura judicial",Math.round((m.dj+m.djen)/(Math.max(1,m.total*2))*100)+"%",m.dj+" DataJud • "+m.djen+" DJEN")+
   '</div>'+
-  '<div class="grid-2"><div class="card"><div class="card-head"><h3>Fila crítica</h3><button class="btn sm" data-goto="tarefas">Abrir tarefas</button></div><div class="table-wrap"><table class="table"><thead><tr><th>Prioridade</th><th>Cliente</th><th>CNJ</th><th>Motivo</th><th>Qualidade</th></tr></thead><tbody>'+
-  critical.map(x=>'<tr><td>'+badge(priority(x.w),x.w>=1000?"bad":x.w>=850?"warn":"blue")+'</td><td><div class="cell-main">'+esc(pick(x.r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(x.r,"Assistente"))+'</div></td><td>'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(taskLabel(x.r))+'</td><td>'+qBadge(quality(x.r))+'</td></tr>').join("")+
-  '</tbody></table></div></div><div class="card"><div class="card-head"><h3>Saúde da carteira</h3></div><div class="card-body metric-list">'+
-  metricRow("Procedência classificada",procPct+"%",classified+" resultados classificados")+
-  metricRow("Cobertura DataJud",djPct+"%",m.dj+" processos")+
-  metricRow("Cobertura DJEN",djenPct+"%",m.djen+" processos")+
-  metricRow("Novas atualizações",m.newer,"processos sinalizados")+
-  metricRow("Qualidade ruim",m.bad,"exigem revisão")+
-  '</div></div></div>';
+  '<div class="dashboard-layout"><div class="card"><div class="card-head"><div><span class="eyebrow">PRIORIDADE</span><h3>Fila crítica</h3></div><button class="btn sm" data-goto="tarefas">Ver todas</button></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Prioridade</th><th>Cliente</th><th>CNJ</th><th>Motivo</th><th>Comercial</th></tr></thead><tbody>'+
+  critical.map(x=>'<tr><td>'+badge(priority(x.w),x.w>=1000?"bad":x.w>=850?"warn":"blue")+'</td><td><div class="cell-main">'+esc(pick(x.r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(x.r,"Assistente"))+'</div></td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(taskLabel(x.r))+'</td><td>'+commercialHtml(x.r)+'</td></tr>').join("")+
+  '</tbody></table></div></div>'+
+  '<div class="stack"><div class="card"><div class="card-head"><div><span class="eyebrow">REDE JUDICIAL</span><h3>Cobertura</h3></div></div><div class="card-body metric-list">'+
+    metricRow("DataJud",djPct+"%",m.dj+" processos com movimento")+
+    metricRow("DJEN",djenPct+"%",m.djen+" processos com publicação")+
+    metricRow("Procedência",procPct+"%",classified+" resultados classificados")+
+    metricRow("Cliente favorecido",clientFav,bankFav+" banco favorecido")+
+  '</div></div>'+
+  '<div class="card"><div class="card-head"><div><span class="eyebrow">COMERCIAL</span><h3>Esteira de oportunidade</h3></div></div><div class="card-body metric-list">'+
+    metricRow("Potencial",potential,"crédito/direito a revisar")+
+    metricRow("Não vender",noSell,"resultado adverso ou fase encerrada")+
+    metricRow("Revisar",state.rows.length-potential-noSell,"sem gatilho conclusivo")+
+  '</div></div></div></div>';
   bindGotos();
 }
 function metricRow(label,value,sub){return '<div class="metric-row"><div><div class="cell-main">'+esc(label)+'</div><div class="cell-sub">'+esc(sub)+'</div></div><strong>'+esc(value)+'</strong></div>'}
@@ -172,58 +226,80 @@ function filteredRows(){
   return state.rows.filter(r=>(!q||norm(Object.values(r).join(" ")).includes(q))&&(!st||statusRet(r)===st)&&(!qual||quality(r)===qual));
 }
 function renderProcessos(){
-  const rows=filteredRows().slice(0,500);
-  $("#content").innerHTML='<div class="toolbar"><input id="search" placeholder="Buscar cliente, CNJ, advogado, andamento…" value="'+esc(state.query)+'"/><select id="statusFilter"><option value="">Todos os retornos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Todas as qualidades</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><span class="spacer"></span><span class="muted">'+rows.length+' de '+state.rows.length+'</span></div>'+
-  '<div class="table-wrap"><table class="table"><thead><tr><th>Cliente</th><th>CNJ</th><th>Responsável</th><th>Advogado</th><th>Andamento</th><th>Score</th><th>Qualidade</th><th>Retorno</th><th>Sync</th><th>Ações</th></tr></thead><tbody>'+
-  rows.map(r=>'<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório"))+'</div></td><td>'+esc(cnjFormatted(pick(r,"Protocolo")))+'<div class="cell-sub">'+esc(pick(r,"Tribunal"))+'</div></td><td>'+esc(pick(r,"Assistente","Responsável"))+'</td><td>'+esc(pick(r,"Advogado Atual","Advogado"))+'</td><td><div class="cell-main">'+esc(String(latestMove(r)).slice(0,90))+'</div><div class="cell-sub">'+esc(pick(r,"DataJud • Data","DJEN • Data"))+'</div></td><td>'+scoreHtml(score(r))+'</td><td>'+qBadge(quality(r))+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'</td><td>'+esc(pick(r,"Automação","Status Sync")||"—")+'</td><td class="actions"><button class="icon-action" data-edit="'+esc(keyOf(r))+'">Editar</button><button class="icon-action" data-scan="'+esc(digits(pick(r,"Protocolo")))+'">DJEN</button></td></tr>').join("")+
+  const rows=filteredRows().slice(0,700);
+  $("#content").innerHTML=
+  '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">LIST VIEW</span><strong>Carteira principal</strong><span>'+rows.length+' de '+state.rows.length+'</span></div><div class="toolbar"><input id="search" placeholder="Pesquisar cliente, CNJ, advogado, andamento…" value="'+esc(state.query)+'"/><select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select></div></div>'+
+  '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Fase</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Produto</th><th>Retorno</th><th>Responsável</th><th></th></tr></thead><tbody>'+
+  rows.map(r=>'<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(String(latestMove(r)).slice(0,150))+'</div><div class="cell-sub">'+esc(pick(r,"DataJud • Data","DJEN • Data"))+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td><div class="cell-main clamp2">'+esc(pick(r,"Produto / Oportunidade")||"—")+'</div></td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td>'+esc(pick(r,"Assistente","Responsável"))+'</td><td class="actions"><button class="icon-action" data-edit="'+esc(keyOf(r))+'">Editar</button><button class="icon-action" data-scan="'+esc(digits(pick(r,"Protocolo")))+'">Auditar</button></td></tr>').join("")+
   '</tbody></table></div>';
-  $("#search").oninput=e=>{state.query=e.target.value;renderProcessos()};$("#statusFilter").onchange=e=>{state.status=e.target.value;renderProcessos()};$("#qualityFilter").onchange=e=>{state.quality=e.target.value;renderProcessos()};
-  $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));$$("[data-scan]").forEach(b=>b.onclick=()=>{setView("scanner");setTimeout(()=>{$("#scanCnj").value=b.dataset.scan;scanOne(b.dataset.scan)},0)});
+  $("#search").oninput=e=>{state.query=e.target.value;renderProcessos()};
+  $("#statusFilter").onchange=e=>{state.status=e.target.value;renderProcessos()};
+  $("#qualityFilter").onchange=e=>{state.quality=e.target.value;renderProcessos()};
+  $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
+  $$("[data-scan]").forEach(b=>b.onclick=()=>{setView("scanner");setTimeout(()=>{$("#scanCnj").value=b.dataset.scan;scanOne(b.dataset.scan)},0)});
 }
 function renderTarefas(){
-  const list=tasks().slice(0,800);
-  $("#content").innerHTML='<div class="kpi-grid">'+kpi("Fila total",list.length,"ações priorizadas")+kpi("Críticas",list.filter(x=>priority(x.w)==="CRÍTICA").length,"ação imediata","bad")+kpi("Altas",list.filter(x=>priority(x.w)==="ALTA").length,"prioridade alta","warn")+kpi("Novidades",list.filter(x=>boolish(pick(x.r,"Nova Atualização"))).length,"andamentos novos")+kpi("Vencidos",list.filter(x=>statusRet(x.r)==="VENCIDO").length,"retornos vencidos","bad")+kpi("Hoje",list.filter(x=>statusRet(x.r)==="ATENÇÃO").length,"atenção hoje","warn")+'</div>'+
-  '<div class="table-wrap"><table class="table"><thead><tr><th>Prioridade</th><th>Tarefa</th><th>Cliente</th><th>CNJ</th><th>Responsável</th><th>Advogado</th><th>Andamento</th><th>Qualidade</th><th>Ação</th></tr></thead><tbody>'+
-  list.map(x=>'<tr><td>'+badge(priority(x.w),x.w>=1000?"bad":x.w>=850?"warn":"blue")+'</td><td class="cell-main">'+esc(taskLabel(x.r))+'</td><td>'+esc(pick(x.r,"Cliente"))+'</td><td>'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(pick(x.r,"Assistente"))+'</td><td>'+esc(pick(x.r,"Advogado Atual","Advogado"))+'</td><td>'+esc(String(latestMove(x.r)).slice(0,75))+'</td><td>'+qBadge(quality(x.r))+'</td><td><button class="icon-action" data-edit="'+esc(keyOf(x.r))+'">Abrir</button></td></tr>').join("")+
+  const list=tasks().slice(0,900);
+  const high=list.filter(x=>priority(x.w)==="CRÍTICA"||priority(x.w)==="ALTA").length;
+  $("#content").innerHTML=
+  '<div class="command-strip slim"><div><span class="eyebrow">WORK QUEUE</span><h2>Fila operacional</h2><p>Ordenada por prazo, evento judicial, novidade e qualidade.</p></div><div class="queue-summary">'+badge(high+" altas","warn")+badge(list.filter(x=>statusRet(x.r)==="VENCIDO").length+" vencidas","bad")+'</div></div>'+
+  '<div class="kpi-grid">'+kpi("Fila total",list.length,"ações priorizadas")+kpi("Críticas",list.filter(x=>priority(x.w)==="CRÍTICA").length,"ação imediata","bad")+kpi("Altas",list.filter(x=>priority(x.w)==="ALTA").length,"prioridade alta","warn")+kpi("Novidades",list.filter(x=>boolish(pick(x.r,"Nova Atualização"))).length,"andamentos novos")+kpi("Potencial",list.filter(x=>commercialStatus(x.r).includes("POTENCIAL")).length,"oportunidade comercial","good")+kpi("Não vender",list.filter(x=>commercialStatus(x.r).includes("NÃO VENDER")).length,"bloqueio comercial","bad")+'</div>'+
+  '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Prioridade</th><th>Tarefa</th><th>Cliente</th><th>CNJ</th><th>Fase judicial</th><th>Cumprimento</th><th>Comercial</th><th>Responsável</th><th></th></tr></thead><tbody>'+
+  list.map(x=>'<tr><td>'+badge(priority(x.w),x.w>=1000?"bad":x.w>=850?"warn":"blue")+'</td><td><div class="cell-main">'+esc(taskLabel(x.r))+'</div><div class="cell-sub">'+esc(statusRet(x.r))+'</div></td><td>'+esc(pick(x.r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td class="clamp2">'+esc(String(latestMove(x.r)).slice(0,120))+'</td><td>'+execHtml(x.r)+'</td><td>'+commercialHtml(x.r)+'</td><td>'+esc(pick(x.r,"Assistente"))+'</td><td><button class="icon-action" data-edit="'+esc(keyOf(x.r))+'">Abrir</button></td></tr>').join("")+
   '</tbody></table></div>';
   $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
 }
 function renderAnalise(){
-  const m=metrics(),stages={},lawyers={},commercial={};
-  state.rows.forEach(r=>{const st=String(latestMove(r)).split("—")[0].trim()||"Sem diagnóstico";stages[st]=(stages[st]||0)+1;const adv=String(pick(r,"Advogado Atual","Advogado")||"NÃO ATRIBUÍDO").trim();lawyers[adv]=(lawyers[adv]||0)+1;const c=String(pick(r,"Comercial")||"REVISAR");commercial[c]=(commercial[c]||0)+1});
-  const stageTop=Object.entries(stages).sort((a,b)=>b[1]-a[1]).slice(0,10),lawTop=Object.entries(lawyers).sort((a,b)=>b[1]-a[1]).slice(0,10),comTop=Object.entries(commercial).sort((a,b)=>b[1]-a[1]);
-  $("#content").innerHTML='<div class="kpi-grid">'+kpi("BOM",m.good,"score ≥ 70","good")+kpi("NEUTRO",m.neutral,"score 45–69","warn")+kpi("RUIM",m.bad,"score < 45","bad")+kpi("Procedentes",m.proc,"classificados")+kpi("Improcedentes",m.improc,"classificados","bad")+kpi("Score médio",m.avg+"/100","andamento processual")+'</div>'+
-  '<div class="analysis-grid"><div class="analysis-tile"><h4>Fases processuais</h4>'+bars(stageTop,m.total)+'</div><div class="analysis-tile"><h4>Advogados atuais</h4>'+bars(lawTop,m.total)+'</div><div class="analysis-tile"><h4>Triagem comercial</h4>'+bars(comTop,m.total)+'</div></div>'+
-  '<div class="section-title"><div><h2>Casos críticos / não vender</h2><p>Triagem automática para revisão humana.</p></div></div>'+
-  '<div class="table-wrap"><table class="table"><thead><tr><th>Cliente</th><th>CNJ</th><th>Diagnóstico</th><th>Score</th><th>Recursal</th><th>Comercial</th><th>Produto</th></tr></thead><tbody>'+
-  state.rows.filter(r=>quality(r)==="RUIM"||/NÃO VENDER|REVISAR ANTES/i.test(pick(r,"Comercial"))).sort((a,b)=>score(a)-score(b)).slice(0,120).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td>'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(String(latestMove(r)).slice(0,100))+'</td><td>'+scoreHtml(score(r))+'</td><td>'+esc(pick(r,"Situação Recursal"))+'</td><td>'+badge(pick(r,"Comercial")||"REVISAR",/NÃO VENDER/i.test(pick(r,"Comercial"))?"bad":/POTENCIAL/i.test(pick(r,"Comercial"))?"good":"warn")+'</td><td>'+esc(pick(r,"Produto / Oportunidade"))+'</td></tr>').join("")+
+  const m=metrics(),stages={},lawyers={},commercial={},favored={};
+  state.rows.forEach(r=>{
+    const st=String(latestMove(r)).split("—")[0].trim()||"Sem diagnóstico";stages[st]=(stages[st]||0)+1;
+    const adv=String(pick(r,"Advogado Atual","Advogado")||"NÃO ATRIBUÍDO").trim();lawyers[adv]=(lawyers[adv]||0)+1;
+    const cm=String(pick(r,"Comercial")||"REVISAR");commercial[cm]=(commercial[cm]||0)+1;
+    const fv=String(pick(r,"_Favorecido")||"INDEFINIDO");favored[fv]=(favored[fv]||0)+1;
+  });
+  const stageTop=Object.entries(stages).sort((a,b)=>b[1]-a[1]).slice(0,10),lawTop=Object.entries(lawyers).sort((a,b)=>b[1]-a[1]).slice(0,10),comTop=Object.entries(commercial).sort((a,b)=>b[1]-a[1]),favTop=Object.entries(favored).sort((a,b)=>b[1]-a[1]);
+  $("#content").innerHTML='<div class="kpi-grid">'+kpi("BOM",m.good,"qualidade alta","good")+kpi("NEUTRO",m.neutral,"revisão normal","warn")+kpi("RUIM",m.bad,"revisão prioritária","bad")+kpi("Procedentes",m.proc,"classificados")+kpi("Improcedentes",m.improc,"classificados","bad")+kpi("Score médio",m.avg+"/100","evidência processual")+'</div>'+
+  '<div class="analysis-grid"><div class="analysis-tile"><h4>Fases processuais</h4>'+bars(stageTop,m.total)+'</div><div class="analysis-tile"><h4>Advogados atuais</h4>'+bars(lawTop,m.total)+'</div><div class="analysis-tile"><h4>Triagem comercial</h4>'+bars(comTop,m.total)+'</div><div class="analysis-tile"><h4>Lado favorecido</h4>'+bars(favTop,m.total)+'</div></div>'+
+  '<div class="section-title"><div><h2>Revisão comercial e jurídica</h2><p>NÃO VENDER e REVISAR ANTES dependem de DataJud/DJEN e continuam sujeitos à revisão humana.</p></div></div>'+
+  '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente</th><th>CNJ</th><th>Diagnóstico</th><th>Favorecido</th><th>Cumprimento</th><th>Comercial</th><th>Produto</th></tr></thead><tbody>'+
+  state.rows.filter(r=>commercialStatus(r).includes("NÃO VENDER")||commercialStatus(r).includes("REVISAR ANTES")||commercialStatus(r).includes("POTENCIAL")).sort((a,b)=>score(b)-score(a)).slice(0,220).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td class="clamp2">'+esc(String(latestMove(r)).slice(0,120))+'</td><td>'+favoredHtml(r)+'</td><td>'+execHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+esc(pick(r,"Produto / Oportunidade"))+'</td></tr>').join("")+
   '</tbody></table></div>';
 }
 function bars(entries,total){const max=Math.max(...entries.map(x=>x[1]),1);return '<div class="bars">'+entries.map(([k,v])=>'<div class="barline"><span title="'+esc(k)+'">'+esc(k.slice(0,22))+'</span><div class="bar"><span style="width:'+Math.round(v/max*100)+'%"></span></div><b>'+v+'</b></div>').join("")+'</div>'}
 
+function renderReport(){
+  const m=metrics(),potential=state.rows.filter(r=>commercialStatus(r).includes("POTENCIAL")),blocked=state.rows.filter(r=>commercialStatus(r).includes("NÃO VENDER"));
+  const assistants={},tribs={},execs={};
+  state.rows.forEach(r=>{
+    const a=String(pick(r,"Assistente")||"NÃO ATRIBUÍDO");assistants[a]=(assistants[a]||0)+1;
+    const t=String(pick(r,"Tribunal")||"OUTROS");tribs[t]=(tribs[t]||0)+1;
+    const e=String(pick(r,"_ExecStatus")||"INDEFINIDO");execs[e]=(execs[e]||0)+1;
+  });
+  const topA=Object.entries(assistants).sort((a,b)=>b[1]-a[1]).slice(0,12),topT=Object.entries(tribs).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  $("#content").innerHTML=
+    '<div class="report-head"><div><span class="eyebrow">DOSSIÊ OPERACIONAL</span><h2>Relatório executivo da carteira</h2><p>Resumo consolidado do app, planilha, DataJud e DJEN.</p></div><button class="btn primary" id="printReport">Imprimir / PDF</button></div>'+
+    '<div class="kpi-grid">'+kpi("Carteira",m.total,m.active+" ativos")+kpi("Vencidos",m.venc,"retornos","bad")+kpi("Potencial",potential.length,"triagem comercial","good")+kpi("Não vender",blocked.length,"bloqueios","bad")+kpi("DataJud",m.dj,"processos auditados")+kpi("DJEN",m.djen,"processos com publicação")+'</div>'+
+    '<div class="analysis-grid report-grid"><div class="analysis-tile"><h4>Por assistente</h4>'+bars(topA,m.total)+'</div><div class="analysis-tile"><h4>Por tribunal</h4>'+bars(topT,m.total)+'</div><div class="analysis-tile"><h4>Execução / cumprimento</h4>'+bars(Object.entries(execs).sort((a,b)=>b[1]-a[1]),m.total)+'</div></div>'+
+    '<div class="grid-2 report-sections"><div class="card"><div class="card-head"><h3>Oportunidades</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Cliente</th><th>CNJ</th><th>Produto</th></tr></thead><tbody>'+potential.slice(0,30).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Produto / Oportunidade"))+'</td></tr>').join("")+'</tbody></table></div></div>'+
+    '<div class="card"><div class="card-head"><h3>Bloqueios comerciais</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Cliente</th><th>CNJ</th><th>Motivo</th></tr></thead><tbody>'+blocked.slice(0,30).map(r=>'<tr><td>'+esc(pick(r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Produto / Oportunidade","_CommercialReason"))+'</td></tr>').join("")+'</tbody></table></div></div></div>';
+  $("#printReport").onclick=()=>window.print();
+}
 function renderScanner(){
   const valid=state.rows.filter(r=>digits(pick(r,"Protocolo")).length===20);
   const withDjen=state.rows.filter(r=>pick(r,"DJEN • Última Publicação")).length;
   const withDataJud=state.rows.filter(r=>pick(r,"DataJud • Último Movimento")).length;
+  const activeExec=state.rows.filter(r=>String(pick(r,"_ExecStatus")).toUpperCase()==="ATIVO").length;
   $("#content").innerHTML=
+  '<div class="scanner-hero"><div><span class="eyebrow">SCANNER OMNICANAL</span><h2>DataJud + DJEN</h2><p>Valida fase processual, cumprimento real, lado favorecido e oportunidade comercial.</p></div><div class="scanner-health"><span>'+valid.length+' CNJs</span><span>'+withDataJud+' DataJud</span><span>'+withDjen+' DJEN</span><span>'+activeExec+' cumprimento ativo</span></div></div>'+
   '<div class="scanner-grid">'+
-    '<div class="card"><div class="card-head"><h3>Consulta unificada DataJud + DJEN</h3><span class="muted">APIs públicas oficiais • sessão autenticada</span></div><div class="card-body">'+
-      '<div class="scan-box"><input id="scanCnj" placeholder="CNJ do processo"/><button class="btn primary" id="scanOneBtn">Consultar e atualizar</button></div>'+
-      '<div id="scanResult" class="scan-result" style="margin-top:14px">'+(state.lastScan?renderScanResult(state.lastScan):'<div class="offline-note">Consulta DataJud e DJEN em uma única operação. Se houver processo na carteira, os campos oficiais são gravados na planilha após a consulta.</div>')+'</div>'+
+    '<div class="card scanner-main"><div class="card-head"><div><span class="eyebrow">AUDITORIA INDIVIDUAL</span><h3>Consulta unificada</h3></div><span class="live-pill">REDE OFICIAL</span></div><div class="card-body">'+
+      '<div class="scan-box"><input id="scanCnj" placeholder="0000000-00.0000.0.00.0000"/><button class="btn primary" id="scanOneBtn">Auditar processo</button></div>'+
+      '<div id="scanResult" class="scan-result judicial-result" style="margin-top:14px">'+(state.lastScan?renderScanResult(state.lastScan):'<div class="empty-state"><strong>Informe um CNJ</strong><span>O scanner cruza DataJud, DJEN, cumprimento e lado favorecido.</span></div>')+'</div>'+
     '</div></div>'+
-    '<div class="card"><div class="card-head"><h3>Pesquisa avançada</h3><span class="muted">recursos portados do LexisPredict</span></div><div class="card-body">'+
-      '<div class="form-grid">'+
-        '<label>Fonte / modo<select id="judSearchMode"><option value="datajud-nome">DataJud • Nome</option><option value="datajud-cpf">DataJud • CPF/CNPJ</option><option value="djen-nome">DJEN • Nome da parte</option><option value="djen-texto">DJEN • Texto</option></select></label>'+
-        '<label>Consulta<input id="judSearchQuery" placeholder="nome, CPF/CNPJ ou texto"/></label>'+
-        '<label>Tribunal (opcional)<input id="judSearchTribunal" placeholder="TJSP"/></label>'+
-        '<label class="full"><button type="button" class="btn" id="judSearchBtn">Pesquisar</button></label>'+
-      '</div><div id="judSearchResult" class="scan-result" style="margin-top:14px"></div>'+
+    '<div class="stack"><div class="card"><div class="card-head"><div><span class="eyebrow">DISCOVERY</span><h3>Pesquisa avançada</h3></div></div><div class="card-body">'+
+      '<div class="form-grid"><label>Fonte<select id="judSearchMode"><option value="datajud-nome">DataJud • Nome</option><option value="datajud-cpf">DataJud • CPF/CNPJ</option><option value="djen-nome">DJEN • Nome da parte</option><option value="djen-texto">DJEN • Texto</option></select></label><label>Consulta<input id="judSearchQuery" placeholder="nome, CPF/CNPJ ou texto"/></label><label>Tribunal<input id="judSearchTribunal" placeholder="TJSP"/></label><label class="full"><button type="button" class="btn block" id="judSearchBtn">Pesquisar</button></label></div><div id="judSearchResult" class="scan-result" style="margin-top:14px"></div>'+
     '</div></div>'+
-    '<div class="card"><div class="card-head"><h3>Varredura da carteira</h3></div><div class="card-body">'+
-      '<div class="metric-list">'+metricRow("CNJs válidos",valid.length,"aptos para consulta")+metricRow("Com DataJud",withDataJud,"movimento salvo")+metricRow("Com DJEN",withDjen,"publicação salva")+'</div>'+
-      '<div class="row" style="margin-top:14px"><button class="btn primary" id="scanQueueBtn">'+(state.scanning?"Parar":"Iniciar DataJud + DJEN")+'</button><button class="btn" id="clearScanLog">Limpar log</button></div>'+
-      '<div class="progress" style="margin:14px 0"><span id="scanProgress" style="width:0%"></span></div><div id="queueLog" class="queue-log"></div>'+
-    '</div></div>'+
+    '<div class="card"><div class="card-head"><div><span class="eyebrow">CICLO DE CARTEIRA</span><h3>Varredura sequencial</h3></div></div><div class="card-body"><div class="metric-list">'+metricRow("CNJs válidos",valid.length,"aptos")+metricRow("Cobertura DataJud",withDataJud,"movimento salvo")+metricRow("Cobertura DJEN",withDjen,"publicação salva")+'</div><div class="row" style="margin-top:14px"><button class="btn primary" id="scanQueueBtn">'+(state.scanning?"Parar":"Iniciar ciclo")+'</button><button class="btn" id="clearScanLog">Limpar</button></div><div class="progress" style="margin:14px 0"><span id="scanProgress" style="width:0%"></span></div><div id="queueLog" class="queue-log"></div></div></div></div>'+
   '</div>';
   $("#scanOneBtn").onclick=()=>scanOne($("#scanCnj").value);
   $("#judSearchBtn").onclick=advancedJudicialSearch;
@@ -233,19 +309,23 @@ function renderScanner(){
 function renderScanResult(x){
   if(!x)return "";
   if(x.retry&&(!x.datajud&&!x.djen))return '<div class="banner bad">'+esc(x.error||"Consulta temporariamente pausada")+'</div>';
-  const data=x.datajud||null,djen=x.djen||null,intel=x.intelligence||{},parts=[];
+  const data=x.datajud||null,djen=x.djen||null,intel=x.intelligence||{},com=intel.commercial||{},parts=[];
+  if(com&&Object.keys(com).length){
+    const side=com.side?.favorecido||x.patch?._Favorecido||"INDEFINIDO",exec=com.execution?.status||x.patch?._ExecStatus||"INDEFINIDO";
+    parts.push('<div class="decision-card"><div><span class="eyebrow">DECISÃO DE TRIAGEM</span><h3>'+esc(com.decision||"REVISAR")+'</h3><p>'+esc(com.product||"Sem oferta automática")+'</p></div><div class="decision-meta"><span>'+esc("Favorecido: "+side)+'</span><span>'+esc("Cumprimento: "+exec)+'</span><span>'+esc("Confiança: "+(com.confidence??"—"))+'</span></div><small>'+esc(com.reason||"Revisão humana necessária.")+'</small></div>');
+  }
   if(data){
     const last=intel.datajud?.last||data.movimentos?.[0]||null;
-    parts.push('<div class="publication"><h4>DataJud • '+esc(data.classe||"Processo")+'</h4><small>'+esc(data.tribunal||"")+(data.orgaoJulgador?" • "+esc(data.orgaoJulgador):"")+'</small><p><strong>Último movimento:</strong> '+esc(last?[last.nome,last.complemento].filter(Boolean).join(" — "):data.message||"Nenhum movimento retornado")+'</p><p><strong>Fase:</strong> '+esc(x.patch?.["Diagnóstico Processual"]||"sem classificação")+'</p></div>');
+    parts.push('<div class="publication source-card"><div class="source-head"><strong>DataJud</strong><span>'+esc(data.tribunal||"")+'</span></div><h4>'+esc(data.classe||"Processo")+'</h4><p><strong>Último movimento:</strong> '+esc(last?[last.nome,last.complemento].filter(Boolean).join(" — "):data.message||"Nenhum movimento retornado")+'</p><div class="source-foot"><span>'+esc(data.orgaoJulgador||"")+'</span><span>'+esc(last?.dataHora||"")+'</span></div></div>');
   }
   if(djen){
     if(djen.success){
       const y=intel.djen?.latest||djen.items?.[0]||null;
-      parts.push(y?'<div class="publication"><h4>DJEN • '+esc(intel.djen?.event||y.tipoComunicacao||"Publicação")+'</h4><small>'+esc(y.data_disponibilizacao||"")+" • "+esc(y.nomeOrgao||"")+'</small><p>'+esc(y.texto||"")+'</p>'+(y.link?'<a target="_blank" rel="noopener" href="'+esc(y.link)+'">Abrir publicação</a>':'')+'</div>':'<div class="offline-note">DJEN consultado: nenhuma publicação localizada no período.</div>');
+      parts.push(y?'<div class="publication source-card"><div class="source-head"><strong>DJEN</strong><span>'+esc(y.siglaTribunal||"")+'</span></div><h4>'+esc(intel.djen?.event||y.tipoComunicacao||"Publicação")+'</h4><small>'+esc(y.data_disponibilizacao||"")+' • '+esc(y.nomeOrgao||"")+'</small><p>'+esc(y.texto||"")+'</p>'+(y.link?'<a target="_blank" rel="noopener" href="'+esc(y.link)+'">Abrir publicação oficial</a>':'')+'</div>':'<div class="offline-note">DJEN consultado: nenhuma publicação localizada no período.</div>');
     }else parts.push('<div class="banner bad">'+esc(djen.error||"Falha DJEN")+'</div>');
   }
   if(!parts.length)parts.push('<div class="banner bad">'+esc(x.error||"Consulta sem resultado")+'</div>');
-  if(x.partial)parts.unshift('<div class="offline-note">Consulta parcial: a fonte disponível foi preservada; a fonte indisponível poderá ser tentada novamente.</div>');
+  if(x.partial)parts.unshift('<div class="offline-note">Resultado parcial: a fonte disponível foi preservada e a indisponível poderá ser tentada novamente.</div>');
   return parts.join("");
 }
 async function advancedJudicialSearch(){
@@ -392,11 +472,13 @@ function setupEvents(){
   window.addEventListener("online",async()=>{updateSyncUi();if(state.session){showBanner("Conexão restaurada. Sincronizando…","good");try{await syncFromCloud({quiet:true})}catch(_){}}});
   window.addEventListener("offline",()=>{updateSyncUi();showBanner("Sem conexão. Novo login e sincronização exigem acesso ao servidor.","bad")});
   window.addEventListener("focus",async()=>{if(state.session&&navigator.onLine&&!state.syncing){try{await syncFromCloud({quiet:true})}catch(_){}}});
+  window.addEventListener("popstate",()=>setView(pathView(),false));
 }
 function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
 
 async function boot(){
   setupEvents();
+  state.view=pathView();
   restoreSession();
   if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
   try{
