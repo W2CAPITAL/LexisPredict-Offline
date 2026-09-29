@@ -159,6 +159,173 @@ function appendJudicialHistory_(records) {
 
 
 
+
+function cnjMask_(raw) {
+  var d = digits(raw);
+  return d.length === 20
+    ? d.slice(0,7)+"-"+d.slice(7,9)+"."+d.slice(9,13)+"."+d.slice(13,14)+"."+d.slice(14,16)+"."+d.slice(16)
+    : String(raw || "");
+}
+
+function djenPlain_(value) {
+  return String(value == null ? "" : value)
+    .replace(/<script[\s\S]*?<\/script>/gi," ")
+    .replace(/<style[\s\S]*?<\/style>/gi," ")
+    .replace(/<[^>]+>/g," ")
+    .replace(/&nbsp;/gi," ")
+    .replace(/&amp;/gi,"&")
+    .replace(/&quot;/gi,'"')
+    .replace(/&#39;|&apos;/gi,"'")
+    .replace(/\s+/g," ")
+    .trim();
+}
+
+function djenMapItem_(item, cnj) {
+  item = item || {};
+  var raw = item.texto || item.conteudo || item.textoPublicacao || item.descricao || item.inteiroTeor || item.resumo || "";
+  var destRaw = item.destinatarios || item.destinatario || item.partes || [];
+  var destList = Array.isArray(destRaw) ? destRaw : [destRaw];
+  var destinatarios = destList.map(function(d){
+    if (typeof d === "string") return {nome:d};
+    d = d || {};
+    return {nome:String(d.nome || d.nomeDestinatario || d.razaoSocial || "").trim(),polo:String(d.polo || d.tipoPolo || d.tipo || "").trim()};
+  }).filter(function(d){return d.nome;});
+  var id = item.id != null ? item.id : (item.comunicacao_id != null ? item.comunicacao_id : (item.hash || ""));
+  var link = String(item.link || "").trim();
+  if (!/^https?:\/\//i.test(link)) {
+    if (item.hash) link = "https://comunica.pje.jus.br/consulta?hash="+encodeURIComponent(String(item.hash));
+    else if (id !== "") link = "https://comunica.pje.jus.br/consulta?id="+encodeURIComponent(String(id));
+    else link = "https://comunica.pje.jus.br/#/consulta?numeroProcesso="+encodeURIComponent(cnjMask_(cnj));
+  }
+  return {
+    id:id,
+    hash:item.hash || "",
+    data_disponibilizacao:item.data_disponibilizacao || item.datadisponibilizacao || item.dataDisponibilizacao || "",
+    siglaTribunal:item.siglaTribunal || item.siglatribunal || "",
+    tipoComunicacao:item.tipoComunicacao || item.tipocomunicacao || item.tipoDocumento || item.tipodocumento || "",
+    tipoDocumento:item.tipoDocumento || item.tipodocumento || "",
+    nomeOrgao:item.nomeOrgao || item.nomeorgao || "",
+    texto:djenPlain_(raw),
+    numero_processo:item.numeroProcesso || item.numero_processo || item.numeroprocessocommascara || cnjMask_(cnj),
+    link:link,
+    destinatarios:destinatarios
+  };
+}
+
+function djenFetchOfficial_(cnjRaw, body) {
+  var d = digits(cnjRaw);
+  if (d.length !== 20) return {success:false,error:"CNJ inválido",items:[],count:0};
+  body = body || {};
+  var pageSize = Math.min(100,Math.max(10,Number(body.itensPorPagina || 100)));
+  var maxPages = Math.min(30,Math.max(1,Number(body.maxPages || 20)));
+  var start = String(body.dataInicio || "2020-01-01");
+  var end = String(body.dataFim || Utilities.formatDate(new Date(),Session.getScriptTimeZone() || "America/Sao_Paulo","yyyy-MM-dd"));
+  var variants = [cnjMask_(d), d], all = [], seen = Object.create(null), lastStatus = 0, lastDetail = "";
+  for (var v = 0; v < variants.length; v++) {
+    all = []; seen = Object.create(null);
+    for (var page = 1; page <= maxPages; page++) {
+      var query = [
+        "numeroProcesso="+encodeURIComponent(variants[v]),
+        "dataDisponibilizacaoInicio="+encodeURIComponent(start),
+        "dataDisponibilizacaoFim="+encodeURIComponent(end),
+        "pagina="+page,
+        "itensPorPagina="+pageSize
+      ].join("&");
+      if (body.tribunal && !/^outros$/i.test(String(body.tribunal))) query += "&siglaTribunal="+encodeURIComponent(String(body.tribunal).toUpperCase());
+      var response;
+      try {
+        response = UrlFetchApp.fetch("https://comunicaapi.pje.jus.br/api/v1/comunicacao?"+query,{
+          method:"get",muteHttpExceptions:true,headers:{Accept:"application/json","Accept-Language":"pt-BR,pt;q=0.9"}
+        });
+      } catch (err) {
+        return {success:false,error:"DJEN via Apps Script: "+String(err),items:[],count:0};
+      }
+      var code = response.getResponseCode(), text = response.getContentText() || "";
+      lastStatus = code; lastDetail = text.slice(0,300);
+      if (code === 403) return {success:false,status:403,isGeoBlocked:true,error:"DJEN HTTP 403 também bloqueou a origem do Apps Script.",items:[],count:0};
+      if (code === 429) return {success:false,status:429,isRateLimited:true,error:"DJEN HTTP 429 no bridge da planilha.",retryAfterMs:15*60*1000,items:[],count:0};
+      if (code < 200 || code >= 300) break;
+      var data;
+      try { data = JSON.parse(text); } catch (_) { return {success:false,status:code,error:"DJEN retornou JSON inválido no bridge da planilha.",items:[],count:0}; }
+      var raw = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : (Array.isArray(data.content) ? data.content : []));
+      raw.forEach(function(item){
+        var mapped = djenMapItem_(item,d);
+        var key = String(mapped.id || mapped.hash || (mapped.data_disponibilizacao+"|"+mapped.tipoComunicacao+"|"+mapped.texto));
+        if (!seen[key]) { seen[key] = true; all.push(mapped); }
+      });
+      var declared = Number(data && data.count || 0);
+      if (!raw.length || raw.length < pageSize || (declared && all.length >= declared)) break;
+    }
+    if (all.length || (lastStatus >= 200 && lastStatus < 300)) break;
+  }
+  all.sort(function(a,b){return new Date(b.data_disponibilizacao || 0).getTime()-new Date(a.data_disponibilizacao || 0).getTime();});
+  if (!all.length && !(lastStatus >= 200 && lastStatus < 300)) return {success:false,status:lastStatus,error:"DJEN HTTP "+lastStatus+" no bridge da planilha.",detail:lastDetail,items:[],count:0};
+  return {success:true,status:lastStatus || 200,items:all,count:all.length,source:"CNJ DJEN via Google Apps Script"};
+}
+
+function judicialHistoryForCnj_(cnjRaw) {
+  var d = digits(cnjRaw);
+  if (d.length !== 20) return {ok:false,error:"CNJ inválido",datajud:[],djen:[]};
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), out = {ok:true,cnj:d,datajud:[],djen:[]};
+  Object.keys(JUDICIAL_TABLES).forEach(function(source){
+    var cfg = JUDICIAL_TABLES[source], sh = ss.getSheetByName(cfg.name);
+    if (!sh || sh.getLastRow() <= HEADER_ROW) return;
+    var headers = headers_(sh), map = headerMap_(headers), cnjCol = findCol_(map,["CNJ"]);
+    if (cnjCol < 0) return;
+    var data = sh.getRange(HEADER_ROW+1,1,sh.getLastRow()-HEADER_ROW,headers.length).getValues();
+    data.forEach(function(row){
+      if (digits(row[cnjCol]) !== d) return;
+      if (source === "datajud") {
+        var k = findCol_(map,["Chave"]), dm=findCol_(map,["Data Movimento"]), mv=findCol_(map,["Movimento"]), org=findCol_(map,["Órgão Julgador"]);
+        var chave = k >= 0 ? String(row[k] || "") : "", parts = chave.split("|");
+        out.datajud.push({dataHora:dm>=0?row[dm]:"",nome:mv>=0?String(row[mv]||""):"",orgaoJulgador:org>=0?String(row[org]||""):"",codigo:parts.length>1?parts[1]:"",hash:chave});
+      } else {
+        var dd=findCol_(map,["Data Disponibilização"]), tp=findCol_(map,["Tipo"]), og=findCol_(map,["Órgão"]), ds=findCol_(map,["Destinatário"]), rs=findCol_(map,["Resumo"]), id=findCol_(map,["ID"]), lk=findCol_(map,["Abrir publicação"]);
+        var nomes = ds>=0?String(row[ds]||"").split(";").map(function(x){return {nome:String(x||"").trim()};}).filter(function(x){return x.nome;}):[];
+        out.djen.push({data_disponibilizacao:dd>=0?row[dd]:"",tipoComunicacao:tp>=0?String(row[tp]||""):"",nomeOrgao:og>=0?String(row[og]||""):"",texto:rs>=0?String(row[rs]||""):"",id:id>=0?String(row[id]||""):"",link:lk>=0?String(row[lk]||""):"",destinatarios:nomes,numero_processo:cnjMask_(d)});
+      }
+    });
+  });
+  out.datajud.sort(function(a,b){return new Date(b.dataHora || 0)-new Date(a.dataHora || 0);});
+  out.djen.sort(function(a,b){return new Date(b.data_disponibilizacao || 0)-new Date(a.data_disponibilizacao || 0);});
+  out.count = out.datajud.length + out.djen.length;
+  return out;
+}
+
+function djenFetchAndPersist_(body, actor) {
+  body = body || {};
+  var cnj = body.protocolo || body.cnj || "";
+  var fetched = djenFetchOfficial_(cnj,body);
+  if (!fetched.success) return fetched;
+  var latest = fetched.items[0] || null, saved = null;
+  if (latest) {
+    var full = [latest.tipoComunicacao,latest.tipoDocumento,latest.nomeOrgao,latest.texto].filter(Boolean).join(" — ");
+    var record = {
+      Protocolo:cnjMask_(cnj),
+      "DJEN • Última Publicação":full.slice(0,49000),
+      "DJEN • Data":latest.data_disponibilizacao || "",
+      "Resumo DJEN":String(latest.texto || "").slice(0,900),
+      "_DJENId":String(latest.id || latest.hash || ""),
+      "_DJENDate":latest.data_disponibilizacao || "",
+      "Última Sincronização":new Date().toISOString(),
+      "Automação":"OK",
+      _JudicialHistory:{djen:fetched.items}
+    };
+    saved = writeRecords_([record],actor,false);
+  }
+  return {success:true,ok:true,found:!!latest,count:fetched.items.length,items:fetched.items,latest:latest,patch:latest?{
+    "DJEN • Última Publicação":[latest.tipoComunicacao,latest.tipoDocumento,latest.nomeOrgao,latest.texto].filter(Boolean).join(" — ").slice(0,49000),
+    "DJEN • Data":latest.data_disponibilizacao || "",
+    "Resumo DJEN":String(latest.texto || "").slice(0,900),
+    "_DJENId":String(latest.id || latest.hash || ""),
+    "_DJENDate":latest.data_disponibilizacao || "",
+    "Última Sincronização":new Date().toISOString()
+  }:{},saved:saved,source:fetched.source};
+}
+
+
+
+
 var USER_HEADERS = [
 
   "login", "nome", "senha", "perfil", "escritorio", "ativo", "email", "auth_user_id", "id"
@@ -1605,6 +1772,18 @@ function syncDoPost_(e) {
       if (cs.err) return out_({ ok: false, error: cs.err });
       if (roleAccess(cs.us.perfil) < 20) return out_({ ok: false, error: "sem permissao (supervisor+)" });
       return out_(crmSeedClients_());
+    }
+
+    if (action === "judicial_history") {
+      var jh = validSess_(body.sess);
+      if (jh.err) return out_({ ok: false, error: jh.err });
+      return out_(judicialHistoryForCnj_(body.protocolo || body.cnj || ""));
+    }
+
+    if (action === "djen_fetch") {
+      var df = validSess_(body.sess);
+      if (df.err) return out_({ ok: false, error: df.err });
+      return out_(djenFetchAndPersist_(body,df.us));
     }
 
     if (action === "list") {
