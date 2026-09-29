@@ -472,7 +472,7 @@ function taskCardHtml(x){
     '<div class="case-box"><div class="case-box-label">Em linguagem simples</div><strong>'+esc(plainStatus(r))+'</strong><p>'+esc(String(latestMove(r)||"").slice(0,260))+'</p>'+deadline+'</div>'+
     '<div class="case-box publication-box"><div class="publication-text"><div class="case-box-label">Publicação / último dado judicial</div>'+esc(String(pub).slice(0,240))+'</div><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button></div>'+
     '<div class="quick-box"><div class="case-box-label">Atendimento rápido (1 → 2 → 3)</div><p>'+esc(msg)+'</p><div class="quick-actions"><button data-copy="'+esc(key)+'">1. Copiar</button><a target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">2. WhatsApp</a><button class="contacted" data-contact="'+esc(key)+'">3. Contatado</button></div></div></div>'+
-    '<div class="task-card-foot"><div class="task-icon-actions"><button class="task-icon suggest" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button><a class="task-icon wa" target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">WhatsApp</a><button class="task-icon" data-edit="'+esc(key)+'">Editar</button></div><button class="task-icon task-manage" data-edit="'+esc(key)+'">Gerir ›</button></div></article>';
+    '<div class="task-card-foot"><div class="task-icon-actions"><button class="task-icon suggest" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button><button class="task-icon audit" data-history="'+esc(key)+'">Histórico</button><a class="task-icon wa" target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">WhatsApp</a><button class="task-icon" data-edit="'+esc(key)+'">Editar</button></div><button class="task-icon task-manage" data-edit="'+esc(key)+'">Gerir ›</button></div></article>';
 }
 function bindTaskActions(){
   $$("[data-copy]").forEach(b=>b.onclick=async()=>{
@@ -480,9 +480,10 @@ function bindTaskActions(){
     try{await navigator.clipboard.writeText(msg);showBanner("Mensagem copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
   $$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
-  $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
-  $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
-  $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
+  $("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
+  $("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
+  $("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
 }
 function renderTarefas(){
   const list=tasks().slice(0,1200);
@@ -934,9 +935,10 @@ function renderAuditDialog(){
     '<section class="audit-panel"><h4>Leitura simples</h4><div class="audit-source"><strong>'+esc(plainStatus(row))+'</strong><br><br>'+esc(String(move).slice(0,900))+'</div></section></div>'+
     (state.auditSuggest?'<section class="audit-panel"><h4>Sugestões de resposta</h4><div class="suggestions">'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar resposta</button></div></div>').join("")+'</div></section>':'')+
     (scan?.error?'<div class="banner bad">'+esc(scan.error)+'</div>':'')+
-    '<div class="audit-actions"><button class="btn" id="auditEditBtn">Editar cadastro</button><button class="btn" id="auditContactBtn">Registrar atendimento</button><button class="btn" id="auditSuggestBtn">Sugerir resposta</button><button class="btn primary" id="auditRefreshBtn">Atualizar DataJud + DJEN</button></div>';
+    '<div class="audit-actions"><button class="btn" id="auditHistoryBtn">Histórico inteiro do tribunal</button><button class="btn" id="auditEditBtn">Editar cadastro</button><button class="btn" id="auditContactBtn">Registrar atendimento</button><button class="btn" id="auditSuggestBtn">Sugerir resposta</button><button class="btn primary" id="auditRefreshBtn">Atualizar DataJud + DJEN</button></div>';
+  $("#auditHistoryBtn").onclick=()=>openHistory(state.auditKey);
   $("#auditEditBtn").onclick=()=>{ $("#auditDialog").close();openProcess(state.auditKey) };
-  $("#auditContactBtn").onclick=()=>markContacted(state.auditKey);
+  $("#auditContactBtn").onclick=()=>openAttendance(state.auditKey);
   $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;renderAuditDialog()};
   $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
   $$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
