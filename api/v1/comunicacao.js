@@ -1,4 +1,4 @@
-const PUBLIC_DJEN = process.env.DJEN_UPSTREAM || "https://hcomunicaapi.cnj.jus.br/api/v1/comunicacao";
+const PUBLIC_DJEN = process.env.DJEN_UPSTREAM || "https://comunicaapi.pje.jus.br/api/v1/comunicacao";
 function one(v){return Array.isArray(v)?v[0]:v}
 module.exports=async(req,res)=>{
   if(req.method!=="GET")return res.status(405).json({status:"error",message:"Método não permitido",items:[]});
