@@ -25,4 +25,7 @@ jobs:
           test -f sw.js
           test -f api/djen.js
           test -f api/v1/comunicacao.js
-          test -f apps-script/LexisSheetsBridge.gs
+          test -f apps-script/Code.gs
+          test -f apps-script/LEXIS-SYNC-AppsScript.gs
+          test -f apps-script/LexisApp.gs
+          test -f apps-script/LexisSheet.gs
