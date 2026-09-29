@@ -69,11 +69,14 @@ module.exports=async(req,res)=>{
       const user=data.user||null;
       if(!user)return res.status(502).json({ok:false,error:"O bridge não retornou o usuário da sessão para aplicar o escopo da carteira."});
       const source=Array.isArray(data.rows)?data.rows:(Array.isArray(data.todas)?data.todas:[]);
-      const scoped=scopeRows(source,user);
+      const requestedScope=String(payload.scope||"mine").toLowerCase()==="company"?"company":"mine";
+      const scoped=scopeRows(source,user,requestedScope);
       data.rows=scoped;
-      data.minhas=scoped;
+      data.minhas=scopeRows(source,user,"mine");
       data.count=scoped.length;
-      data.scope={field:isElevated(user.perfil)?"ALL":"Assistente",value:isElevated(user.perfil)?"*":(user.nome||user.usuario||""),sourceCount:source.length};
+      data.scope=requestedScope==="company"
+        ?{field:"ALL",value:"*",mode:"company",sourceCount:source.length}
+        :{field:isElevated(user.perfil)?"ALL":"Assistente",value:isElevated(user.perfil)?"*":(user.nome||user.usuario||""),mode:"mine",sourceCount:source.length};
       delete data.todas;
     }
 

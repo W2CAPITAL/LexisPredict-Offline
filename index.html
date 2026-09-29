@@ -42,6 +42,7 @@
       <nav id="nav">
         <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>Dashboard</span></button>
         <button class="nav-item" data-view="processos"><span class="nav-icon">▤</span><span>Processos</span><span class="nav-count" id="navProcessos">0</span></button>
+        <button class="nav-item" data-view="empresa"><span class="nav-icon">▦</span><span>Processos da empresa</span><span class="nav-count" id="navEmpresa">0</span></button>
         <button class="nav-item" data-view="tarefas"><span class="nav-icon">✓</span><span>Tarefas</span><span class="nav-count hot" id="navTarefas">0</span></button>
         <button class="nav-item" data-view="analise"><span class="nav-icon">◫</span><span>Análise</span></button>
         <button class="nav-item" data-view="report"><span class="nav-icon">▥</span><span>Report</span></button>
@@ -63,7 +64,7 @@
         <div class="top-actions">
           <div class="sync-indicator"><span class="dot" id="syncDot"></span><span id="syncText">Local</span></div>
           <button class="btn" id="syncBtn">Sincronizar</button>
-          <button class="btn primary" id="newProcessBtn">Novo processo</button>
+          <button class="btn primary" id="newProcessBtn">Novo cadastro</button>
         </div>
       </header>
 
@@ -82,7 +83,7 @@
       <div class="form-grid">
         <label>Cliente<input id="fCliente"/></label>
         <label>Protocolo / CNJ<input id="fProtocolo"/></label>
-        <label>Assistente<input id="fAssistente"/></label>
+        <label>Assistente<input id="fAssistente"/><small id="assistenteHint" class="field-hint">Atribuição da carteira.</small></label>
         <label>Advogado<input id="fAdvogado"/></label>
         <label>Escritório<input id="fEscritorio"/></label>
         <label>Tribunal<input id="fTribunal"/></label>
@@ -100,6 +101,19 @@
     </form>
   </dialog>
 
+
+  <dialog id="auditDialog" class="dialog audit-dialog">
+    <div class="dialog-card audit-card">
+      <div class="dialog-head">
+        <div><span class="eyebrow">AUDITORIA UNIFICADA</span><h3 id="auditTitle">Audit 3D</h3></div>
+        <button class="icon-btn" type="button" id="closeAuditBtn">×</button>
+      </div>
+      <div id="auditContent" class="audit-content"></div>
+    </div>
+  </dialog>
+
+  <script src="/lib/task-priority.js" defer></script>
+  <script src="/lib/suggest-response.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

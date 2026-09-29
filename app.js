@@ -2,8 +2,10 @@
 "use strict";
 
 const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit";
-const DB_NAME="lexispredict-secure-cache-v2";
-const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null};
+const DB_NAME="lexispredict-secure-cache-v3";
+const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
+const CACHE_TTL_MS=5*60*1000;
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -32,7 +34,7 @@ function statusRet(r){
   if(st.includes("VENC"))return"VENCIDO";if(st.includes("ATEN"))return"ATENÇÃO";if(st.includes("EM DIA")||st.includes("NO PRAZO"))return"EM DIA";
   const d=daysTo(pick(r,"Próximo Retorno"));if(d===null)return"SEM DATA";if(d<0)return"VENCIDO";if(d<=0)return"ATENÇÃO";return"EM DIA";
 }
-function latestMove(r){return pick(r,"Diagnóstico Processual","DataJud • Último Movimento","Último Andamento","Andamento")}
+function latestMove(r){return pick(r,"DataJud • Último Movimento","Último Andamento","Andamento","ultimo_movimento","Diagnóstico Processual")}
 function cnjFormatted(v){const d=digits(v);return d.length===20?d.slice(0,7)+"-"+d.slice(7,9)+"."+d.slice(9,13)+"."+d.slice(13,14)+"."+d.slice(14,16)+"."+d.slice(16):v}
 function badge(text,type){return '<span class="badge b-'+type+'">'+esc(text)+'</span>'}
 function qBadge(q){return q==="BOM"?badge("BOM","good"):q==="RUIM"?badge("RUIM","bad"):badge(q||"NEUTRO","warn")}
@@ -63,7 +65,29 @@ async function idbAll(store){const db=await openDb();return new Promise((res,rej
 async function idbPut(store,value){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).put(value);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
 async function idbClear(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).clear();tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
 async function saveRows(rows){await idbClear("rows");const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction("rows","readwrite"),st=tx.objectStore("rows");rows.forEach(r=>st.put({...r,_key:keyOf(r)}));tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
-async function loadLocal(){state.rows=(await idbAll("rows")).map(({_key,...r})=>r);const meta=(await idbAll("meta")).find(x=>x.key==="lastSync");if(meta)state.lastSync=meta.value;return state.rows}
+function currentUser(){return state.session?.user||{}}
+function elevatedUser(){return /superadmin|supervisor|administrador|admin/i.test(String(currentUser().perfil||""))}
+function assistantSegments(v){return String(v??"").split(/[\\/|;,]+/).map(x=>norm(x)).filter(Boolean)}
+function isMine(r){
+  if(elevatedUser())return true;
+  const u=currentUser(),target=norm(u.nome||u.usuario||"");
+  if(!target)return false;
+  const segs=assistantSegments(pick(r,"Assistente"));
+  if(segs.includes(target))return true;
+  const first=target.split(/\\s+/)[0];
+  return !!first&&segs.includes(first);
+}
+function refreshScopes(){state.rows=(state.companyRows||[]).filter(isMine)}
+async function loadLocal(){
+  state.companyRows=(await idbAll("rows")).map(({_key,...r})=>r);
+  const metas=await idbAll("meta");
+  const sync=metas.find(x=>x.key==="lastSync"),at=metas.find(x=>x.key==="lastSyncAt");
+  if(sync)state.lastSync=sync.value;
+  if(at)state.lastSyncAt=Number(at.value||0);
+  refreshScopes();
+  return state.companyRows;
+}
+function cacheFresh(){return !!state.companyRows.length&&!!state.lastSyncAt&&(Date.now()-state.lastSyncAt)<CACHE_TTL_MS}
 async function queueWrite(row){
   const list=await idbAll("outbox"),k=keyOf(row);
   const db=await openDb();
@@ -95,15 +119,17 @@ async function syncFromCloud(opts={}){
   if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
   try{
     try{await flushOutbox()}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
-    const payload={action:"list",limit:8000};
+    const payload={action:"list",limit:8000,scope:"company"};
     const j=await apiSheets(payload);
     let rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
     const pending=await idbAll("outbox");
     rows=mergePending(rows,pending);
-    state.rows=rows;await saveRows(rows);state.lastSync=now();await idbPut("meta",{key:"lastSync",value:state.lastSync});
+    state.companyRows=rows;refreshScopes();await saveRows(rows);
+    state.lastSync=now();state.lastSyncAt=Date.now();
+    await idbPut("meta",{key:"lastSync",value:state.lastSync});
+    await idbPut("meta",{key:"lastSyncAt",value:state.lastSyncAt});
     if(!opts.quiet){
-      const scope=j.scope?.field==="Assistente"?" • carteira de "+(j.scope.value||"assistente"):"";
-      showBanner("Sincronização concluída: "+rows.length+" processos carregados"+scope+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
+      showBanner("Sincronização concluída: "+rows.length+" processos da empresa em cache"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
     }
     render();
   } finally { state.syncing=false; }
@@ -112,8 +138,10 @@ function startAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
   state.autoSyncTimer=setInterval(async()=>{
     if(!state.session||!navigator.onLine||document.hidden||state.syncing)return;
+    const pending=await outboxCount().catch(()=>0);
+    if(cacheFresh()&&!pending)return;
     try{await syncFromCloud({quiet:true})}catch(_){}
-  },60000);
+  },300000);
 }
 function stopAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
@@ -161,8 +189,22 @@ async function flushOutbox(){
 }
 function showBanner(msg,type=""){const b=$("#banner");b.textContent=msg;b.className="banner "+type;b.classList.remove("hidden");clearTimeout(showBanner.t);showBanner.t=setTimeout(()=>b.classList.add("hidden"),7000)}
 function setLogged(on){$("#login").classList.toggle("hidden",on);$("#app").classList.toggle("hidden",!on)}
-function saveSession(s){state.session=s||null}
-function restoreSession(){state.session=null}
+function saveSession(s){
+  state.session=s||null;
+  try{
+    if(state.session?.user)localStorage.setItem(SESSION_SNAPSHOT_KEY,JSON.stringify({user:state.session.user,ts:Date.now()}));
+    else localStorage.removeItem(SESSION_SNAPSHOT_KEY);
+  }catch(_){}
+  refreshScopes();
+}
+function restoreSession(){
+  try{
+    const snap=JSON.parse(localStorage.getItem(SESSION_SNAPSHOT_KEY)||"null");
+    state.session=snap?.user?{user:snap.user,cached:true}:null;
+  }catch(_){state.session=null}
+  refreshScopes();
+  return state.session;
+}
 
 function metrics(rows=state.rows){
   const m={total:rows.length,active:0,closed:0,venc:0,attention:0,good:0,neutral:0,bad:0,newer:0,djen:0,dj:0,scoreSum:0,scoreN:0,proc:0,improc:0};
@@ -173,28 +215,41 @@ function metrics(rows=state.rows){
   });m.avg=m.scoreN?Math.round(m.scoreSum/m.scoreN):0;return m;
 }
 function taskWeight(r){
-  if(isClosed(r))return 0;let w=0;const sr=statusRet(r),q=quality(r),move=latestMove(r).toLowerCase();
-  if(sr==="VENCIDO")w+=1000+Math.min(300,Math.abs(daysTo(pick(r,"Próximo Retorno"))||0));else if(sr==="ATENÇÃO")w+=950;
-  if(/audienc/.test(move))w+=880;if(/cumprimento|execu/.test(move))w+=850;if(/decurso|transito/.test(move))w+=830;
-  if(boolish(pick(r,"Nova Atualização")))w+=780;if(q==="RUIM")w+=180;if(/erro|parcial/i.test(pick(r,"Automação","Status Sync")))w+=120;return w;
+  const tp=window.LexisTaskPriority;
+  return tp?.scoreCase?tp.scoreCase(r).score:0;
 }
-function tasks(){return state.rows.map(r=>({r,w:taskWeight(r)})).filter(x=>x.w>0).sort((a,b)=>b.w-a.w)}
-function priority(w){return w>=1000?"CRÍTICA":w>=850?"ALTA":w>=650?"MÉDIA":"NORMAL"}
+function tasks(){
+  const tp=window.LexisTaskPriority;
+  if(tp?.groupByClient){
+    return tp.groupByClient(state.rows).map(g=>({r:g.reference||g.cases?.[0]||{},w:g.score||0,group:g,priority:g.priority||tp.scoreCase(g.reference||g.cases?.[0]||{})}));
+  }
+  return state.rows.map(r=>({r,w:taskWeight(r),group:{cliente:pick(r,"Cliente"),cases:[r]}})).filter(x=>x.w>0).sort((a,b)=>b.w-a.w);
+}
+function priority(w){return w>=950?"CRÍTICA":w>=800?"ALTA":w>=600?"MÉDIA":"NORMAL"}
 function taskLabel(r){
-  const sr=statusRet(r),move=latestMove(r).toLowerCase();if(sr==="VENCIDO")return"Retorno vencido";if(sr==="ATENÇÃO")return"Retorno hoje";
-  if(/transito/.test(move))return"Revisar trânsito em julgado";if(/decurso/.test(move))return"Revisar decurso de prazo";if(/audienc/.test(move))return"Audiência";
-  if(/cumprimento|execu/.test(move))return"Cumprimento / execução";if(boolish(pick(r,"Nova Atualização")))return"Nova atualização";if(quality(r)==="RUIM")return"Qualidade processual ruim";return"Revisão operacional";
+  const tp=window.LexisTaskPriority;
+  const p=tp?.scoreCase?tp.scoreCase(r):null;
+  if(p?.label&&p.label!=="Rotina")return p.label;
+  const sr=statusRet(r),move=latestMove(r).toLowerCase();
+  if(sr==="VENCIDO")return"Retorno vencido";
+  if(sr==="É HOJE"||sr==="ATENÇÃO")return"Retorno prioritário";
+  if(/transito|baixa/.test(move))return"Revisar encerramento";
+  if(/audienc/.test(move))return"Audiência";
+  if(/cumprimento|execu/.test(move))return"Cumprimento / execução";
+  if(boolish(pick(r,"Nova Atualização","Novo Andamento")))return"Nova atualização";
+  return"Revisão operacional";
 }
 
 function titleFor(v){return {
   dashboard:["COMMAND CENTER","Dashboard"],
   processos:["CARTEIRA","Processos"],
+  empresa:["EMPRESA","Processos da empresa"],
   tarefas:["OPERAÇÃO","Tarefas"],
   analise:["INTELIGÊNCIA","Análise"],
   report:["EXECUTIVO","Report"],
   scanner:["REDE JUDICIAL","DataJud + DJEN"]
 }[v]||["LEXISPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",processos:"/processos",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
+const viewPaths={dashboard:"/",processos:"/processos",empresa:"/processos-empresa",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
 function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
 function setView(v,push=true){
   state.view=v;
@@ -204,9 +259,10 @@ function setView(v,push=true){
   render();
 }
 function render(){
-  const m=metrics();$("#navProcessos").textContent=m.total;$("#navTarefas").textContent=tasks().length;updateSyncUi();
+  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
   if(state.view==="dashboard")renderDashboard();
   else if(state.view==="processos")renderProcessos();
+  else if(state.view==="empresa")renderEmpresa();
   else if(state.view==="tarefas")renderTarefas();
   else if(state.view==="analise")renderAnalise();
   else if(state.view==="report")renderReport();
@@ -249,34 +305,103 @@ function renderDashboard(){
   bindGotos();
 }
 function metricRow(label,value,sub){return '<div class="metric-row"><div><div class="cell-main">'+esc(label)+'</div><div class="cell-sub">'+esc(sub)+'</div></div><strong>'+esc(value)+'</strong></div>'}
-function filteredRows(){
+function filteredRows(source=state.rows){
   const q=norm(state.query),st=state.status,qual=state.quality;
-  return state.rows.filter(r=>(!q||norm(Object.values(r).join(" ")).includes(q))&&(!st||statusRet(r)===st)&&(!qual||quality(r)===qual));
+  return (source||[]).filter(r=>(!q||norm(Object.values(r).join(" ")).includes(q))&&(!st||statusRet(r)===st)&&(!qual||quality(r)===qual));
+}
+function processTable(rows,{company=false}={}){
+  const title=company?"Processos da empresa":"Carteira atribuída";
+  const subtitle=company
+    ?"Todos os usuários autenticados podem consultar e editar. Editar ou atender não transfere a carteira."
+    :"Processos vinculados ao seu Assistente/perfil.";
+  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' registro(s) nesta visão</span></div><div class="toolbar"><input id="search" placeholder="Pesquisar cliente, CNJ, advogado, andamento…" value="'+esc(state.query)+'"/><select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
+  '<div class="company-note">'+esc(subtitle)+'</div>'+
+  '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Última movimentação</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Retorno</th><th>Assistente</th><th>Atendido por</th><th></th></tr></thead><tbody>'+
+  rows.map(r=>{
+    const key=keyOf(r),move=String(latestMove(r)||"Sem movimentação em cache").slice(0,180);
+    const moveDate=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data");
+    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="actions"><button class="icon-action" data-edit="'+esc(key)+'">Editar</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-contact="'+esc(key)+'">Atendido</button></td></tr>';
+  }).join("")+
+  '</tbody></table></div>';
+}
+function bindProcessList(renderFn){
+  const search=$("#search"),status=$("#statusFilter"),qual=$("#qualityFilter");
+  if(search)search.oninput=e=>{state.query=e.target.value;renderFn()};
+  if(status)status.onchange=e=>{state.status=e.target.value;renderFn()};
+  if(qual)qual.onchange=e=>{state.quality=e.target.value;renderFn()};
+  $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
+  $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
+  $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
+  $$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
+  $$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
 function renderProcessos(){
-  const rows=filteredRows().slice(0,700);
-  $("#content").innerHTML=
-  '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">LIST VIEW</span><strong>Carteira principal</strong><span>'+rows.length+' de '+state.rows.length+'</span></div><div class="toolbar"><input id="search" placeholder="Pesquisar cliente, CNJ, advogado, andamento…" value="'+esc(state.query)+'"/><select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select></div></div>'+
-  '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Fase</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Produto</th><th>Retorno</th><th>Responsável</th><th></th></tr></thead><tbody>'+
-  rows.map(r=>'<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(String(latestMove(r)).slice(0,150))+'</div><div class="cell-sub">'+esc(pick(r,"DataJud • Data","DJEN • Data"))+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td><div class="cell-main clamp2">'+esc(pick(r,"Produto / Oportunidade")||"—")+'</div></td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td>'+esc(pick(r,"Assistente","Responsável"))+'</td><td class="actions"><button class="icon-action" data-edit="'+esc(keyOf(r))+'">Editar</button><button class="icon-action" data-scan="'+esc(digits(pick(r,"Protocolo")))+'">Auditar</button></td></tr>').join("")+
-  '</tbody></table></div>';
-  $("#search").oninput=e=>{state.query=e.target.value;renderProcessos()};
-  $("#statusFilter").onchange=e=>{state.status=e.target.value;renderProcessos()};
-  $("#qualityFilter").onchange=e=>{state.quality=e.target.value;renderProcessos()};
+  const rows=filteredRows(state.rows).slice(0,1200);
+  $("#content").innerHTML=processTable(rows,{company:false});
+  bindProcessList(renderProcessos);
+}
+function renderEmpresa(){
+  const rows=filteredRows(state.companyRows).slice(0,1800);
+  $("#content").innerHTML=processTable(rows,{company:true});
+  bindProcessList(renderEmpresa);
+}
+function plainStatus(r){
+  const blob=norm([latestMove(r),pick(r,"Diagnóstico Processual"),pick(r,"Tipo de Evento","Evento_Tipo")].join(" "));
+  if(/improcedent|decisao desfavoravel/.test(blob))return"Decisão desfavorável (a confirmar nos autos)";
+  if(/procedent|decisao favoravel/.test(blob))return"Decisão favorável identificada (a confirmar nos autos)";
+  if(/baixa definitiva|transito em julgado|arquiv/.test(blob))return"Possível encerramento/baixa — revisar pendências";
+  if(/cumprimento|execucao/.test(blob))return"Fase de cumprimento/execução identificada";
+  if(/audienc/.test(blob))return"Audiência ou ato relacionado identificado";
+  if(/conclus/.test(blob))return"Processo concluso para análise do juízo";
+  return String(latestMove(r)||"Movimentação registrada na planilha").slice(0,180);
+}
+function whatsappHref(r,msg){
+  let tel=digits(pick(r,"Telefone"));if(!tel)return"#";
+  if(tel.length===10||tel.length===11)tel="55"+tel;
+  return "https://wa.me/"+tel+"?text="+encodeURIComponent(msg||"");
+}
+function taskBadges(r,w){
+  const out=[badge(priority(w),w>=950?"bad":w>=800?"warn":w>=600?"blue":"good")];
+  const move=norm(latestMove(r));
+  if(boolish(pick(r,"Encerrado no Tribunal","DatajudEncerrado","isBaixaTribunal"))||/baixa definitiva|transito/.test(move))out.push(badge("BAIXA NO TRIBUNAL","gray"));
+  if(boolish(pick(r,"Nova Atualização","Novo Andamento","Novo_Andamento")))out.push(badge("NOVO ANDAMENTO","bad"));
+  if(boolish(pick(r,"Improcedente"))||/improcedent/.test(move))out.push(badge("IMPROCEDENTE","warn"));
+  else if(boolish(pick(r,"Procedente"))||/procedent/.test(move))out.push(badge("PROCEDENTE","good"));
+  return out.join("");
+}
+function taskCardHtml(x){
+  const r=x.r||{},g=x.group||{cases:[r]},key=keyOf(r),msg=window.LexisSuggest?.quickMessage?window.LexisSuggest.quickMessage(r):"";
+  const next=pick(r,"Próximo Retorno"),d=daysTo(next),deadline=d!==null&&d<0?'<span class="deadline">VENCIDO HÁ '+Math.abs(d)+' DIA(S)</span>':d===0?'<span class="deadline">VENCE HOJE</span>':"";
+  const pub=pick(r,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo")||"Sem publicação DJEN registrada no cache.";
+  const cls=x.w>=950?"critical":x.w>=800?"high":x.w>=600?"medium":"calm";
+  return '<article class="task-card '+cls+'"><div class="task-card-head"><div><span class="eyebrow">FILA DE ATENDIMENTO</span></div><div class="task-card-badges">'+taskBadges(r,x.w)+'</div></div>'+
+    '<div class="task-card-body"><div><h3 class="task-client">'+esc(pick(r,"Cliente")||"SEM NOME")+'</h3><div class="task-meta">'+esc(pick(r,"Advogado Atual","Advogado")||"NÃO ATRIBUÍDO")+' • '+esc(pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao")||"sem data")+' • '+esc(String(latestMove(r)||"sem movimentação").slice(0,120))+'</div><div class="task-meta"><strong>Tratar:</strong> '+esc(taskLabel(r))+'</div></div>'+
+    '<span class="cnj-chip">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</span><div class="case-owner">▧ '+esc(pick(r,"Escritório","Escritorio")||"GERAL")+' · '+esc(pick(r,"Assistente")||"SEM ASSISTENTE")+(g.cases?.length>1?' · '+g.cases.length+' processos':'')+'</div>'+
+    '<div class="case-box"><div class="case-box-label">Em linguagem simples</div><strong>'+esc(plainStatus(r))+'</strong><p>'+esc(String(latestMove(r)||"").slice(0,260))+'</p>'+deadline+'</div>'+
+    '<div class="case-box publication-box"><div class="publication-text"><div class="case-box-label">Publicação / último dado judicial</div>'+esc(String(pub).slice(0,240))+'</div><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button></div>'+
+    '<div class="quick-box"><div class="case-box-label">Atendimento rápido (1 → 2 → 3)</div><p>'+esc(msg)+'</p><div class="quick-actions"><button data-copy="'+esc(key)+'">1. Copiar</button><a target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">2. WhatsApp</a><button class="contacted" data-contact="'+esc(key)+'">3. Contatado</button></div></div></div>'+
+    '<div class="task-card-foot"><div class="task-icon-actions"><button class="task-icon suggest" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="task-icon audit" data-audit="'+esc(key)+'">Audit 3D</button><a class="task-icon wa" target="_blank" rel="noopener" href="'+esc(whatsappHref(r,msg))+'">WhatsApp</a><button class="task-icon" data-edit="'+esc(key)+'">Editar</button></div><button class="task-icon task-manage" data-edit="'+esc(key)+'">Gerir ›</button></div></article>';
+}
+function bindTaskActions(){
+  $$("[data-copy]").forEach(b=>b.onclick=async()=>{
+    const r=findRow(b.dataset.copy),msg=window.LexisSuggest?.quickMessage?window.LexisSuggest.quickMessage(r):"";
+    try{await navigator.clipboard.writeText(msg);showBanner("Mensagem copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
+  });
+  $$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
+  $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
+  $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
   $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
-  $$("[data-scan]").forEach(b=>b.onclick=()=>{setView("scanner");setTimeout(()=>{$("#scanCnj").value=b.dataset.scan;scanOne(b.dataset.scan)},0)});
 }
 function renderTarefas(){
-  const list=tasks().slice(0,900);
-  const high=list.filter(x=>priority(x.w)==="CRÍTICA"||priority(x.w)==="ALTA").length;
+  const list=tasks().slice(0,1200);
+  const critical=list.filter(x=>x.w>=950).length,high=list.filter(x=>x.w>=800&&x.w<950).length;
   $("#content").innerHTML=
-  '<div class="command-strip slim"><div><span class="eyebrow">WORK QUEUE</span><h2>Fila operacional</h2><p>Ordenada por prazo, evento judicial, novidade e qualidade.</p></div><div class="queue-summary">'+badge(high+" altas","warn")+badge(list.filter(x=>statusRet(x.r)==="VENCIDO").length+" vencidas","bad")+'</div></div>'+
-  '<div class="kpi-grid">'+kpi("Fila total",list.length,"ações priorizadas")+kpi("Críticas",list.filter(x=>priority(x.w)==="CRÍTICA").length,"ação imediata","bad")+kpi("Altas",list.filter(x=>priority(x.w)==="ALTA").length,"prioridade alta","warn")+kpi("Novidades",list.filter(x=>boolish(pick(x.r,"Nova Atualização"))).length,"andamentos novos")+kpi("Potencial",list.filter(x=>commercialStatus(x.r).includes("POTENCIAL")).length,"oportunidade comercial","good")+kpi("Não vender",list.filter(x=>commercialStatus(x.r).includes("NÃO VENDER")).length,"bloqueio comercial","bad")+'</div>'+
-  '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Prioridade</th><th>Tarefa</th><th>Cliente</th><th>CNJ</th><th>Fase judicial</th><th>Cumprimento</th><th>Comercial</th><th>Responsável</th><th></th></tr></thead><tbody>'+
-  list.map(x=>'<tr><td>'+badge(priority(x.w),x.w>=1000?"bad":x.w>=850?"warn":"blue")+'</td><td><div class="cell-main">'+esc(taskLabel(x.r))+'</div><div class="cell-sub">'+esc(statusRet(x.r))+'</div></td><td>'+esc(pick(x.r,"Cliente"))+'</td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td class="clamp2">'+esc(String(latestMove(x.r)).slice(0,120))+'</td><td>'+execHtml(x.r)+'</td><td>'+commercialHtml(x.r)+'</td><td>'+esc(pick(x.r,"Assistente"))+'</td><td><button class="icon-action" data-edit="'+esc(keyOf(x.r))+'">Abrir</button></td></tr>').join("")+
-  '</tbody></table></div>';
-  $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
+    '<div class="task-header"><div><span class="eyebrow">FILA DE ATENDIMENTO</span><h2>Prioridade operacional</h2><p>Do pior caso e maior urgência até a rotina mais tranquila. Movimentações já salvas na planilha são reaproveitadas.</p></div><div class="queue-summary">'+badge(critical+" críticas","bad")+badge(high+" altas","warn")+badge(list.length+" clientes","gray")+'</div></div>'+
+    '<div class="kpi-grid">'+kpi("Fila total",list.length,"clientes priorizados")+kpi("Críticas",critical,"ação imediata","bad")+kpi("Altas",high,"alta prioridade","warn")+kpi("Novidades",list.filter(x=>boolish(pick(x.r,"Nova Atualização","Novo Andamento"))).length,"já registradas na planilha")+kpi("Vencidos",list.filter(x=>statusRet(x.r)==="VENCIDO").length,"retorno vencido","bad")+kpi("Rotina",list.filter(x=>x.w<600).length,"casos mais tranquilos","good")+'</div>'+
+    '<div class="task-grid">'+list.map(taskCardHtml).join("")+'</div>';
+  bindTaskActions();
 }
+
 function renderAnalise(){
   const m=metrics(),stages={},lawyers={},commercial={},favored={};
   state.rows.forEach(r=>{
@@ -386,13 +511,14 @@ async function scanOne(cnj,quiet=false){
     const j={ok:false,error:"DJEN em pausa por limite oficial. Tente novamente em "+wait+"s.",retry:true,retryAfterMs:wait*1000};
     state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);return j;
   }
-  const row=state.rows.find(x=>digits(pick(x,"Protocolo"))===d)||null;
+  const row=state.companyRows.find(x=>digits(pick(x,"Protocolo"))===d)||null;
   try{
     const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",cliente:row?pick(row,"Cliente"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",lastDjenId:row?pick(row,"_DJENId"):"",lastDjenDate:row?pick(row,"_DJENDate","DJEN • Data"):"",mode:"both"}),cache:"no-store"});
     const j=await r.json();state.lastScan=j;
     if(j.patch&&row){
       Object.assign(row,j.patch);
-      await saveRows(state.rows);
+      refreshScopes();
+      await saveRows(state.companyRows);
       const writePatch={"Protocolo":pick(row,"Protocolo"),...j.patch};
       try{
         const wr=await apiSheets({action:"write",rows:[writePatch]});
@@ -432,17 +558,116 @@ async function scanQueue(){
 }
 
 function bindGotos(){$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
+function findRow(key){return state.companyRows.find(x=>keyOf(x)===key)||state.rows.find(x=>keyOf(x)===key)||null}
+function todayBrazil(){
+  const parts=new Intl.DateTimeFormat("pt-BR",{timeZone:"America/Sao_Paulo",day:"2-digit",month:"2-digit",year:"numeric"}).formatToParts(new Date());
+  const o={};parts.forEach(p=>o[p.type]=p.value);return o.day+"/"+o.month+"/"+o.year;
+}
+function updateLocalRow(row){
+  const idx=state.companyRows.findIndex(x=>keyOf(x)===keyOf(row));
+  if(idx>=0)state.companyRows[idx]=row;else state.companyRows.unshift(row);
+  refreshScopes();
+}
+async function markContacted(key){
+  const row=findRow(key);if(!row)return;
+  const actor=currentUser().nome||currentUser().usuario||"Usuário";
+  const retorno=todayBrazil(),nowIso=new Date().toISOString();
+  Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso});
+  updateLocalRow(row);await saveRows(state.companyRows);
+  const patch={"Protocolo":pick(row,"Protocolo"),"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
+  await queueWrite(patch);render();
+  if(!navigator.onLine){showBanner("Atendimento salvo no cache. Será enviado quando a conexão voltar.","good");return}
+  try{await flushOutbox();showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
+  catch(e){showBanner("Atendimento ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
+}
+function auditCached(row){
+  return {
+    move:latestMove(row)||"Sem movimentação registrada no cache.",
+    moveDate:pick(row,"DataJud • Data","Data da Movimentação","Data_Movimentacao")||"",
+    djen:pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo")||"",
+    djenDate:pick(row,"DJEN • Data","_DJENDate")||"",
+    owner:pick(row,"Assistente")||"—",
+    attended:pick(row,"AtendidoPor")||"—",
+    lastReturn:pick(row,"Último Retorno")||"—",
+    nextReturn:pick(row,"Próximo Retorno")||"—"
+  };
+}
+function scanLatestMovement(scan){
+  const movs=scan?.datajud?.movimentos||scan?.movimentos||[];
+  const m=scan?.intelligence?.datajud?.last||movs[0]||null;
+  return m?[m.nome,m.complemento,m.descricao].filter(Boolean).join(" — "):"";
+}
+function scanLatestDjen(scan){
+  const item=scan?.intelligence?.djen?.latest||scan?.djen?.items?.[0]||scan?.comunicacoes?.[0]||null;
+  return item?String(item.texto||item.conteudo||item.inteiroTeor||item.tipoComunicacao||""):"";
+}
+function renderAuditDialog(){
+  const row=findRow(state.auditKey);if(!row)return;
+  const cached=auditCached(row),scan=state.auditScan||null;
+  const networkMove=scanLatestMovement(scan),networkDjen=scanLatestDjen(scan);
+  const move=networkMove||cached.move,djen=networkDjen||cached.djen;
+  const suggestions=state.auditSuggest&&window.LexisSuggest?.suggestResponses?window.LexisSuggest.suggestResponses({row,scan}):[];
+  $("#auditTitle").textContent=(state.auditSuggest?"Sugerir resposta • ":"Audit 3D • ")+(pick(row,"Cliente")||"Processo");
+  $("#auditContent").innerHTML=
+    '<div class="audit-hero"><div><span class="eyebrow">CACHE-FIRST • GOOGLE SHEETS</span><h4>'+esc(pick(row,"Cliente")||"SEM NOME")+'</h4><p>'+esc(cnjFormatted(pick(row,"Protocolo")))+' · '+esc(pick(row,"Tribunal")||"")+' · Assistente '+esc(cached.owner)+'</p></div><div>'+badge(statusRet(row),statusRet(row)==="VENCIDO"?"bad":statusRet(row)==="ATENÇÃO"||statusRet(row)==="É HOJE"?"warn":"good")+'</div></div>'+
+    '<div class="audit-grid"><section class="audit-panel"><h4>Movimentação mais recente</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.moveDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkMove?"DataJud atualizado agora":"Planilha / cache local")+'</strong></div><div class="audit-source">'+esc(move)+'</div></section>'+
+    '<section class="audit-panel"><h4>Publicação DJEN</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.djenDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkDjen?"DJEN atualizado agora":"Planilha / cache local")+'</strong></div><div class="audit-source">'+esc(djen||"Nenhuma publicação DJEN registrada.")+'</div></section></div>'+
+    '<div class="audit-grid"><section class="audit-panel"><h4>Operação</h4><div class="audit-kv"><span>Assistente</span><strong>'+esc(cached.owner)+'</strong></div><div class="audit-kv"><span>Atendido por</span><strong>'+esc(cached.attended)+'</strong></div><div class="audit-kv"><span>Último retorno</span><strong>'+esc(cached.lastReturn)+'</strong></div><div class="audit-kv"><span>Próximo retorno</span><strong>'+esc(cached.nextReturn)+'</strong></div></section>'+
+    '<section class="audit-panel"><h4>Leitura simples</h4><div class="audit-source"><strong>'+esc(plainStatus(row))+'</strong><br><br>'+esc(String(move).slice(0,900))+'</div></section></div>'+
+    (state.auditSuggest?'<section class="audit-panel"><h4>Sugestões de resposta</h4><div class="suggestions">'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar resposta</button></div></div>').join("")+'</div></section>':'')+
+    (scan?.error?'<div class="banner bad">'+esc(scan.error)+'</div>':'')+
+    '<div class="audit-actions"><button class="btn" id="auditEditBtn">Editar cadastro</button><button class="btn" id="auditContactBtn">Registrar atendimento</button><button class="btn" id="auditSuggestBtn">Sugerir resposta</button><button class="btn primary" id="auditRefreshBtn">Atualizar DataJud + DJEN</button></div>';
+  $("#auditEditBtn").onclick=()=>{ $("#auditDialog").close();openProcess(state.auditKey) };
+  $("#auditContactBtn").onclick=()=>markContacted(state.auditKey);
+  $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;renderAuditDialog()};
+  $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
+  $$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
+    const s=suggestions[Number(b.dataset.copySuggestion)];if(!s)return;
+    try{await navigator.clipboard.writeText(s.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
+  });
+}
+function openAudit(key,suggest=false){
+  const row=findRow(key);if(!row)return;
+  state.auditKey=key;state.auditScan=null;state.auditSuggest=!!suggest;
+  $("#auditDialog").showModal();renderAuditDialog();
+  const hasCache=!!latestMove(row)||!!pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo");
+  if(!hasCache&&navigator.onLine)void refreshAudit(suggest);
+}
+async function refreshAudit(keepSuggest=false){
+  const row=findRow(state.auditKey);if(!row)return;
+  const cnj=digits(pick(row,"Protocolo"));
+  if(cnj.length!==20){showBanner("CNJ inválido para atualização oficial.","bad");return}
+  const btn=$("#auditRefreshBtn");if(btn){btn.disabled=true;btn.textContent="Atualizando…"}
+  try{
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:"both"}),cache:"no-store"});
+    const j=await r.json();state.auditScan=j;state.auditSuggest=!!keepSuggest;
+    if(j.patch){
+      Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
+      await queueWrite({"Protocolo":pick(row,"Protocolo"),...j.patch});
+      if(navigator.onLine)await flushOutbox();
+    }
+    if(r.status===429||j?.djen?.isRateLimited){
+      const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);state.djenBlockedUntil=Date.now()+ms;
+    }
+  }catch(e){state.auditScan={ok:false,error:e.message||String(e)}}
+  renderAuditDialog();render();
+}
 function openProcess(key){
-  const r=state.rows.find(x=>keyOf(x)===key)||{};$("#editKey").value=key||"";$("#processDialogTitle").textContent=key?"Editar processo":"Novo processo";
-  $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");$("#fAssistente").value=pick(r,"Assistente");$("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações");$("#processStatus").textContent="";$("#processDialog").showModal()
+  const r=findRow(key)||{},isNew=!key,u=currentUser();
+  $("#editKey").value=key||"";$("#processDialogTitle").textContent=isNew?"Novo cadastro":"Editar processo";
+  $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");
+  $("#fAssistente").value=pick(r,"Assistente")||(u.nome||u.usuario||"");
+  $("#fAssistente").readOnly=!isNew;$("#fProtocolo").readOnly=!isNew;
+  $("#assistenteHint").textContent=isNew?"Novo cadastro entra na sua carteira por padrão.":"Editar não transfere a carteira. Assistente permanece "+($("#fAssistente").value||"inalterado")+".";
+  $("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório","Escritorio");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações","Observacao");$("#processStatus").textContent="";$("#processDialog").showModal()
 }
 async function saveProcess(){
-  const key=$("#editKey").value;
-  const current=state.rows.find(x=>keyOf(x)===key)||{};
+  const key=$("#editKey").value,isNew=!key;
+  const current=findRow(key)||{};
   const next={...current,
     "Cliente":$("#fCliente").value.trim(),
     "Protocolo":$("#fProtocolo").value.trim(),
-    "Assistente":$("#fAssistente").value.trim(),
+    "Assistente":isNew?($("#fAssistente").value.trim()||currentUser().nome||currentUser().usuario||""):pick(current,"Assistente"),
     "Advogado":$("#fAdvogado").value.trim(),
     "Escritório":$("#fEscritorio").value.trim(),
     "Tribunal":$("#fTribunal").value.trim(),
@@ -452,47 +677,36 @@ async function saveProcess(){
     "Próximo Retorno":$("#fProximo").value.trim(),
     "Observações":$("#fObs").value.trim()
   };
+  if(!String(next["Protocolo"]||"").trim()){showBanner("Informe o Protocolo/CNJ.","bad");return}
   if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
-  const idx=state.rows.findIndex(x=>keyOf(x)===key);
-  if(idx>=0)state.rows[idx]=next;else state.rows.unshift(next);
-  await saveRows(state.rows);
+  updateLocalRow(next);await saveRows(state.companyRows);
   const writePayload={
-    "Protocolo":next["Protocolo"],
-    "Cliente":next["Cliente"],
-    "Assistente":next["Assistente"],
-    "Advogado":next["Advogado"],
-    "Escritório":next["Escritório"],
-    "Tribunal":next["Tribunal"],
-    "Status":next["Status"],
-    "Telefone":next["Telefone"],
-    "Último Retorno":next["Último Retorno"],
-    "Próximo Retorno":next["Próximo Retorno"],
-    "Observações":next["Observações"],
-    "Automação":next["Automação"]||"",
-    "Próxima Sincronização":next["Próxima Sincronização"]||""
+    "Protocolo":next["Protocolo"],"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
   };
-  await queueWrite(writePayload);
-  render();
+  if(isNew)writePayload["Assistente"]=next["Assistente"];
+  await queueWrite(writePayload);render();
   $("#processStatus").textContent="Salvo neste dispositivo. Enviando para a planilha…";
+  if(!navigator.onLine){$("#processDialog").close();showBanner("Cadastro salvo no cache e aguardando conexão.","good");return}
   try{
-    const j=await flushOutbox();
-    if(Number(j.rejected_count||0)>0)throw new Error("A planilha recusou a alteração.");
-    $("#processDialog").close();
-    showBanner("Alteração salva no app e confirmada na planilha.","good");
-    await syncFromCloud({quiet:true});
-  }catch(e){
-    $("#processDialog").close();
-    showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad");
-  }
+    const j=await flushOutbox();if(Number(j.rejected_count||0)>0)throw new Error("A planilha recusou a alteração.");
+    $("#processDialog").close();showBanner((isNew?"Cadastro criado":"Alteração salva")+" sem transferir a carteira.","good");
+  }catch(e){$("#processDialog").close();showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
 }
-function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.rows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
+
+function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.companyRows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
-async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.rows=rows;await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
+async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
   $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
   $("#newProcessBtn").onclick=()=>openProcess("");
-  $("#logoutBtn").onclick=async()=>{stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}saveSession(null);state.rows=[];setLogged(false);updateSyncUi()};
+  $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
+  $("#logoutBtn").onclick=async()=>{
+    stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}
+    saveSession(null);state.rows=[];state.companyRows=[];state.lastSync=null;state.lastSyncAt=0;
+    await Promise.all([idbClear("rows").catch(()=>{}),idbClear("meta").catch(()=>{}),idbClear("outbox").catch(()=>{})]);
+    setLogged(false);updateSyncUi();
+  };
   $("#saveProcessBtn").onclick=saveProcess;
   $("#loginBtn").onclick=async()=>{
     const u=$("#loginUser").value.trim(),p=$("#loginPass").value;
@@ -500,25 +714,31 @@ function setupEvents(){
     if(!u||!p){$("#loginStatus").textContent="Informe usuário e senha.";return}
     try{
       const j=await loginCloud(u,p);
-      const next={user:j.user||j.usuario||{usuario:u}};
-      saveSession(next);
-      state.rows=[];
+      saveSession({user:j.user||j.usuario||{usuario:u}});
+      state.companyRows=[];state.rows=[];state.lastSyncAt=0;
       await syncFromCloud();
-      setLogged(true);
-      applyUser();
-      render();
-      startAutoSync();
-      $("#loginStatus").textContent="";
+      setLogged(true);applyUser();render();startAutoSync();$("#loginStatus").textContent="";
     }catch(e){
-      saveSession(null);
-      state.rows=[];
-      setLogged(false);
+      saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
       $("#loginStatus").textContent=e.message||String(e);
     }
   };
-  window.addEventListener("online",async()=>{updateSyncUi();if(state.session){showBanner("Conexão restaurada. Sincronizando…","good");try{await syncFromCloud({quiet:true})}catch(_){}}});
-  window.addEventListener("offline",()=>{updateSyncUi();showBanner("Sem conexão. Novo login e sincronização exigem acesso ao servidor.","bad")});
-  window.addEventListener("focus",async()=>{if(state.session&&navigator.onLine&&!state.syncing){try{await syncFromCloud({quiet:true})}catch(_){}}});
+  window.addEventListener("online",async()=>{
+    updateSyncUi();
+    if(state.session){
+      const pending=await outboxCount().catch(()=>0);
+      if(!cacheFresh()||pending){
+        showBanner("Conexão restaurada. Sincronizando alterações pendentes…","good");
+        try{await syncFromCloud({quiet:true})}catch(_){}
+      }
+    }
+  });
+  window.addEventListener("offline",()=>{updateSyncUi();if(state.session&&state.companyRows.length)showBanner("Modo offline: usando a carteira em cache.","good")});
+  window.addEventListener("focus",async()=>{
+    if(!state.session||!navigator.onLine||state.syncing)return;
+    const pending=await outboxCount().catch(()=>0);
+    if(!cacheFresh()||pending)try{await syncFromCloud({quiet:true})}catch(_){}
+  });
   window.addEventListener("popstate",()=>setView(pathView(),false));
 }
 function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
@@ -526,21 +746,30 @@ function applyUser(){const u=state.session?.user||{};$("#userName").textContent=
 async function boot(){
   setupEvents();
   state.view=pathView();
-  restoreSession();
+  const cachedSession=restoreSession();
   if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+  try{await loadLocal()}catch(_){state.companyRows=[];state.rows=[]}
+
+  // Offline-first: em F5 sem rede, mantém a sessão visual e os dados já validados
+  // anteriormente neste navegador. Nenhum token é salvo no localStorage.
+  if(!navigator.onLine&&cachedSession&&state.companyRows.length){
+    setLogged(true);applyUser();render();startAutoSync();updateSyncUi();return;
+  }
+
   try{
     const check=await apiSheets({action:"auto"});
     if(!check?.ok)throw new Error(check?.error||"Sessão inválida");
-    saveSession({user:check.user||{}});
-    await syncFromCloud();
-    setLogged(true);
-    applyUser();
-    render();
-    startAutoSync();
-  }catch(_){
-    saveSession(null);
-    state.rows=[];
-    setLogged(false);
+    saveSession({user:check.user||cachedSession?.user||{}});
+    refreshScopes();
+    setLogged(true);applyUser();render();startAutoSync();
+
+    const pending=await outboxCount().catch(()=>0);
+    if(!cacheFresh()||!state.companyRows.length||pending){
+      // Renderiza primeiro o cache; a sincronização pesada vem depois.
+      void syncFromCloud({quiet:true}).catch(e=>showBanner("Cache disponível; sincronização falhou: "+(e.message||String(e)),"bad"));
+    }
+  }catch(e){
+    saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
   }
   updateSyncUi();
 }
