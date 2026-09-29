@@ -25,4 +25,13 @@ for(const count of [0,3]){
   assert.equal(merged.Andamento,"Conclusão");
   assert.equal(context.test.mergeQueuedWrite([merged],patch)._JudicialHistory.datajud.length,1);
 }
+
+assert.match(app,/PAGE_DEFAULT=200/,"listas grandes devem iniciar em 200 registros");
+assert.match(app,/data-load-more/,"deve existir controle Ver +200");
+assert.match(app,/data-page-input/,"deve aceitar quantidade explícita para carregar");
+assert.doesNotMatch(app,/slice\(0,1800\)/,"Processos da empresa não pode voltar ao corte fixo de 1800");
+assert.doesNotMatch(app,/slice\(0,3000\)/,"Clientes não deve renderizar milhares de linhas de uma vez");
+assert.match(app,/calendar-grid/,"Agenda deve ser calendário e não apenas tabela");
+assert.match(app,/mode:djenWasPaused\?"datajud":"both"/,"DJEN pausado deve deixar DataJud continuar");
+
 console.log("frontend-selectors: ok");
