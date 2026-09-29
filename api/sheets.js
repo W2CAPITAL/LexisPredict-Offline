@@ -85,11 +85,20 @@ module.exports=async(req,res)=>{
       if(rejected>0){
         const why=(Array.isArray(data.rejected)?data.rejected:[]).map(x=>x?.motivo||x?.reason).filter(Boolean).join("; ");
         const written=Number(data.written??data.updated??data.added??0);
-        if(written>0)return res.status(200).json({...data,partial:true,warning:why||"Parte do lote foi recusada pela planilha."});
-        return res.status(409).json({...data,ok:false,error:why||"Uma ou mais alterações foram recusadas pela planilha."});
+        // Conflito de dados é estado da aplicação, não falha de transporte.
+        // Retornar 200 permite ao cliente confirmar individualmente o que foi salvo
+        // sem gerar um loop de HTTP 409 no navegador.
+        return res.status(200).json({
+          ...data,
+          ok:written>0,
+          conflict:true,
+          partial:written>0,
+          warning:why||"Uma ou mais alterações precisam de confirmação.",
+          error:written>0?undefined:(why||"Uma ou mais alterações foram recusadas pela planilha.")
+        });
       }
       if(data.ok!==false&&Number(data.written??data.updated??data.added??0)===0&&Array.isArray(payload.rows)&&payload.rows.length){
-        return res.status(409).json({...data,ok:false,error:"A planilha não confirmou nenhuma linha gravada."});
+        return res.status(200).json({...data,ok:false,conflict:true,error:"A planilha informou 0 gravações; o cliente fará confirmação individual antes de reenviar."});
       }
     }
 
