@@ -626,3 +626,63 @@ html[data-theme="contrast"] :focus-visible{outline:3px solid #00e5ff!important;o
 /* Cabeçalhos de relatório: sempre legíveis no fundo de destaque. */
 html[data-theme] .report-band:not(.neutral){background:var(--nav2)!important;color:#ffffff!important}
 html[data-theme] .report-band:not(.neutral) .eyebrow{color:#dbeafe!important}
+
+
+/* SheetsPredict 3.1.2 — uma barra vertical + uma barra horizontal útil */
+html,body{height:100%;overflow:hidden!important}
+.app-shell,.main{height:100dvh;max-height:100dvh;overflow:hidden!important}
+.main{min-height:0}
+.content{
+  flex:1;min-height:0;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  overscroll-behavior-y:contain;
+  scrollbar-gutter:auto!important;
+}
+
+/* As tabelas crescem verticalmente com o conteúdo. A rolagem vertical pertence só a .content. */
+.crm-table,
+.dashboard-table,
+.report-table{
+  max-height:none!important;
+  height:auto!important;
+  overflow-x:auto!important;
+  overflow-y:hidden!important;
+  scrollbar-gutter:auto!important;
+}
+
+/* Quando a barra fixa está controlando a tabela, não exibir uma segunda barra horizontal nela. */
+.global-scroll-target{
+  scrollbar-width:none!important;
+  -ms-overflow-style:none;
+}
+.global-scroll-target::-webkit-scrollbar{height:0!important;width:0!important;display:none}
+
+/* A barra horizontal fixa representa exatamente o range útil da tabela. */
+.global-x-scroll{
+  height:20px!important;
+  overflow-x:scroll!important;
+  overflow-y:hidden!important;
+  overscroll-behavior-x:contain;
+  scrollbar-gutter:stable;
+}
+.global-x-scroll-inner{height:1px;min-width:100%}
+
+/* O menu continua rolável em telas baixas, mas sem criar uma segunda barra vertical visual. */
+#nav{
+  flex:1 1 auto;
+  min-height:0;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  scrollbar-width:none!important;
+  -ms-overflow-style:none;
+}
+#nav::-webkit-scrollbar{width:0!important;height:0!important;display:none}
+.sidebar-foot{flex:0 0 auto}
+
+/* Áreas que precisam de scroll próprio continuam somente em contexto modal/chat. */
+.dialog-card,
+.history-content,
+.audit-card,
+.hub-chat,
+.agenda-day-list{overscroll-behavior:contain}
