@@ -172,3 +172,53 @@ body.sidebar-collapsed .link-btn:after{content:"↪";font-size:15px}
 }
 
 @media print{.sidebar,.topbar,.banner,.report-head .btn{display:none!important}.app-shell{display:block}.content{padding:0;max-width:none}.report-head,.card,.kpi{box-shadow:none}.report-head{border:0;padding:0 0 16px}.table-wrap{overflow:visible}.table{min-width:0;font-size:9px}}
+
+
+/* SheetsPredict 1.9 — listas grandes e agenda */
+.list-pagination{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border:1px solid var(--border);border-top:0;background:var(--card);font-size:12px;color:var(--muted)}
+.pagination-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pagination-actions label{display:flex;align-items:center;gap:7px}
+.pagination-actions input{width:92px;min-height:34px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--foreground)}
+.agenda-head{align-items:center}
+.agenda-nav{display:flex;gap:8px}
+.agenda-layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(320px,.7fr);gap:16px;align-items:start}
+.calendar-card{overflow:hidden}
+.calendar-title{display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--border);text-transform:capitalize}
+.calendar-title strong{font-size:18px}
+.calendar-title span{font-size:11px;color:var(--muted)}
+.calendar-weekdays,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+.calendar-weekdays{border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--card) 84%,var(--background))}
+.calendar-weekdays span{padding:9px 6px;text-align:center;font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.calendar-day{min-height:112px;border:0;border-right:1px solid var(--border);border-bottom:1px solid var(--border);background:transparent;color:inherit;padding:8px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:6px}
+.calendar-day:nth-child(7n){border-right:0}
+.calendar-day:hover{background:color-mix(in srgb,var(--primary) 8%,transparent)}
+.calendar-day.outside{opacity:.38}
+.calendar-day.selected{background:color-mix(in srgb,var(--primary) 13%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--primary) 55%,transparent)}
+.calendar-day.today .calendar-number{background:var(--primary);color:var(--primary-foreground)}
+.calendar-number{display:grid;place-items:center;width:26px;height:26px;border-radius:999px;font-size:11px;font-weight:900}
+.calendar-events{display:flex;flex-direction:column;gap:4px;min-width:0}
+.calendar-event,.calendar-more{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 6px;font-size:9px}
+.calendar-event{background:color-mix(in srgb,var(--primary) 12%,var(--card));border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border))}
+.calendar-more{color:var(--muted)}
+.agenda-day-panel{position:sticky;top:16px}
+.agenda-day-list{padding:0 14px 12px;display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto}
+.agenda-event-card{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--card) 92%,var(--background))}
+.agenda-event-card strong{display:block;font-size:12px}
+.agenda-event-card small,.agenda-event-card p{display:block;margin:3px 0 0;font-size:10px;color:var(--muted)}
+.agenda-compose{border-top:1px solid var(--border);padding:14px;display:grid;gap:8px}
+.agenda-compose h4{margin:0 0 2px;font-size:12px}
+.agenda-compose input,.agenda-compose select{width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--foreground)}
+.explicit-tasks{margin:14px 0}
+
+@media (max-width:980px){
+  .agenda-layout{grid-template-columns:1fr}
+  .agenda-day-panel{position:static}
+  .calendar-day{min-height:92px}
+}
+@media (max-width:680px){
+  .list-pagination{align-items:flex-start;flex-direction:column}
+  .calendar-day{min-height:70px;padding:5px}
+  .calendar-event{display:none}
+  .calendar-more{font-size:8px;padding:2px}
+  .calendar-weekdays span{font-size:9px}
+}
