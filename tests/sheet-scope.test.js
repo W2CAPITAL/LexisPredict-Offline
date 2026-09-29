@@ -14,5 +14,8 @@ assert.equal(scopeRows(rows,{nome:"DAVI ALVES FIGUEREDO",perfil:"assistente"}).l
 assert.equal(scopeRows(rows,{nome:"DRIKA",perfil:"assistente"}).length,2);
 assert.equal(scopeRows(rows,{nome:"KRIS",perfil:"assistente"}).length,1);
 assert.equal(scopeRows(rows,{nome:"GESTOR",perfil:"supervisor"}).length,6);
+assert.equal(scopeRows(rows,{nome:"ADRIANA",perfil:"assistente"},"company").length,6);
+assert.equal(scopeRows(rows,{nome:"KRIS",perfil:"assistente"},"company").length,6);
+assert.equal(scopeRows(rows,null,"company").length,0);
 assert.equal(ownerMatches({Assistente:"ADRIANA",CreatedBy:"OUTRO"},{nome:"ADRIANA",perfil:"assistente"}),true);
 console.log("sheet-scope: ok");
