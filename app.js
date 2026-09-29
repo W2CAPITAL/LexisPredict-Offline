@@ -118,6 +118,29 @@ function stopAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
   state.autoSyncTimer=null;
 }
+function comparable(v,key){
+  const s=String(v??"").trim();
+  if(/Protocolo|CNJ/i.test(key))return digits(s);
+  if(/Telefone/i.test(key))return digits(s);
+  if(/Retorno|Sincroniza/i.test(key)){
+    const d=parseDate(s);if(d)return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");
+  }
+  return norm(s);
+}
+async function verifySheetWrite(row){
+  const protocolo=pick(row,"Protocolo","CNJ");
+  if(!digits(protocolo))return {ok:false,error:"Sem Protocolo/CNJ para confirmar gravação."};
+  const j=await apiSheets({action:"get",protocolo});
+  const saved=j.row||(Array.isArray(j.data)?j.data[0]:null);
+  if(!saved)return {ok:false,error:"A gravação não apareceu na planilha após o envio."};
+  const keys=Object.keys(row).filter(k=>!["Automação","Próxima Sincronização"].includes(k));
+  const bad=[];
+  for(const k of keys){
+    const expected=comparable(row[k],k),actual=comparable(pick(saved,k),k);
+    if(expected!==actual)bad.push(k);
+  }
+  return bad.length?{ok:false,error:"A planilha não confirmou: "+bad.slice(0,5).join(", ")}:{ok:true,row:saved};
+}
 async function flushOutbox(){
   const list=await idbAll("outbox");if(!list.length)return {ok:true,written:0};
   const latest=new Map();list.forEach(x=>latest.set(keyOf(x.row),x.row));
@@ -128,8 +151,12 @@ async function flushOutbox(){
     const why=(j.rejected||[]).map(x=>x.motivo||x.reason).filter(Boolean).join("; ");
     throw new Error(why||j.error||"A planilha recusou uma ou mais alterações.");
   }
+  for(const row of rows){
+    const verify=await verifySheetWrite(row);
+    if(!verify.ok)throw new Error(verify.error);
+  }
   await idbClear("outbox");
-  return {...j,written:Number(j.written??j.updated??rows.length)};
+  return {...j,written:Number(j.written??j.updated??rows.length),verified:true};
 }
 function showBanner(msg,type=""){const b=$("#banner");b.textContent=msg;b.className="banner "+type;b.classList.remove("hidden");clearTimeout(showBanner.t);showBanner.t=setTimeout(()=>b.classList.add("hidden"),7000)}
 function setLogged(on){$("#login").classList.toggle("hidden",on);$("#app").classList.toggle("hidden",!on)}
