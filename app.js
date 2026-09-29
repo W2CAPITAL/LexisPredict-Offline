@@ -700,7 +700,13 @@ function setupEvents(){
   $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
   $("#newProcessBtn").onclick=()=>openProcess("");
-  $("#logoutBtn").onclick=async()=>{stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}saveSession(null);state.rows=[];setLogged(false);updateSyncUi()};
+  $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
+  $("#logoutBtn").onclick=async()=>{
+    stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}
+    saveSession(null);state.rows=[];state.companyRows=[];state.lastSync=null;state.lastSyncAt=0;
+    await Promise.all([idbClear("rows").catch(()=>{}),idbClear("meta").catch(()=>{}),idbClear("outbox").catch(()=>{})]);
+    setLogged(false);updateSyncUi();
+  };
   $("#saveProcessBtn").onclick=saveProcess;
   $("#loginBtn").onclick=async()=>{
     const u=$("#loginUser").value.trim(),p=$("#loginPass").value;
@@ -708,25 +714,31 @@ function setupEvents(){
     if(!u||!p){$("#loginStatus").textContent="Informe usuário e senha.";return}
     try{
       const j=await loginCloud(u,p);
-      const next={user:j.user||j.usuario||{usuario:u}};
-      saveSession(next);
-      state.rows=[];
+      saveSession({user:j.user||j.usuario||{usuario:u}});
+      state.companyRows=[];state.rows=[];state.lastSyncAt=0;
       await syncFromCloud();
-      setLogged(true);
-      applyUser();
-      render();
-      startAutoSync();
-      $("#loginStatus").textContent="";
+      setLogged(true);applyUser();render();startAutoSync();$("#loginStatus").textContent="";
     }catch(e){
-      saveSession(null);
-      state.rows=[];
-      setLogged(false);
+      saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
       $("#loginStatus").textContent=e.message||String(e);
     }
   };
-  window.addEventListener("online",async()=>{updateSyncUi();if(state.session){showBanner("Conexão restaurada. Sincronizando…","good");try{await syncFromCloud({quiet:true})}catch(_){}}});
-  window.addEventListener("offline",()=>{updateSyncUi();showBanner("Sem conexão. Novo login e sincronização exigem acesso ao servidor.","bad")});
-  window.addEventListener("focus",async()=>{if(state.session&&navigator.onLine&&!state.syncing){try{await syncFromCloud({quiet:true})}catch(_){}}});
+  window.addEventListener("online",async()=>{
+    updateSyncUi();
+    if(state.session){
+      const pending=await outboxCount().catch(()=>0);
+      if(!cacheFresh()||pending){
+        showBanner("Conexão restaurada. Sincronizando alterações pendentes…","good");
+        try{await syncFromCloud({quiet:true})}catch(_){}
+      }
+    }
+  });
+  window.addEventListener("offline",()=>{updateSyncUi();if(state.session&&state.companyRows.length)showBanner("Modo offline: usando a carteira em cache.","good")});
+  window.addEventListener("focus",async()=>{
+    if(!state.session||!navigator.onLine||state.syncing)return;
+    const pending=await outboxCount().catch(()=>0);
+    if(!cacheFresh()||pending)try{await syncFromCloud({quiet:true})}catch(_){}
+  });
   window.addEventListener("popstate",()=>setView(pathView(),false));
 }
 function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
@@ -734,21 +746,30 @@ function applyUser(){const u=state.session?.user||{};$("#userName").textContent=
 async function boot(){
   setupEvents();
   state.view=pathView();
-  restoreSession();
+  const cachedSession=restoreSession();
   if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+  try{await loadLocal()}catch(_){state.companyRows=[];state.rows=[]}
+
+  // Offline-first: em F5 sem rede, mantém a sessão visual e os dados já validados
+  // anteriormente neste navegador. Nenhum token é salvo no localStorage.
+  if(!navigator.onLine&&cachedSession&&state.companyRows.length){
+    setLogged(true);applyUser();render();startAutoSync();updateSyncUi();return;
+  }
+
   try{
     const check=await apiSheets({action:"auto"});
     if(!check?.ok)throw new Error(check?.error||"Sessão inválida");
-    saveSession({user:check.user||{}});
-    await syncFromCloud();
-    setLogged(true);
-    applyUser();
-    render();
-    startAutoSync();
-  }catch(_){
-    saveSession(null);
-    state.rows=[];
-    setLogged(false);
+    saveSession({user:check.user||cachedSession?.user||{}});
+    refreshScopes();
+    setLogged(true);applyUser();render();startAutoSync();
+
+    const pending=await outboxCount().catch(()=>0);
+    if(!cacheFresh()||!state.companyRows.length||pending){
+      // Renderiza primeiro o cache; a sincronização pesada vem depois.
+      void syncFromCloud({quiet:true}).catch(e=>showBanner("Cache disponível; sincronização falhou: "+(e.message||String(e)),"bad"));
+    }
+  }catch(e){
+    saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
   }
   updateSyncUi();
 }
