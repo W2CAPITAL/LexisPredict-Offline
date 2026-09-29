@@ -32,6 +32,10 @@
   ],
   "rewrites": [
     {
+      "source": "/installer",
+      "destination": "/installer.html"
+    },
+    {
       "source": "/",
       "destination": "/index.html"
     },
