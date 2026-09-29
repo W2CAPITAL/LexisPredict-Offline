@@ -119,9 +119,46 @@ Editar != atender
 Atender != transferir carteira
 ```
 
+## SheetsPredict CRM — Google Sheets continua sendo a fonte da verdade
+
+A partir da **v1.7.0**, a decisão arquitetural é explícita: o CRM continua na planilha. Não há migração obrigatória para Postgres/Supabase.
+
+Para evitar transformar `Processos` em uma tabela única impossível de manter, o CRM usa **abas relacionadas por IDs**:
+
+| Aba | Função |
+|---|---|
+| `Clientes` | cadastro 360° da pessoa/empresa |
+| `Processos` | processos jurídicos; referencia `ClienteId` |
+| `Interacoes` | WhatsApp, telefone, e-mail, reunião e registros internos |
+| `PipelineCRM` | lead → consulta → proposta → contrato → cliente ativo/perdido |
+| `AgendaCRM` | retornos, reuniões, audiências e outros compromissos |
+| `TarefasCRM` | tarefas manuais, prioridade, SLA, recorrência e checklist |
+| `DocumentosCRM` | metadados de documentos/arquivos do Drive |
+| `Honorarios` | financeiro/honorários; acesso restrito a perfis elevados |
+| `AuditoriaLogsApp` | trilha de alteração com entidade, campo, valor anterior e valor novo |
+
+A aba `Processos` ganhou somente a coluna `ClienteId`; os dados existentes foram preservados.
+
+### Migração inicial
+
+A carteira atual foi agrupada por cliente e recebeu IDs estáveis:
+
+- 2.496 cadastros iniciais em `Clientes`;
+- 2.573 processos vinculados por `ClienteId`;
+- registros genéricos como “NÃO IDENTIFICADO” não foram unidos automaticamente.
+
+### Cliente 360°
+
+A rota `/clientes` reúne processos, contatos, interações, pipeline, agenda e financeiro do mesmo cliente. Se o bridge CRM ainda não estiver publicado, a tela continua funcionando a partir da réplica de `Processos`; depois da publicação do Apps Script v8, carrega as abas CRM completas.
+
+### Cache e concorrência
+
+O navegador mantém `Processos` e as entidades CRM em IndexedDB. Edições offline usam outbox separado para processos e CRM. O Google Sheets continua sendo a fonte persistente; IndexedDB é apenas réplica/cache.
+
+
 ## Status
 
-**v1.6.0 — processos da empresa, fila Lexis, Audit 3D, atendimento sem transferência e cache persistente.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
+**v1.7.0 — CRM Sheets com Cliente 360°, pipeline, agenda, interações, financeiro e auditoria, mantendo Google Sheets como fonte da verdade.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
 
 
 ## DJEN — fonte oficial
