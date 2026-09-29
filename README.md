@@ -86,3 +86,18 @@ As rotas `/api` são Vercel Functions e funcionam integralmente quando publicada
 ## Status
 
 **v1.0.0 — base funcional.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
+
+
+## DJEN — fonte oficial
+
+A consulta pública usa o endpoint documentado no Swagger oficial do DJEN:
+
+`https://hcomunicaapi.cnj.jus.br/api/v1/comunicacao`
+
+O GET público não exige login, mas possui controle de taxa por IP. O app e o proxy **não tentam contornar 429/403**: preservam o último dado válido e aguardam a janela indicada pelo CNJ antes de retomar. O upstream pode ser trocado por variável `DJEN_UPSTREAM` apenas para manutenção controlada.
+
+## Deploy rápido na Vercel
+
+Depois de conectar este repositório à Vercel, o deploy é automático a cada push na `main`. Não há build de frontend; `index.html` e assets são estáticos e `/api/*` são Vercel Functions.
+
+[Importar este repositório na Vercel](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FW2CAPITAL%2FLexisPredict-Offline)
