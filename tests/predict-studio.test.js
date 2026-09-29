@@ -1,0 +1,58 @@
+const assert=require("node:assert/strict");
+const fs=require("node:fs");
+const path=require("node:path");
+const vm=require("node:vm");
+
+const catalogJs=fs.readFileSync(path.join(__dirname,"..","lib","predict-studio-catalog.js"),"utf8");
+const sandbox={window:{}};
+vm.runInNewContext(catalogJs,sandbox);
+const c=sandbox.window.PredictStudioCatalog;
+assert.ok(c,"catálogo PredictLM deve existir");
+assert.deepEqual(Array.from(c.surfaces).map(x=>x.id),["chat","legal","build","work","tutor","research","imagine","report"]);
+assert.equal(c.skills.length,80,"snapshot deve conter todas as 80 skills registradas no PredictLM");
+assert.equal(c.agents.length,16,"Agent Fabric deve expor 16 papéis");
+assert.equal(c.cores.length,4,"Four-core control deve expor Fly/Mouse/Macaque/Human");
+assert.ok(c.localRuntimes.length>=10,"Runtime Federation deve listar motores locais");
+assert.ok(c.providers.length>=10,"Provider Mesh deve listar providers conhecidos");
+assert.ok(c.fusionRepositories.length>=70,"Capability Fusion deve preservar registry amplo");
+for(const id of ["predictlm-master","provider-mesh","runtime-federation","agent-fabric","report-architect","deep-research","tutor-mode","grok-imagine-parity","neurocore","datajud"]){
+  assert.ok(c.skills.some(x=>x.id===id),"skill ausente: "+id);
+}
+
+const api=fs.readFileSync(path.join(__dirname,"..","api","predict-studio.js"),"utf8");
+for(const route of ["/api/chat","/api/legal/process","/api/legal/dossier","/api/agent","/api/research","/api/media/generate","/api/report-dossier/generate"]){
+  assert.ok(api.includes(route),"proxy Predict Studio sem rota: "+route);
+}
+assert.match(api,/PREDICTLM_URL/);
+assert.match(api,/PREDICTLM_ACCESS_TOKEN/);
+assert.match(api,/privateHost/);
+assert.doesNotMatch(api,/body\.path|body\.url/,"cliente não pode escolher caminho upstream arbitrário");
+
+const ui=fs.readFileSync(path.join(__dirname,"..","lib","predict-studio.js"),"utf8");
+for(const label of ["Chat","Legal","Build","Work","Tutor","Research","Imagine","Report","Skills","Agentes","Plugins","Motores"]){
+  assert.ok(ui.includes(label),"aba ausente: "+label);
+}
+assert.match(ui,/PredictRuntime\.webllmGenerate/);
+assert.match(ui,/PredictRuntime\.localGenerate/);
+assert.match(ui,/action:"build"/);
+assert.match(ui,/action:"research"/);
+assert.match(ui,/action:"imagine"/);
+assert.match(ui,/action:"report"/);
+
+const runtime=fs.readFileSync(path.join(__dirname,"..","lib","predict-runtime.js"),"utf8");
+assert.match(runtime,/Qwen3-1\.7B-q4f16_1-MLC/);
+assert.match(runtime,/Qwen3\.5-4B-q4f16_1-MLC/);
+assert.match(runtime,/Qwen3\.5-9B-q4f16_1-MLC/);
+assert.match(runtime,/Não há varredura automática|Runtime local não configurado|safeLocalUrl/);
+assert.match(runtime,/loopback/);
+
+const app=fs.readFileSync(path.join(__dirname,"..","app.js"),"utf8");
+assert.match(app,/studio:\["AI FABRIC","Predict Studio"\]/);
+assert.match(app,/studio:"\/studio"/);
+assert.match(app,/function renderPredictStudio\(/);
+
+const html=fs.readFileSync(path.join(__dirname,"..","index.html"),"utf8");
+assert.match(html,/data-view="studio"/);
+for(const asset of ["predict-studio-catalog.js","predict-runtime.js","predict-studio.js"])assert.ok(html.includes(asset),"asset ausente: "+asset);
+
+console.log("predict-studio: ok");
