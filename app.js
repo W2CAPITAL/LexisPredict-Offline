@@ -484,6 +484,103 @@ function renderTarefas(){
   bindTaskActions();
 }
 
+function clientProcesses(c){
+  const id=String(c?.ClienteId||"");
+  const byId=state.companyRows.filter(r=>String(pick(r,"ClienteId")||"")===id);
+  if(byId.length)return byId;
+  const name=norm(c?.Nome||c?.Cliente||"");
+  return state.companyRows.filter(r=>norm(pick(r,"Cliente"))===name);
+}
+function clientPipeline(c){
+  const rows=crmRowsForClient("PipelineCRM",c.ClienteId);
+  if(rows.length)return rows;
+  const procs=clientProcesses(c),sample=procs.find(r=>commercialStatus(r).includes("POTENCIAL"))||procs[0];
+  if(!sample)return[];
+  const cs=commercialStatus(sample);
+  const etapa=cs.includes("NÃO VENDER")?"Perdido":cs.includes("POTENCIAL")?"Oportunidade":"Triagem";
+  return [{OportunidadeId:"derived:"+c.ClienteId,ClienteId:c.ClienteId,Protocolo:pick(sample,"Protocolo"),Etapa:etapa,Servico:pick(sample,"Produto / Oportunidade","Produtos"),Responsavel:c.Responsavel,_derived:true}];
+}
+function parseMoney(v){
+  if(typeof v==="number")return v;
+  let s=String(v??"").trim().replace(/R\$\s*/g,"").replace(/\./g,"").replace(",",".");
+  const n=Number(s);return Number.isFinite(n)?n:0;
+}
+function money(v){return Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}
+function renderClientes(){
+  const clients=crmClients(),q=norm(state.query);
+  if(state.clientId){renderCliente360(state.clientId);return}
+  const rows=clients.filter(c=>!q||norm([c.Nome,c.Telefone_Principal,c.Responsavel,...(c.protocolos||[])].join(" ")).includes(q)).slice(0,3000);
+  $("#content").innerHTML=
+    '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">CRM • GOOGLE SHEETS</span><strong>Clientes</strong><span>'+rows.length+' de '+clients.length+' cliente(s)</span></div><div class="toolbar"><input id="clientSearch" placeholder="Pesquisar cliente, telefone ou CNJ…" value="'+esc(state.query)+'"/><span class="badge '+(state.crmBridgeReady?'b-good':'b-warn')+'">'+(state.crmBridgeReady?'CRM sincronizado':'CRM derivado de Processos')+'</span></div></div>'+
+    '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente</th><th>Contato</th><th>Processos</th><th>Assistente</th><th>Último retorno</th><th>Próximo retorno</th><th>Pipeline</th><th></th></tr></thead><tbody>'+
+    rows.map(c=>{
+      const procs=clientProcesses(c),pipe=clientPipeline(c)[0]||{};
+      return '<tr><td><div class="cell-main">'+esc(c.Nome||"SEM NOME")+'</div><div class="cell-sub mono">'+esc(c.ClienteId||"")+'</div></td><td><div class="cell-main">'+esc(c.Telefone_Principal||"—")+'</div><div class="cell-sub">'+esc(c.Email||"")+'</div></td><td>'+badge(procs.length,"blue")+'</td><td>'+esc(c.Responsavel||"—")+'</td><td>'+esc(c.ultimoRetorno||"—")+'</td><td>'+esc(c.proximoRetorno||"—")+'</td><td>'+badge(pipe.Etapa||"Triagem",pipe.Etapa==="Perdido"?"bad":pipe.Etapa==="Oportunidade"?"good":"gray")+'</td><td><button class="icon-action" data-client-open="'+esc(c.ClienteId)+'">Abrir 360°</button></td></tr>';
+    }).join("")+'</tbody></table></div>';
+  $("#clientSearch").oninput=e=>{state.query=e.target.value;renderClientes()};
+  $("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;state.query="";renderClientes()});
+}
+function renderCliente360(id){
+  const c=clientById(id);if(!c){state.clientId=null;renderClientes();return}
+  const procs=clientProcesses(c),inter=crmRowsForClient("Interacoes",id).sort((a,b)=>String(b.DataHora||"").localeCompare(String(a.DataHora||"")));
+  const pipe=clientPipeline(c),agenda=crmRowsForClient("AgendaCRM",id),fin=(state.crm.Honorarios||[]).filter(x=>String(x.cliente_id||x.ClienteId||"")===String(id)||procs.some(p=>digits(x.protocolo)===digits(pick(p,"Protocolo"))));
+  const openValue=fin.filter(x=>!/pago|quitado/i.test(String(x.status||""))).reduce((a,x)=>a+parseMoney(x.valor),0);
+  $("#content").innerHTML=
+    '<div class="crm360-head"><div><button class="btn sm" id="clientBack">← Clientes</button><span class="eyebrow">CLIENTE 360° • PLANILHA</span><h2>'+esc(c.Nome||"SEM NOME")+'</h2><p>'+esc(c.Telefone_Principal||"Sem telefone")+' · '+esc(c.Email||"sem e-mail")+' · Responsável '+esc(c.Responsavel||"—")+'</p></div><div class="command-actions"><button class="btn" id="clientWhatsApp">WhatsApp</button><button class="btn primary" id="clientNewProcess">Novo processo</button></div></div>'+
+    '<div class="kpi-grid crm-kpis">'+kpi("Processos",procs.length,"vinculados por ClienteId")+kpi("Interações",inter.length,"linha do tempo")+kpi("Pipeline",pipe[0]?.Etapa||"Triagem",pipe.length+" oportunidade(s)")+kpi("Agenda",agenda.length,"eventos CRM")+kpi("Financeiro",elevatedUser()?money(openValue):"Restrito","em aberto")+kpi("Próximo retorno",c.proximoRetorno||"—","carteira processual")+'</div>'+
+    '<div class="crm360-grid"><section class="card"><div class="card-head"><div><span class="eyebrow">RELACIONAMENTO</span><h3>Linha do tempo</h3></div></div><div class="card-body"><div class="interaction-compose"><select id="interactionCanal"><option>WhatsApp</option><option>Telefone</option><option>E-mail</option><option>Reunião</option><option>Interno</option></select><input id="interactionSubject" placeholder="Assunto"/><textarea id="interactionText" placeholder="Registre o que aconteceu e o próximo passo"></textarea><button class="btn primary" id="saveInteractionBtn">Registrar interação</button></div><div class="timeline">'+
+    (inter.length?inter.slice(0,30).map(x=>'<div class="timeline-item"><div class="timeline-dot"></div><div><strong>'+esc(x.Assunto||x.Tipo||x.Canal||"Interação")+'</strong><small>'+esc(x.DataHora||"")+' · '+esc(x.Usuario||"")+' · '+esc(x.Canal||"")+'</small><p>'+esc(x.Conteudo||"")+'</p>'+(x.ProximoPasso?'<span>Próximo: '+esc(x.ProximoPasso)+'</span>':'')+'</div></div>').join(""):'<div class="empty">Nenhuma interação CRM registrada ainda.</div>')+
+    '</div></div></section>'+
+    '<section class="card"><div class="card-head"><div><span class="eyebrow">OPERAÇÃO</span><h3>Processos vinculados</h3></div></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>CNJ</th><th>Status</th><th>Movimentação</th><th>Retorno</th><th></th></tr></thead><tbody>'+
+    procs.map(r=>'<tr><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":"gray")+'</td><td><div class="clamp2">'+esc(String(latestMove(r)||"").slice(0,160))+'</div></td><td>'+esc(pick(r,"Próximo Retorno")||"—")+'</td><td><button class="icon-action" data-edit="'+esc(keyOf(r))+'">Gerir</button></td></tr>').join("")+
+    '</tbody></table></div></section></div>'+
+    '<div class="grid-2 crm-bottom"><section class="card"><div class="card-head"><div><span class="eyebrow">PIPELINE</span><h3>Comercial</h3></div></div><div class="card-body metric-list">'+(pipe.length?pipe.map(x=>metricRow(x.Servico||"Oportunidade",x.Etapa||"Triagem",x.Responsavel||"")).join(""):'<div class="empty">Sem oportunidade.</div>')+'</div></section>'+
+    '<section class="card"><div class="card-head"><div><span class="eyebrow">AGENDA</span><h3>Próximos compromissos</h3></div></div><div class="card-body metric-list">'+(agenda.length?agenda.slice(0,10).map(x=>metricRow(x.Titulo||x.Tipo,x.Inicio||"—",x.Responsavel||"")).join(""):'<div class="empty">Sem eventos CRM.</div>')+'</div></section></div>';
+  $("#clientBack").onclick=()=>{state.clientId=null;renderClientes()};
+  $("#clientNewProcess").onclick=()=>openProcess("");
+  $("#clientWhatsApp").onclick=()=>{const tel=window.LexisCRM?.normalizePhone(c.Telefone_Principal)||"";if(!tel)return showBanner("Cliente sem telefone válido.","bad");window.open("https://wa.me/"+digits(tel),"_blank","noopener")};
+  $("#saveInteractionBtn").onclick=()=>saveClientInteraction(c);
+  $("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
+}
+async function saveClientInteraction(c){
+  const text=String($("#interactionText")?.value||"").trim();if(!text){showBanner("Escreva o conteúdo da interação.","bad");return}
+  const actor=currentUser().nome||currentUser().usuario||"Usuário",ts=new Date().toISOString();
+  const row={
+    InteracaoId:window.LexisCRM?.stableId("int",c.ClienteId,ts,actor)||("int_"+Date.now()),
+    ClienteId:c.ClienteId,Protocolo:"",Canal:$("#interactionCanal").value,Tipo:"Contato",
+    Assunto:$("#interactionSubject").value.trim()||"Contato com cliente",Conteudo:text,Usuario:actor,DataHora:ts,Resultado:"Registrado",ProximoPasso:"",DataProximoPasso:"",OptOut:c.OptOutWhatsApp||""
+  };
+  await crmWrite("Interacoes",row);renderCliente360(c.ClienteId);
+}
+function pipelineData(){
+  if(state.crm.PipelineCRM?.length)return state.crm.PipelineCRM;
+  const rows=[];for(const c of crmClients())rows.push(...clientPipeline(c));return rows;
+}
+function renderPipeline(){
+  const rows=pipelineData(),stages=["Lead","Triagem","Consulta","Oportunidade","Proposta","Contrato","Cliente Ativo","Perdido"];
+  const normalized=s=>String(s||"Triagem");
+  $("#content").innerHTML='<div class="command-strip"><div><span class="eyebrow">CRM • FUNIL COMERCIAL</span><h2>Pipeline</h2><p>Lead → consulta → proposta → contrato → cliente ativo. Enquanto não houver registro explícito, a triagem é derivada da análise comercial dos processos.</p></div></div><div class="pipeline-board">'+stages.map(stage=>{
+    const items=rows.filter(x=>normalized(x.Etapa)===stage);
+    return '<section class="pipeline-col"><header><strong>'+esc(stage)+'</strong><span>'+items.length+'</span></header><div>'+items.slice(0,80).map(x=>{const cl=clientById(x.ClienteId);return '<button class="pipeline-card" data-client-open="'+esc(x.ClienteId||"")+'"><strong>'+esc(cl?.Nome||x.Cliente||"Cliente")+'</strong><small>'+esc(x.Servico||x.Origem||"")+'</small>'+(x.ValorEstimado?'<span>'+esc(money(parseMoney(x.ValorEstimado)))+'</span>':'')+'</button>'}).join("")+'</div></section>';
+  }).join("")+'</div>';
+  $("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;setView("clientes")});
+}
+function renderAgenda(){
+  const explicit=[...(state.crm.AgendaCRM||[])].map(x=>({...x,_source:"CRM"}));
+  const derived=state.companyRows.filter(r=>pick(r,"Próximo Retorno")).map(r=>({
+    EventoId:"ret:"+keyOf(r),ClienteId:pick(r,"ClienteId"),Protocolo:pick(r,"Protocolo"),Tipo:"Retorno",Titulo:"Retorno • "+(pick(r,"Cliente")||"Cliente"),Inicio:pick(r,"Próximo Retorno"),Responsavel:pick(r,"Assistente"),Status:statusRet(r),_source:"Processos"
+  }));
+  const rows=[...explicit,...derived].sort((a,b)=>(parseDate(a.Inicio)?.getTime()||9e15)-(parseDate(b.Inicio)?.getTime()||9e15)).slice(0,1200);
+  $("#content").innerHTML='<div class="command-strip"><div><span class="eyebrow">CRM • AGENDA</span><h2>Agenda operacional</h2><p>Retornos processuais + compromissos gravados em AgendaCRM.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Quando</th><th>Tipo</th><th>Cliente / título</th><th>CNJ</th><th>Responsável</th><th>Status</th><th>Fonte</th></tr></thead><tbody>'+rows.map(x=>{const cl=clientById(x.ClienteId);return '<tr><td>'+esc(x.Inicio||"—")+'</td><td>'+esc(x.Tipo||"Evento")+'</td><td><div class="cell-main">'+esc(cl?.Nome||x.Titulo||"—")+'</div><div class="cell-sub">'+esc(x.Titulo||"")+'</div></td><td class="mono">'+esc(cnjFormatted(x.Protocolo||""))+'</td><td>'+esc(x.Responsavel||"—")+'</td><td>'+badge(x.Status||"PENDENTE",/venc/i.test(x.Status||"")?"bad":/aten|hoje/i.test(x.Status||"")?"warn":"gray")+'</td><td>'+esc(x._source)+'</td></tr>'}).join("")+'</tbody></table></div>';
+}
+function renderFinanceiro(){
+  if(!elevatedUser()){
+    $("#content").innerHTML='<div class="permission-card"><span class="eyebrow">FINANCEIRO • ACESSO RESTRITO</span><h2>Honorários e receita</h2><p>Esta área fica restrita a administrador/supervisor. A planilha continua sendo a fonte de verdade.</p></div>';return;
+  }
+  const rows=state.crm.Honorarios||[],total=rows.reduce((a,x)=>a+parseMoney(x.valor),0),paid=rows.filter(x=>/pago|quitado/i.test(String(x.status||""))).reduce((a,x)=>a+parseMoney(x.valor),0);
+  $("#content").innerHTML='<div class="kpi-grid">'+kpi("Honorários",rows.length,"lançamentos")+kpi("Valor total",money(total),"contratado")+kpi("Recebido",money(paid),"pago","good")+kpi("Em aberto",money(total-paid),"previsto",total-paid>0?"warn":"good")+kpi("Inadimplência",rows.filter(x=>/venc|inadimpl/i.test(String(x.status||""))).length,"títulos","bad")+kpi("Fonte","Honorarios","Google Sheets")+'</div><div class="table-wrap"><table class="table"><thead><tr><th>Cliente</th><th>Processo</th><th>Tipo</th><th>Valor</th><th>Status</th><th>Vencimento</th><th>Responsável</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+esc(x.cliente||clientById(x.cliente_id)?.Nome||"—")+'</td><td class="mono">'+esc(cnjFormatted(x.protocolo||""))+'</td><td>'+esc(x.tipo||"—")+'</td><td>'+esc(money(parseMoney(x.valor)))+'</td><td>'+badge(x.status||"—",/pago|quitado/i.test(x.status||"")?"good":/venc|inadimpl/i.test(x.status||"")?"bad":"warn")+'</td><td>'+esc(x.vencimento||"—")+'</td><td>'+esc(x.responsavel||"—")+'</td></tr>').join("")+'</tbody></table></div>';
+}
+
 function renderAnalise(){
   const m=metrics(),stages={},lawyers={},commercial={},favored={};
   state.rows.forEach(r=>{
