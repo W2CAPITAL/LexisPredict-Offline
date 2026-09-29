@@ -365,7 +365,11 @@ async function scanOne(cnj,quiet=false){
     if(j.patch&&row){
       Object.assign(row,j.patch);
       await saveRows(state.rows);
-      try{await apiSheets({action:"write",rows:[row]})}catch(e){j.sheetError=e.message||String(e)}
+      const writePatch={"Protocolo":pick(row,"Protocolo"),...j.patch};
+      try{
+        const wr=await apiSheets({action:"write",rows:[writePatch]});
+        if(Number(wr.rejected_count||0)>0)throw new Error((wr.rejected||[]).map(x=>x.motivo).filter(Boolean).join("; ")||"Alteração recusada");
+      }catch(e){j.sheetError=e.message||String(e)}
     }
     if(r.status===429||j?.djen?.isRateLimited){
       const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);
@@ -424,7 +428,22 @@ async function saveProcess(){
   const idx=state.rows.findIndex(x=>keyOf(x)===key);
   if(idx>=0)state.rows[idx]=next;else state.rows.unshift(next);
   await saveRows(state.rows);
-  await queueWrite(next);
+  const writePayload={
+    "Protocolo":next["Protocolo"],
+    "Cliente":next["Cliente"],
+    "Assistente":next["Assistente"],
+    "Advogado":next["Advogado"],
+    "Escritório":next["Escritório"],
+    "Tribunal":next["Tribunal"],
+    "Status":next["Status"],
+    "Telefone":next["Telefone"],
+    "Último Retorno":next["Último Retorno"],
+    "Próximo Retorno":next["Próximo Retorno"],
+    "Observações":next["Observações"],
+    "Automação":next["Automação"]||"",
+    "Próxima Sincronização":next["Próxima Sincronização"]||""
+  };
+  await queueWrite(writePayload);
   render();
   $("#processStatus").textContent="Salvo neste dispositivo. Enviando para a planilha…";
   try{
