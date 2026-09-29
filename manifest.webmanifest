@@ -1,6 +1,6 @@
 {
-  "name":"LexisPredict Offline",
-  "short_name":"LexisPredict",
+  "name":"SheetsPredict",
+  "short_name":"SheetsPredict",
   "start_url":"/",
   "display":"standalone",
   "background_color":"#eef2ef",
