@@ -1,142 +1,71 @@
-# Apps Script unificado — LexisPredict Offline
+# Apps Script unificado — LexisPredict Offline v1.3
 
-O projeto da planilha tinha quatro arquivos com **entrypoints duplicados**. Em Apps Script todos os arquivos `.gs` compartilham o mesmo namespace global, portanto mais de um `doGet`, `doPost` ou `onOpen` faz um módulo substituir/competir com o outro.
+Use exatamente estes quatro arquivos no MESMO projeto Apps Script vinculado à planilha:
 
-Isso explica o erro **token invalido**: o Vercel podia chamar um `doPost` diferente daquele que você achava estar publicado.
+- `Code.gs`
+- `LEXIS-SYNC-AppsScript.gs`
+- `LexisApp.gs`
+- `LexisSheet.gs`
 
-## Estrutura correta
+Eles já estão corrigidos neste diretório. Não é necessário renomear funções manualmente.
 
-### 1. `Code.gs` — scanner DataJud + DJEN V6
+## Arquitetura
 
-Troque somente:
+`Code.gs` contém o scanner DataJud/DJEN V6 e expõe `scannerOnOpen_`.
 
-```js
-function onOpen() {
-```
+`LEXIS-SYNC-AppsScript.gs` contém autenticação, sessões, leitura/escrita da aba Processos, usuários e permissões. Expõe `syncOnOpen_`, `syncDoGet_` e `syncDoPost_`.
 
-por:
+`LexisApp.gs` contém apenas o menu/atalho da planilha para abrir o LexisPredict Web.
 
-```js
-function scannerOnOpen_(e) {
-```
+`LexisSheet.gs` é o router ÚNICO. Só ele contém `onOpen`, `doGet` e `doPost`.
 
-Não altere o `onEdit` do scanner.
+## Segurança e acesso
 
-### 2. `LEXIS-SYNC-AppsScript.gs` — adaptador CRM/Sheets
+O browser nunca recebe `LEXIS_SHEETS_TOKEN`.
 
-Troque:
-
-```js
-function onOpen() {
-```
-
-por:
-
-```js
-function syncOnOpen_(e) {
-```
-
-Troque:
-
-```js
-function doGet(e) {
-```
-
-por:
-
-```js
-function syncDoGet_(e) {
-```
-
-Troque:
-
-```js
-function doPost(e) {
-```
-
-por:
-
-```js
-function syncDoPost_(e) {
-```
-
-Mantenha `getToken_()` e `validToken_()`. Este é o módulo que valida o token fixo.
-
-### 3. `LexisApp.gs` — UI antiga dentro da planilha
-
-Troque:
-
-```js
-function doGet() {
-```
-
-por:
-
-```js
-function legacyHtmlDoGet_() {
-```
-
-O web app principal agora é o Vercel; esta função fica somente para compatibilidade da UI interna.
-
-### 4. `LexisSheet.gs`
-
-Substitua TODO o conteúdo por `LexisSheetsBridge.gs` deste diretório. Ele é o router único.
-
-Depois da alteração, deve existir **somente um** `doGet`, **somente um** `doPost` e **somente um** `onOpen` em todo o projeto: os três no router.
-
-## Token fixo
-
-O token não deve aparecer no frontend.
-
-### Apps Script
-
-Configurações do projeto → Propriedades do script:
+Vercel:
 
 ```
-LEXIS_SHEETS_TOKEN=<mesmo segredo da Vercel>
+LEXIS_SHEETS_TOKEN=<segredo>
+LEXIS_APPS_SCRIPT_URL=https://script.google.com/macros/s/.../exec
+LEXIS_SHEET_URL=https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit
+DJEN_UPSTREAM=https://hcomunicaapi.cnj.jus.br/api/v1/comunicacao
 ```
 
-### Vercel
-
-Project → Settings → Environment Variables:
+Apps Script → Configurações do projeto → Propriedades do script:
 
 ```
-LEXIS_SHEETS_TOKEN=<mesmo segredo do Apps Script>
+LEXIS_SHEETS_TOKEN=<o mesmo segredo>
+LEXIS_APP_URL=<URL final do projeto Vercel>
 ```
 
-Marque Production, Preview e Development.
+Para gerar um token forte automaticamente, execute `LEXIS_GERAR_TOKEN_ENV` em `LexisSheet.gs`.
 
-O fluxo passa a ser:
+## Assistentes compostos
+
+O controle de carteira entende valores como:
 
 ```
-browser
-  -> /api/sheets (Vercel)
-      -> injeta process.env.LEXIS_SHEETS_TOKEN
-          -> Apps Script /exec
-              -> validToken_()
-                  -> login/list/get/write
+KRIS / DRIKA
+ADRIANA / DRIKA
+DAVI ALVES FIGUEREDO / DRIKA
 ```
 
-O token nunca fica no HTML, JavaScript do navegador ou localStorage.
+Os dois responsáveis conseguem visualizar o processo quando são assistentes. Supervisores, administradores e superadmins continuam vendo toda a carteira.
 
-## Depois de salvar no Apps Script
+## Depois de colar
 
-1. Execute `LEXIS_DIAGNOSTICO_ENTRYPOINTS`.
-2. O retorno esperado é:
-   - `scannerMenu: true`
-   - `syncGet: true`
-   - `syncPost: true`
-   - `tokenConfigured: true`
-3. Implantar → Gerenciar implantações.
-4. Edite a implantação atual.
-5. Selecione **Nova versão**.
-6. Execute como **Eu**.
-7. Acesso conforme a política da empresa.
-8. Salve e mantenha a URL terminada em `/exec`.
-9. Faça redeploy do Vercel depois de alterar a env.
-
-## Importante
-
-Não mantenha o antigo `LexisSheet.gs` v1.1.0 com outro `doGet/doPost`. Ele era um segundo bridge e conflita com o adaptador `LEXIS-SYNC-AppsScript.gs`.
-
-O scanner V6 continua independente e não perde DataJud/DJEN por causa desta mudança.
+1. Salve o projeto.
+2. Execute `LEXIS_DIAGNOSTICO_ENTRYPOINTS`.
+3. Confirme:
+   - scannerMenu: true
+   - syncMenu: true
+   - syncGet: true
+   - syncPost: true
+   - internalUiMenu: true
+   - tokenConfigured: true
+4. Implantar → Gerenciar implantações → Editar.
+5. Escolha Nova versão.
+6. Executar como: Eu.
+7. Publique e copie a URL `/exec`.
+8. Coloque essa URL em `LEXIS_APPS_SCRIPT_URL` na Vercel.
