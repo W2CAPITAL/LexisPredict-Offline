@@ -359,7 +359,7 @@ function render(){
   else if(state.view==="scanner")renderScanner();
   else setView("dashboard",false);
 }
-async function updateSyncUi(){const count=await outboxCount(),online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+(count?" • "+count+" pendente(s)":"")}
+async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function renderDashboard(){
   const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
@@ -911,8 +911,8 @@ function setupEvents(){
   $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
   $("#logoutBtn").onclick=async()=>{
     stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}
-    saveSession(null);state.rows=[];state.companyRows=[];state.lastSync=null;state.lastSyncAt=0;
-    await Promise.all([idbClear("rows").catch(()=>{}),idbClear("meta").catch(()=>{}),idbClear("outbox").catch(()=>{})]);
+    saveSession(null);state.rows=[];state.companyRows=[];state.crm={Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]};state.lastSync=null;state.lastSyncAt=0;state.clientId=null;
+    await Promise.all([idbClear("rows").catch(()=>{}),idbClear("meta").catch(()=>{}),idbClear("outbox").catch(()=>{}),idbClear("crm").catch(()=>{}),idbClear("crmOutbox").catch(()=>{})]);
     setLogged(false);updateSyncUi();
   };
   $("#saveProcessBtn").onclick=saveProcess;
@@ -957,6 +957,7 @@ async function boot(){
   const cachedSession=restoreSession();
   if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
   try{await loadLocal()}catch(_){state.companyRows=[];state.rows=[]}
+  try{await loadCrmCache()}catch(_){}
 
   // Offline-first: em F5 sem rede, mantém a sessão visual e os dados já validados
   // anteriormente neste navegador. Nenhum token é salvo no localStorage.
@@ -975,6 +976,8 @@ async function boot(){
     if(!cacheFresh()||!state.companyRows.length||pending){
       // Renderiza primeiro o cache; a sincronização pesada vem depois.
       void syncFromCloud({quiet:true}).catch(e=>showBanner("Cache disponível; sincronização falhou: "+(e.message||String(e)),"bad"));
+    } else {
+      void syncCRM({quiet:true}).catch(()=>{});
     }
   }catch(e){
     saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
