@@ -80,9 +80,8 @@
         <div><span class="eyebrow">CONEXÃO</span><h3>Google Sheets / Apps Script</h3></div>
         <button class="icon-btn" value="cancel">×</button>
       </div>
-      <p class="muted">Use a URL <code>/exec</code> do Apps Script e o mesmo token configurado em <code>LEXIS_SHEETS_TOKEN</code>. A credencial fica somente neste navegador.</p>
+      <p class="muted">Use somente a URL <code>/exec</code> do Apps Script. A autenticação agora é feita pelo usuário da aba <code>Usuarios</code>; não existe mais token manual.</p>
       <label>URL do Apps Script<input id="bridgeUrl" placeholder="https://script.google.com/macros/s/.../exec"/></label>
-      <label>Token<input id="bridgeToken" type="password" placeholder="LEXIS_SHEETS_TOKEN"/></label>
       <label>URL da planilha<input id="sheetUrl" value="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit"/></label>
       <div class="row">
         <button type="button" class="btn" id="testBridgeBtn">Testar conexão</button>
