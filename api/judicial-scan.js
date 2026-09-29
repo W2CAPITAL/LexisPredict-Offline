@@ -9,6 +9,8 @@ module.exports=async(req,res)=>{
       cnj:body.cnj||body.protocolo,
       tribunal:body.tribunal||body.siglaTribunal||"",
       ultimoRetorno:body.ultimoRetorno||"",
+      lastDjenId:body.lastDjenId||"",
+      lastDjenDate:body.lastDjenDate||"",
       dataInicio:body.dataInicio||undefined,
       dataFim:body.dataFim||undefined,
       mode:["datajud","djen","both"].includes(body.mode)?body.mode:"both"
