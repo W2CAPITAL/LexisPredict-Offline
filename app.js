@@ -220,8 +220,8 @@ function startAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
   state.autoSyncTimer=setInterval(async()=>{
     if(!state.session||!navigator.onLine||document.hidden||state.syncing)return;
-    const pending=await outboxCount().catch(()=>0);
-    if(cacheFresh()&&!pending)return;
+    const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
+    if(cacheFresh()&&!pending&&!crmPending)return;
     try{await syncFromCloud({quiet:true})}catch(_){}
   },300000);
 }
@@ -934,8 +934,8 @@ function setupEvents(){
   window.addEventListener("online",async()=>{
     updateSyncUi();
     if(state.session){
-      const pending=await outboxCount().catch(()=>0);
-      if(!cacheFresh()||pending){
+      const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
+      if(!cacheFresh()||pending||crmPending){
         showBanner("Conexão restaurada. Sincronizando alterações pendentes…","good");
         try{await syncFromCloud({quiet:true})}catch(_){}
       }
@@ -944,8 +944,8 @@ function setupEvents(){
   window.addEventListener("offline",()=>{updateSyncUi();if(state.session&&state.companyRows.length)showBanner("Modo offline: usando a carteira em cache.","good")});
   window.addEventListener("focus",async()=>{
     if(!state.session||!navigator.onLine||state.syncing)return;
-    const pending=await outboxCount().catch(()=>0);
-    if(!cacheFresh()||pending)try{await syncFromCloud({quiet:true})}catch(_){}
+    const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
+    if(!cacheFresh()||pending||crmPending)try{await syncFromCloud({quiet:true})}catch(_){}
   });
   window.addEventListener("popstate",()=>setView(pathView(),false));
 }
