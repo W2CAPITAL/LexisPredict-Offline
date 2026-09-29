@@ -9,9 +9,8 @@ module.exports=async(req,res)=>{
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"Método não permitido"});
   try{
     const body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});
-    const url=safeUrl(body.url),token=String(body.token||"").trim(),payload=body.payload||{};
-    if(!token)return res.status(400).json({ok:false,error:"Token do bridge ausente"});
-    const up=await fetch(url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({...payload,token}),redirect:"follow"});
+    const url=safeUrl(body.url),payload=body.payload||{};
+    const up=await fetch(url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload),redirect:"follow"});
     const txt=await up.text();let data;try{data=JSON.parse(txt)}catch{return res.status(502).json({ok:false,error:"Apps Script retornou conteúdo não JSON",detail:txt.slice(0,500)})}
     res.setHeader("Cache-Control","no-store");
     return res.status(up.ok?200:up.status).json(data);
