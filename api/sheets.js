@@ -84,6 +84,8 @@ module.exports=async(req,res)=>{
       const rejected=Number(data.rejected_count||0);
       if(rejected>0){
         const why=(Array.isArray(data.rejected)?data.rejected:[]).map(x=>x?.motivo||x?.reason).filter(Boolean).join("; ");
+        const written=Number(data.written??data.updated??data.added??0);
+        if(written>0)return res.status(200).json({...data,partial:true,warning:why||"Parte do lote foi recusada pela planilha."});
         return res.status(409).json({...data,ok:false,error:why||"Uma ou mais alterações foram recusadas pela planilha."});
       }
       if(data.ok!==false&&Number(data.written??data.updated??data.added??0)===0&&Array.isArray(payload.rows)&&payload.rows.length){
