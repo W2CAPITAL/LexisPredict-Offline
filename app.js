@@ -347,7 +347,23 @@ async function verifySheetWrite(row){
 }
 async function flushOutbox(){
   const list=await idbAll("outbox");if(!list.length)return {ok:true,written:0};
-  const latest=new Map();list.forEach(x=>latest.set(keyOf(x.row),x.row));
+  const valid=[],invalid=[];
+  for(const item of list){
+    const cnj=digits(pick(item.row||{},"Protocolo","protocolo","CNJ","cnj"));
+    if(cnj.length===20)valid.push(item);else invalid.push(item);
+  }
+  // Um registro local sem CNJ não pode ser confirmado na planilha e travava todos os
+  // demais writes com HTTP 409. Remove apenas esses itens estruturalmente inválidos.
+  if(invalid.length){
+    const db=await openDb();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction("outbox","readwrite"),st=tx.objectStore("outbox");
+      invalid.forEach(item=>st.delete(item.id));
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+  }
+  if(!valid.length)return {ok:true,written:0,droppedInvalid:invalid.length};
+  const latest=new Map();valid.forEach(x=>latest.set(keyOf(x.row),x.row));
   const rows=[...latest.values()];
   const j=await apiSheets({action:"write",rows});
   const rejected=Number(j.rejected_count||0);
@@ -437,12 +453,25 @@ function titleFor(v){return {
   scanner:["REDE JUDICIAL","DataJud + DJEN"]
 }[v]||["LEXISPREDICT","Dashboard"]}
 const viewPaths={dashboard:"/",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
-function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";if(p==="/processos-empresa")return"empresa";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
+function pathView(){
+  const rawHash=String(location.hash||"").replace(/^#/,"").replace(/\/+$/,"");
+  if(rawHash){
+    const hp=rawHash.startsWith("/")?rawHash:"/"+rawHash;
+    const hv=Object.entries(viewPaths).find(([,x])=>x===hp)?.[0];
+    if(hv)return hv;
+  }
+  // Compatibilidade com links antigos; a próxima navegação migra para /#/rota.
+  const p=location.pathname.replace(/\/+$/,"")||"/";
+  if(p==="/processos-empresa")return"empresa";
+  return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard";
+}
+function viewUrl(v){const p=viewPaths[v]||"/";return p==="/"?"/#/":"/#"+p}
 function setView(v,push=true){
   state.view=v;
-  $$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
+  $(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
   const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;
-  if(push&&viewPaths[v]&&location.pathname!==viewPaths[v])history.pushState({view:v},"",viewPaths[v]);
+  const target=viewUrl(v);
+  if(push&&(location.pathname+location.hash)!==target)history.pushState({view:v},"",target);
   render();
 }
 function render(){
