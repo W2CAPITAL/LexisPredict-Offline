@@ -2,7 +2,21 @@
 
 **SheetsPredict** é o cockpit operacional da carteira jurídica conectado ao Google Sheets. A planilha continua sendo a fonte de verdade; o navegador mantém uma réplica local para velocidade e continuidade, enquanto Vercel Functions e Apps Script fazem a ponte segura com serviços externos.
 
-**Versão atual: 4.1.0**
+**Versão atual: 4.2.0**
+
+## Mapa cerebral da arquitetura
+
+<p align="center">
+  <img src="docs/sheetspredict-brain-map.svg" alt="SheetsPredict SaaS brain architecture map" width="100%" />
+</p>
+
+O mapa acima representa o SheetsPredict como um cérebro operacional: **córtex de operação**, estado/router, memória em Google Sheets + Apps Script + IndexedDB, inteligência PredictLM/AshnaAI, rede judicial DataJud/DJEN, comunicação WA.Auto e um córtex de verificação.
+
+O **Graphify Brain** complementa esse desenho com um grafo consultável do código. Antes de refactors que atravessam vários módulos, a skill pode usar `query`, `path` e `explain` para localizar dependências, distinguindo relações `EXTRACTED` das `INFERRED`. Código real e testes continuam sendo a fonte final de verificação.
+
+- Skill: [`skills/graphify-brain/SKILL.md`](skills/graphify-brain/SKILL.md)
+- Mapa: [`docs/sheetspredict-brain-map.svg`](docs/sheetspredict-brain-map.svg)
+- Referência: `Graphify-Labs/graphify`
 
 ## Visão geral
 
@@ -258,6 +272,23 @@ A sincronização completa também roda em segundo plano depois da atualização
 - uma campanha comum ativa continua tendo precedência sobre alertas jurídicos;
 - o primeiro scan não dispara histórico antigo.
 
+## Chatbot AshnaAI
+
+O SheetsPredict 4.2 aceita **AshnaAI** como backend OpenAI-compatible para **Chat, Work e Tutor**. A integração é server-side: a chave não é enviada ao navegador.
+
+```dotenv
+ASHNA_API_KEY=
+ASHNA_BASE_URL=https://api.ashna.ai/v1/api
+ASHNA_MODEL=glm-5.3-flash
+ASHNA_AGENT_ID=
+```
+
+Com `PREDICTLM_URL` configurada, o SheetsPredict tenta o runtime completo do PredictLM primeiro e pode usar AshnaAI como fallback de Chat/Work/Tutor. Sem PredictLM, AshnaAI pode sustentar essas três superfícies diretamente.
+
+`ASHNA_AGENT_ID` permite apontar para um agente criado no painel Ashna; quando ausente, o adapter usa `ASHNA_MODEL`.
+
+Legal, Build, Research, Imagine e Report continuam exigindo o runtime completo do PredictLM, porque dependem de ferramentas e contratos que um endpoint de chat isolado não fornece.
+
 ## Predict Studio
 
 A rota `/studio` traz a camada de execução do PredictLM para dentro do SheetsPredict sem incorporar o Next.js inteiro nem acoplar o CRM ao runtime de IA.
@@ -281,11 +312,11 @@ O proxy `/api/predict-studio` possui uma allowlist fixa de rotas. O navegador n�
 
 O SheetsPredict mantém um snapshot auditável do registro real do PredictLM, associado ao commit de origem. Na integração inicial são:
 
-- **80 skills/capabilities registradas**;
+- **81 skills/capabilities registradas**, incluindo Graphify Brain;
 - **16 papéis de Agent Fabric**;
 - **4 controladores Four-Core**: Fly, Mouse, Macaque e Human;
-- **17 rotas conhecidas do Provider Mesh**;
-- **75 repositórios registrados no Capability Fusion**;
+- **18 providers/rotas conhecidas do Provider Mesh**, incluindo AshnaAI;
+- **76 repositórios registrados no Capability Fusion**, incluindo Graphify;
 - catálogo de runtimes WebLLM, Transformers.js compatibility, FreeLLMAPI, Ollama, OpenAI-compatible, llama.cpp/llamafile e LowRAM.
 
 A presença no catálogo **não significa que um adapter externo esteja configurado**. A aba Plugins distingue `built-in`, `bridge` e `external`, e o runtime remoto é validado separadamente.
@@ -347,6 +378,21 @@ api/predict-studio.js
 ```
 
 Se `PREDICTLM_URL` não estiver configurada, o restante do SheetsPredict continua operando. A interface deixa claro que as superfícies remotas estão indisponíveis; Skills/Agentes/Plugins e os runtimes locais opt-in continuam acessíveis.
+
+## Interface SaaS 4.2
+
+A camada visual foi revisada sem trocar o modelo de dados nem as rotas existentes. O objetivo é reduzir a aparência de planilha e aproximar o produto de um SaaS operacional maduro:
+
+- sidebar organizada por **Visão / Operação / Gestão / Sistema**;
+- contexto de workspace visível, sem criar uma segunda sidebar;
+- topbar mais enxuta e hierarquia tipográfica consistente;
+- cards/KPIs com densidade uniforme e estados menos “decorativos”;
+- tabelas, filtros, pipeline, agenda, diálogos e histórico usando os mesmos tokens;
+- sombras, raios, espaçamento e foco padronizados;
+- temas continuam usando `--surface`, `--ink`, `--line`, `--primary` e demais tokens, em vez de depender de fundos brancos fixos;
+- listas largas preservam a paginação de 200 registros e o scroll global já existente.
+
+A revisão é visual/estrutural: não altera as regras `Assistente = dono`, `AtendidoPor = quem atendeu`, nem a fonte de verdade no Google Sheets.
 
 ## Temas e acessibilidade
 
@@ -447,9 +493,12 @@ Após uma alteração grande de frontend, um `Ctrl+Shift+R` pode ser usado uma v
 
 ## Estado atual
 
-**SheetsPredict 4.1.0**
+**SheetsPredict 4.2.0**
 
 Foco da versão:
+- shell SaaS empresarial com navegação agrupada e design tokens consistentes;
+- chatbot AshnaAI opcional para Chat/Work/Tutor;
+- Graphify Brain + mapas cerebrais versionados;
 
 - Central Integrada;
 - identidade SheetsPredict;
