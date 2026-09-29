@@ -29,6 +29,43 @@ function bearer(){
   const token=String(process.env.PREDICTLM_ACCESS_TOKEN||"").trim();
   return token?{Authorization:"Bearer "+token}:{};
 }
+function ashnaConfig(){
+  const key=String(process.env.ASHNA_API_KEY||"").trim();
+  if(!key)return null;
+  let base;try{base=new URL(String(process.env.ASHNA_BASE_URL||"https://api.ashna.ai/v1/api").trim())}catch{return null}
+  if(base.protocol!=="https:"||privateHost(base.hostname))return null;
+  base.pathname=base.pathname.replace(/\/$/,"");base.search="";base.hash="";
+  return {base,key,model:String(process.env.ASHNA_AGENT_ID||process.env.ASHNA_MODEL||"glm-5.3-flash").trim()};
+}
+async function callAshna(body,surface){
+  const cfg=ashnaConfig();if(!cfg)throw Object.assign(new Error("AshnaAI não configurada."),{status:503,code:"ASHNA_NOT_CONFIGURED"});
+  const payload=chatPayload(body,surface);
+  if(!payload.prompt)throw Object.assign(new Error("Informe uma mensagem."),{status:400});
+  const messages=[
+    {role:"system",content:[
+      "Você é o assistente do SheetsPredict, conectado à operação jurídica e administrativa.",
+      "Responda em português do Brasil, salvo pedido explícito em outro idioma.",
+      "Use o contexto fornecido como dado; nunca invente movimentações DataJud/DJEN, clientes, tarefas ou números.",
+      payload.instructions
+    ].join(" ")},
+    ...payload.messages,
+    ...(payload.answerAnchor?[{role:"system",content:"CONTEXTO SHEETSPREDICT:\n"+payload.answerAnchor}]:[]),
+    {role:"user",content:payload.prompt}
+  ];
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),TIMEOUTS[surface]||TIMEOUTS.chat);
+  try{
+    const r=await fetch(urlAt(cfg.base,"/chat/completions"),{
+      method:"POST",cache:"no-store",redirect:"follow",signal:ctrl.signal,
+      headers:{Accept:"application/json","Content-Type":"application/json",Authorization:"Bearer "+cfg.key,"X-Title":"SheetsPredict"},
+      body:JSON.stringify({model:cfg.model,messages,temperature:body.deep?.22:.35,max_tokens:body.deep?2200:1400,stream:false})
+    });
+    const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={raw:clean(text,1200)}}
+    if(!r.ok)throw Object.assign(new Error(clean(data?.error?.message||data?.error||("AshnaAI HTTP "+r.status),900)),{status:r.status,code:"ASHNA_UPSTREAM_ERROR"});
+    const content=clean(data?.choices?.[0]?.message?.content||data?.response,30000);
+    if(!content)throw Object.assign(new Error("AshnaAI retornou resposta vazia."),{status:502,code:"ASHNA_EMPTY"});
+    return {ok:true,surface,content,provider:"ashna",model:cfg.model};
+  }finally{clearTimeout(timer)}
+}
 async function call(base,path,{method="POST",body,query,timeoutMs=45000,expect="json"}={}){
   const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
   try{
@@ -117,25 +154,42 @@ module.exports=async(req,res)=>{
   const body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});
   const action=String(body.action||"status").toLowerCase();
 
-  if(!base){
+  const ashna=ashnaConfig();
+
+  if(!base && !ashna){
     return res.status(503).json({
       ok:false,configured:false,code:"PREDICTLM_NOT_CONFIGURED",
-      error:"PredictLM ainda não está conectado a este deployment. Configure PREDICTLM_URL e, se protegido, PREDICTLM_ACCESS_TOKEN."
+      error:"Nenhum chatbot remoto está configurado. Configure PREDICTLM_URL ou ASHNA_API_KEY."
     });
   }
 
   try{
     let out;
     if(action==="status"){
-      out=await call(base,"/api/capabilities",{method:"GET",query:{surface:clean(body.surface||"chat",30),q:clean(body.q,400)},timeoutMs:TIMEOUTS.status});
-      return res.status(200).json({ok:true,configured:true,source:base.origin,capabilities:out.data});
+      if(base){
+        try{
+          out=await call(base,"/api/capabilities",{method:"GET",query:{surface:clean(body.surface||"chat",30),q:clean(body.q,400)},timeoutMs:TIMEOUTS.status});
+          return res.status(200).json({ok:true,configured:true,source:base.origin,chatProvider:ashna?"PredictLM + AshnaAI fallback":"PredictLM",capabilities:out.data});
+        }catch(e){
+          if(!ashna)throw e;
+        }
+      }
+      return res.status(200).json({ok:true,configured:true,source:"ashna.ai",chatProvider:"AshnaAI direct",capabilities:{surfaces:["chat","work","tutor"],provider:"ashna",model:ashna.model,limitedToChat:true}});
     }
     if(["chat","work","tutor"].includes(action)){
       const payload=chatPayload(body,action);
       if(!payload.prompt)return res.status(400).json({ok:false,error:"Informe uma mensagem."});
-      out=await call(base,"/api/chat",{body:payload,timeoutMs:TIMEOUTS[action]});
-      return res.status(200).json({ok:true,surface:action,...out.data});
+      if(base){
+        try{
+          out=await call(base,"/api/chat",{body:payload,timeoutMs:TIMEOUTS[action]});
+          return res.status(200).json({ok:true,surface:action,...out.data});
+        }catch(e){
+          if(!ashna)throw e;
+        }
+      }
+      return res.status(200).json(await callAshna(body,action));
     }
+    if(!base)return res.status(503).json({ok:false,configured:false,code:"PREDICTLM_REQUIRED_SURFACE",error:"Esta superfície exige o runtime completo do PredictLM. AshnaAI está disponível para Chat, Work e Tutor."});
     if(action==="legal"){
       const number=legalNumber(body);if(!number)return res.status(400).json({ok:false,error:"Informe o CNJ."});
       out=await call(base,"/api/legal/process",{body:{number},timeoutMs:TIMEOUTS.legal});
