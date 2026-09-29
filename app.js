@@ -759,12 +759,19 @@ async function markContacted(key){
   const row=findRow(key);if(!row)return;
   const actor=currentUser().nome||currentUser().usuario||"Usuário";
   const retorno=todayBrazil(),nowIso=new Date().toISOString();
+  const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
+  if(clientId&&!pick(row,"ClienteId"))row.ClienteId=clientId;
   Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso});
   updateLocalRow(row);await saveRows(state.companyRows);
-  const patch={"Protocolo":pick(row,"Protocolo"),"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
-  await queueWrite(patch);render();
-  if(!navigator.onLine){showBanner("Atendimento salvo no cache. Será enviado quando a conexão voltar.","good");return}
-  try{await flushOutbox();showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
+  const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
+  await queueWrite(patch);
+  if(clientId){
+    const interaction={InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),ClienteId:clientId,Protocolo:pick(row,"Protocolo"),Canal:"Atendimento",Tipo:"Retorno",Assunto:"Atendimento registrado",Conteudo:"Cliente marcado como contatado no SheetsPredict.",Usuario:actor,DataHora:nowIso,Resultado:"Contatado",ProximoPasso:"",DataProximoPasso:"",OptOut:""};
+    await crmWrite("Interacoes",interaction,{quiet:true});
+  }
+  render();
+  if(!navigator.onLine){showBanner("Atendimento e histórico CRM salvos no cache. Serão enviados quando a conexão voltar.","good");return}
+  try{await flushOutbox();await flushCrmOutbox().catch(()=>{});showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
   catch(e){showBanner("Atendimento ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
 }
 function auditCached(row){
@@ -840,13 +847,14 @@ async function refreshAudit(keepSuggest=false){
   renderAuditDialog();render();
 }
 function openProcess(key){
-  const r=findRow(key)||{},isNew=!key,u=currentUser();
+  const isNew=!key,u=currentUser(),linkedClient=isNew&&state.clientId?clientById(state.clientId):null;
+  const r=findRow(key)||{};
   $("#editKey").value=key||"";$("#processDialogTitle").textContent=isNew?"Novo cadastro":"Editar processo";
-  $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");
-  $("#fAssistente").value=pick(r,"Assistente")||(u.nome||u.usuario||"");
+  $("#fCliente").value=pick(r,"Cliente")||linkedClient?.Nome||"";$("#fProtocolo").value=pick(r,"Protocolo");
+  $("#fAssistente").value=pick(r,"Assistente")||linkedClient?.Responsavel||(u.nome||u.usuario||"");
   $("#fAssistente").readOnly=!isNew;$("#fProtocolo").readOnly=!isNew;
   $("#assistenteHint").textContent=isNew?"Novo cadastro entra na sua carteira por padrão.":"Editar não transfere a carteira. Assistente permanece "+($("#fAssistente").value||"inalterado")+".";
-  $("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório","Escritorio");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações","Observacao");$("#processStatus").textContent="";$("#processDialog").showModal()
+  $("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório","Escritorio");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone")||linkedClient?.Telefone_Principal||"";$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações","Observacao");$("#processStatus").textContent="";$("#processDialog").showModal()
 }
 async function saveProcess(){
   const key=$("#editKey").value,isNew=!key;
@@ -865,10 +873,23 @@ async function saveProcess(){
     "Observações":$("#fObs").value.trim()
   };
   if(!String(next["Protocolo"]||"").trim()){showBanner("Informe o Protocolo/CNJ.","bad");return}
+  const crm=window.LexisCRM;
+  if(crm){
+    const validation=crm.validateProcess(next);
+    if(!validation.ok){showBanner(validation.errors.join(" • "),"bad");return}
+    if(next["Telefone"])next["Telefone"]=crm.normalizePhone(next["Telefone"])||next["Telefone"];
+  }
+  const linkedClient=state.clientId?clientById(state.clientId):null;
+  const clientId=pick(current,"ClienteId")||linkedClient?.ClienteId||(crm?.stableClientId?crm.stableClientId({Cliente:next["Cliente"],Telefone:next["Telefone"]}):"");
+  next["ClienteId"]=clientId;
   if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
   updateLocalRow(next);await saveRows(state.companyRows);
+  if(clientId){
+    const clientRecord={ClienteId:clientId,Tipo:"Pessoa",Nome:next["Cliente"],Telefone_Principal:next["Telefone"],Origem:"App",Status:"ATIVO",Responsavel:next["Assistente"],OptOutWhatsApp:"NÃO",AtualizadoEm:new Date().toISOString()};
+    await crmWrite("Clientes",clientRecord,{quiet:true});
+  }
   const writePayload={
-    "Protocolo":next["Protocolo"],"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
+    "Protocolo":next["Protocolo"],"ClienteId":clientId,"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
   };
   if(isNew)writePayload["Assistente"]=next["Assistente"];
   await queueWrite(writePayload);render();
