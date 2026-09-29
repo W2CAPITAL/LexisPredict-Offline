@@ -563,7 +563,7 @@ function renderSettings(){
       '<div><strong>Preferência local</strong><span>Fica salvo somente neste navegador e não altera a planilha.</span></div>'+
       '<div><strong>Todas as telas</strong><span>Dashboard, processos, CRM, DataJud/DJEN, Central Integrada e diálogos usam o mesmo tema.</span></div>'+
     '</div></section></div>';
-  $("[data-theme-choice]").forEach(b=>b.onclick=()=>{
+  $$("[data-theme-choice]").forEach(b=>b.onclick=()=>{
     const theme=applyTheme(b.dataset.themeChoice);
     showBanner("Tema "+theme.name+" aplicado.","good");
     renderSettings();
