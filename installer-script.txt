@@ -555,6 +555,8 @@ function syncOnOpen_(e) {
     .createMenu("Léxis")
 
     .addItem("Garantir abas e cabeçalhos", "ensureSheetsUI")
+    .addItem("Rodar lote DJEN agora", "uiRunDjenBatch")
+    .addItem("Ativar DJEN automático", "uiEnableDjenAuto")
 
     .addItem("Criar usuário (login/senha)", "uiCriarUsuario")
 
@@ -569,17 +571,80 @@ function syncOnOpen_(e) {
 function ensureSheetsUI() {
 
   ensureSheets_();
+  var trigger = ensureDjenAutoTrigger_();
 
   try {
     SpreadsheetApp.getActiveSpreadsheet().toast(
-      "Abas, cabeçalhos e estrutura CRM conferidos.",
+      "Estrutura conferida. DJEN automático: " + (trigger.created ? "ativado" : "já ativo") + ".",
       "Léxis",
-      5
+      6
     );
   } catch (_) {}
 
-  return { ok: true, message: "Abas, cabeçalhos e estrutura CRM conferidos." };
+  return { ok: true, djen_trigger: trigger, message: "Abas, cabeçalhos, histórico judicial e DJEN automático conferidos." };
 
+}
+
+function ensureDjenAutoTrigger_() {
+  var fn = "djenScheduledBatch_", triggers = ScriptApp.getProjectTriggers(), found = [];
+  triggers.forEach(function(t){ if (t.getHandlerFunction && t.getHandlerFunction() === fn) found.push(t); });
+  for (var i = 1; i < found.length; i++) ScriptApp.deleteTrigger(found[i]);
+  if (found.length) return {ok:true,created:false,count:1};
+  ScriptApp.newTrigger(fn).timeBased().everyMinutes(10).create();
+  return {ok:true,created:true,count:1};
+}
+
+function uiEnableDjenAuto() {
+  ensureSheets_();
+  var r = ensureDjenAutoTrigger_();
+  try { SpreadsheetApp.getActiveSpreadsheet().toast(r.created ? "DJEN automático ativado a cada 10 minutos." : "DJEN automático já estava ativo.","Léxis",6); } catch (_) {}
+  return r;
+}
+
+function uiRunDjenBatch() {
+  var r = djenScheduledBatch_({manual:true});
+  try { SpreadsheetApp.getActiveSpreadsheet().toast("DJEN: "+(r.checked||0)+" consultados, "+(r.found||0)+" com publicação.","Léxis",8); } catch (_) {}
+  return r;
+}
+
+function djenScheduledBatch_(options) {
+  ensureSheets_();
+  options = options || {};
+  var props = PropertiesService.getScriptProperties(), nowMs = Date.now();
+  var blockedUntil = Number(props.getProperty("LEXIS_DJEN_BLOCKED_UNTIL") || 0);
+  if (!options.manual && blockedUntil > nowMs) return {ok:false,paused:true,until:blockedUntil,checked:0,found:0};
+
+  var rows = readRows_({limit:8000}).rows.filter(function(r){ return digits(r.Protocolo || r.protocolo || "").length === 20; });
+  if (!rows.length) return {ok:true,checked:0,found:0,total:0};
+
+  var cursor = Math.max(0,Number(props.getProperty("LEXIS_DJEN_CURSOR") || 0));
+  if (cursor >= rows.length) cursor = 0;
+  var batchSize = Math.min(25,Math.max(1,Number(options.batchSize || 20)));
+  var checked = 0, found = 0, saved = 0, errors = [], actor = {u:"automation",nome:"DJEN Automático",perfil:"superadmin"};
+  for (var i = 0; i < batchSize && checked < rows.length; i++) {
+    var idx = (cursor + i) % rows.length, row = rows[idx], protocolo = row.Protocolo || row.protocolo;
+    var out = djenFetchAndPersist_({protocolo:protocolo,tribunal:row.Tribunal || row.tribunal || "",maxPages:20,itensPorPagina:100},actor);
+    checked++;
+    if (out && out.success) {
+      if (out.found) found++;
+      if (out.saved && Number(out.saved.written || 0) > 0) saved++;
+    } else {
+      errors.push({protocolo:protocolo,error:out && out.error || "falha DJEN"});
+      if (out && (out.status === 403 || out.isGeoBlocked)) {
+        props.setProperty("LEXIS_DJEN_BLOCKED_UNTIL",String(Date.now()+6*60*60*1000));
+        break;
+      }
+      if (out && (out.status === 429 || out.isRateLimited)) {
+        props.setProperty("LEXIS_DJEN_BLOCKED_UNTIL",String(Date.now()+Math.max(15*60*1000,Number(out.retryAfterMs || 0))));
+        break;
+      }
+    }
+    Utilities.sleep(250);
+  }
+  cursor = (cursor + checked) % rows.length;
+  props.setProperty("LEXIS_DJEN_CURSOR",String(cursor));
+  props.setProperty("LEXIS_DJEN_LAST_BATCH",new Date().toISOString());
+  return {ok:true,checked:checked,found:found,saved:saved,total:rows.length,nextCursor:cursor,errors:errors.slice(0,10)};
 }
 
 
@@ -594,6 +659,10 @@ function ensureSheets_() {
 
   Object.keys(CRM_TABLES).forEach(function(name) {
     ensureSheetWithHeaders_(ss, name, CRM_TABLES[name].headers);
+  });
+  Object.keys(JUDICIAL_TABLES).forEach(function(source) {
+    var cfg = JUDICIAL_TABLES[source];
+    ensureSheetWithHeaders_(ss, cfg.name, cfg.headers);
   });
 
 }
