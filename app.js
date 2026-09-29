@@ -361,6 +361,10 @@ function render(){
 }
 async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
+function isRecentDate(v,days=7){
+  const d=parseDate(v);if(!d)return false;
+  return Date.now()-d.getTime()<=days*86400000&&Date.now()>=d.getTime()-86400000;
+}
 function renderDashboard(){
   const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
   const critical=tasks().slice(0,10);
@@ -368,18 +372,22 @@ function renderDashboard(){
   const noSell=state.rows.filter(r=>commercialStatus(r).includes("NÃO VENDER")).length;
   const clientFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="CLIENTE").length;
   const bankFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="BANCO").length;
+  const atendidosSemana=state.rows.filter(r=>pick(r,"AtendidoPor")&&isRecentDate(pick(r,"Último Retorno"),7)).length;
+  const tribunalSemana=state.rows.filter(r=>isRecentDate(pick(r,"Última Sincronização"),7)&&(pick(r,"DataJud • Último Movimento")||pick(r,"DJEN • Última Publicação"))).length;
+  const vencidos=state.rows.filter(r=>statusRet(r)==="VENCIDO").length;
   $("#content").innerHTML=
-  '<div class="command-strip"><div><span class="eyebrow">CARTEIRA EM TEMPO REAL</span><h2>Command Center Jurídico</h2><p>Processos, prazos, rede judicial e oportunidade comercial na mesma visão.</p></div><div class="command-actions"><button class="btn" data-goto="report">Abrir report</button><button class="btn primary" data-goto="scanner">Auditar tribunal</button></div></div>'+
-  '<div class="kpi-grid">'+
+  '<div class="lexis-page-shell"><div class="lexis-page-header"><div><span class="eyebrow">COMMAND CENTER</span><h2>Dashboard</h2><p>Visão da carteira · Google Sheets + DataJud + DJEN</p></div><div class="command-actions"><button class="btn" data-goto="report">Dossiê operacional</button><button class="btn" data-goto="processos">Meus processos</button><button class="btn primary" data-goto="scanner">DataJud + DJEN</button></div></div>'+
+  '<div class="lexis-tabbar"><button class="active">Visão da carteira</button><button data-goto="empresa">Processos da empresa</button><button data-goto="tarefas">Fila</button><button data-goto="report">Report</button></div>'+
+  '<div class="kpi-grid dashboard-kpis">'+
     kpi("Processos",m.total,m.active+" ativos")+
-    kpi("Vencidos",m.venc,m.attention+" em atenção","bad")+
+    kpi("Vencidos",vencidos,m.attention+" em atenção","bad")+
+    kpi("Atendidos sem.",atendidosSemana,"últimos 7 dias","good")+
+    kpi("Tribunal sem.",tribunalSemana,"DataJud/DJEN")+
     kpi("Novidades",m.newer,"após último retorno",m.newer?"warn":"good")+
-    kpi("Potencial comercial",potential,"triagem DataJud/DJEN",potential?"good":"")+
-    kpi("Não vender",noSell,bankFav+" com banco favorecido",noSell?"bad":"")+
-    kpi("Cobertura judicial",Math.round((m.dj+m.djen)/(Math.max(1,m.total*2))*100)+"%",m.dj+" DataJud • "+m.djen+" DJEN")+
+    kpi("Potencial",potential,"triagem comercial",potential?"good":"")+
   '</div>'+
-  '<div class="dashboard-layout"><div class="card"><div class="card-head"><div><span class="eyebrow">PRIORIDADE</span><h3>Fila crítica</h3></div><button class="btn sm" data-goto="tarefas">Ver todas</button></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Prioridade</th><th>Cliente</th><th>CNJ</th><th>Motivo</th><th>Comercial</th></tr></thead><tbody>'+
-  critical.map(x=>'<tr><td>'+badge(priority(x.w),x.w>=1000?"bad":x.w>=850?"warn":"blue")+'</td><td><div class="cell-main">'+esc(pick(x.r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(x.r,"Assistente"))+'</div></td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(taskLabel(x.r))+'</td><td>'+commercialHtml(x.r)+'</td></tr>').join("")+
+  '<div class="dashboard-layout"><div class="card"><div class="card-head"><div><span class="eyebrow">PRIORIDADE</span><h3>Fila crítica da carteira</h3></div><button class="btn sm" data-goto="tarefas">Ver fila completa</button></div><div class="table-wrap flat dashboard-table"><table class="table compact"><thead><tr><th>Prioridade</th><th>Cliente</th><th>CNJ</th><th>Motivo</th><th>Retorno</th><th>Ações</th></tr></thead><tbody>'+
+  critical.map(x=>{const key=keyOf(x.r);return '<tr><td>'+badge(priority(x.w),x.w>=950?"bad":x.w>=800?"warn":"blue")+'</td><td><div class="cell-main">'+esc(pick(x.r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(x.r,"Assistente"))+'</div></td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(taskLabel(x.r))+'</td><td>'+badge(statusRet(x.r),statusRet(x.r)==="VENCIDO"?"bad":statusRet(x.r)==="ATENÇÃO"?"warn":"gray")+'</td><td class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico</button><button class="icon-action" data-attendance="'+esc(key)+'">Atendimento</button></td></tr>'}).join("")+
   '</tbody></table></div></div>'+
   '<div class="stack"><div class="card"><div class="card-head"><div><span class="eyebrow">REDE JUDICIAL</span><h3>Cobertura</h3></div></div><div class="card-body metric-list">'+
     metricRow("DataJud",djPct+"%",m.dj+" processos com movimento")+
@@ -387,12 +395,14 @@ function renderDashboard(){
     metricRow("Procedência",procPct+"%",classified+" resultados classificados")+
     metricRow("Cliente favorecido",clientFav,bankFav+" banco favorecido")+
   '</div></div>'+
-  '<div class="card"><div class="card-head"><div><span class="eyebrow">COMERCIAL</span><h3>Esteira de oportunidade</h3></div></div><div class="card-body metric-list">'+
+  '<div class="card"><div class="card-head"><div><span class="eyebrow">COMERCIAL</span><h3>Esteira</h3></div></div><div class="card-body metric-list">'+
     metricRow("Potencial",potential,"crédito/direito a revisar")+
     metricRow("Não vender",noSell,"resultado adverso ou fase encerrada")+
     metricRow("Revisar",state.rows.length-potential-noSell,"sem gatilho conclusivo")+
-  '</div></div></div></div>';
+  '</div></div></div></div></div>';
   bindGotos();
+  $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
 }
 function metricRow(label,value,sub){return '<div class="metric-row"><div><div class="cell-main">'+esc(label)+'</div><div class="cell-sub">'+esc(sub)+'</div></div><strong>'+esc(value)+'</strong></div>'}
 function filteredRows(source=state.rows){
