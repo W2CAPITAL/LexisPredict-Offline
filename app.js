@@ -656,7 +656,7 @@ function renderClientes(){
       return '<tr><td><div class="cell-main">'+esc(c.Nome||"SEM NOME")+'</div><div class="cell-sub mono">'+esc(c.ClienteId||"")+'</div></td><td><div class="cell-main">'+esc(c.Telefone_Principal||"—")+'</div><div class="cell-sub">'+esc(c.Email||"")+'</div></td><td>'+badge(procs.length,"blue")+'</td><td>'+esc(c.Responsavel||"—")+'</td><td>'+esc(c.ultimoRetorno||"—")+'</td><td>'+esc(c.proximoRetorno||"—")+'</td><td>'+badge(pipe.Etapa||"Triagem",pipe.Etapa==="Perdido"?"bad":pipe.Etapa==="Oportunidade"?"good":"gray")+'</td><td><button class="icon-action" data-client-open="'+esc(c.ClienteId)+'">Abrir 360°</button></td></tr>';
     }).join("")+'</tbody></table></div>'+paginationHtml("clientes",rows.length,all.length,"clientes");
   $("#clientSearch").oninput=e=>{state.query=e.target.value;resetPage("clientes");renderClientes()};
-  $("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;state.query="";renderClientes()});
+  $$("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;state.query="";renderClientes()});
   bindPagination("clientes",renderClientes,all.length);
 }
 function renderCliente360(id){
@@ -702,7 +702,7 @@ function renderPipeline(){
     const items=rows.filter(x=>normalized(x.Etapa)===stage);
     return '<section class="pipeline-col"><header><strong>'+esc(stage)+'</strong><span>'+items.length+'</span></header><div>'+items.slice(0,80).map(x=>{const cl=clientById(x.ClienteId);return '<button class="pipeline-card" data-client-open="'+esc(x.ClienteId||"")+'"><strong>'+esc(cl?.Nome||x.Cliente||"Cliente")+'</strong><small>'+esc(x.Servico||x.Origem||"")+'</small>'+(x.ValorEstimado?'<span>'+esc(money(parseMoney(x.ValorEstimado)))+'</span>':'')+'</button>'}).join("")+'</div></section>';
   }).join("")+'</div>';
-  $$("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;setView("clientes")});
+  $$$("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;setView("clientes")});
 }
 function localDateKey(d){
   if(!(d instanceof Date)||Number.isNaN(d.getTime()))return"";
@@ -740,8 +740,8 @@ function renderAgenda(){
     '<aside class="card agenda-day-panel"><div class="card-head"><div><span class="eyebrow">DIA SELECIONADO</span><h3>'+esc(new Date(state.agendaDay+"T12:00:00").toLocaleDateString("pt-BR",{weekday:"long",day:"2-digit",month:"long"}))+'</h3></div>'+badge(selected.length+" evento(s)","blue")+'</div><div class="agenda-day-list">'+
     (selected.length?selected.map(ev=>{const cl=clientMap.get(String(ev.ClienteId||""));return '<article class="agenda-event-card"><div><strong>'+esc(ev.Titulo||ev.Tipo||"Compromisso")+'</strong><small>'+esc(String(ev.Inicio||"").replace("T"," ").slice(0,16))+' · '+esc(ev.Responsavel||"—")+'</small><p>'+esc(cl?.Nome||cnjFormatted(ev.Protocolo||"")||ev._source||"")+'</p></div>'+badge(ev.Status||"PENDENTE",/venc/i.test(ev.Status||"")?"bad":/aten|hoje/i.test(ev.Status||"")?"warn":"gray")+'</article>'}).join(""):'<div class="empty">Nenhum compromisso neste dia.</div>')+
     '</div><div class="agenda-compose"><h4>Novo compromisso</h4><input id="agendaTitle" placeholder="Título do compromisso"/><div class="grid-2"><input id="agendaTime" type="time" value="09:00"/><select id="agendaType"><option>Reunião</option><option>Retorno</option><option>Audiência</option><option>Prazo</option><option>Ligação</option><option>Outro</option></select></div><input id="agendaProtocol" placeholder="CNJ (opcional)"/><input id="agendaResp" placeholder="Responsável" value="'+esc(currentUser().nome||currentUser().usuario||"")+'"/><button class="btn primary" id="agendaSaveBtn">Salvar compromisso</button></div></aside></div>';
-  $("[data-agenda-day]").forEach(b=>b.onclick=()=>{state.agendaDay=b.dataset.agendaDay;state.agendaMonth=state.agendaDay.slice(0,7);renderAgenda()});
-  $("[data-agenda-nav]").forEach(b=>b.onclick=()=>{const d=agendaMonthDate();d.setMonth(d.getMonth()+Number(b.dataset.agendaNav));state.agendaMonth=localDateKey(d).slice(0,7);renderAgenda()});
+  $$("[data-agenda-day]").forEach(b=>b.onclick=()=>{state.agendaDay=b.dataset.agendaDay;state.agendaMonth=state.agendaDay.slice(0,7);renderAgenda()});
+  $$("[data-agenda-nav]").forEach(b=>b.onclick=()=>{const d=agendaMonthDate();d.setMonth(d.getMonth()+Number(b.dataset.agendaNav));state.agendaMonth=localDateKey(d).slice(0,7);renderAgenda()});
   $("[data-agenda-today]").onclick=()=>{state.agendaMonth=todayKey.slice(0,7);state.agendaDay=todayKey;renderAgenda()};
   $("#agendaSaveBtn").onclick=saveAgendaEvent;
 }
