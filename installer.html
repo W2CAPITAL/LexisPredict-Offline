@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Instalador · SheetsPredict</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033;background:#f4f6f9}
+*{box-sizing:border-box}body{margin:0}.shell{max-width:980px;margin:0 auto;padding:28px 18px 60px}
+.head{background:#0b1220;color:#fff;border-radius:16px;padding:24px;margin-bottom:16px}.head small{font-weight:900;letter-spacing:.12em;color:#7dd3fc}.head h1{margin:6px 0;font-size:30px}.head p{margin:0;color:#cbd5e1;line-height:1.55}
+.card{background:#fff;border:1px solid #e4e7ec;border-radius:14px;padding:20px;margin:12px 0;box-shadow:0 3px 12px rgba(15,23,42,.04)}
+.step{display:grid;grid-template-columns:34px 1fr;gap:12px}.n{width:30px;height:30px;display:grid;place-items:center;border-radius:999px;background:#1677d2;color:#fff;font-weight:900}.card h2{font-size:17px;margin:1px 0 7px}.card p,.card li{color:#52606d;line-height:1.55;font-size:13px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.btn{border:1px solid #cfd5df;background:#fff;color:#243044;border-radius:9px;padding:11px 14px;font-weight:900;text-decoration:none;cursor:pointer}.btn.primary{background:#1677d2;color:#fff;border-color:#1677d2}.btn.good{background:#16804a;color:#fff;border-color:#16804a}
+textarea{width:100%;height:360px;border:1px solid #d0d5dd;border-radius:10px;padding:12px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.45;background:#fbfcfe;resize:vertical}
+.status{font-size:12px;font-weight:800;margin-top:8px;color:#52606d}.warn{border-left:4px solid #f79009}.ok{border-left:4px solid #16804a}
+code{background:#eef2f6;padding:2px 5px;border-radius:4px}
+</style>
+</head>
+<body><main class="shell">
+<section class="head"><small>SHEETSPREDICT · GOOGLE SHEETS</small><h1>Instalar / atualizar Apps Script</h1><p>O código já está pronto. O Google exige autorização do dono da planilha na primeira instalação; depois o menu Léxis fica disponível dentro da própria planilha.</p></section>
+
+<section class="card warn"><div class="step"><div class="n">1</div><div><h2>Copie o bridge completo</h2><p>Clique no botão. Não há token ou senha dentro do código; o segredo fica em Script Properties.</p><div class="actions"><button class="btn primary" id="copy">COPIAR CÓDIGO COMPLETO</button><button class="btn" id="reload">Recarregar código</button></div><p class="status" id="status">Carregando…</p><textarea id="code" spellcheck="false" readonly></textarea></div></div></section>
+
+<section class="card"><div class="step"><div class="n">2</div><div><h2>Abra o Apps Script da planilha</h2><p>Na planilha, vá em <strong>Extensões → Apps Script</strong>. Apague o conteúdo de <code>Code.gs</code>, cole o código copiado e salve.</p><div class="actions"><a class="btn" href="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit" target="_blank" rel="noopener">ABRIR PLANILHA</a></div></div></div></section>
+
+<section class="card"><div class="step"><div class="n">3</div><div><h2>Autorize e publique uma vez</h2><ol><li>No editor, execute <code>ensureSheetsUI</code> uma vez e aceite as permissões do Google.</li><li>Abra <strong>Configurações do projeto → Propriedades do script</strong> e configure <code>LEXIS_SHEETS_TOKEN</code> com o mesmo valor da Vercel.</li><li>Use <strong>Implantar → Nova implantação → Aplicativo da Web</strong>.</li><li>Executar como: <strong>Eu</strong>. Use o mesmo acesso já definido para o bridge e copie a URL <code>/exec</code> para <code>LEXIS_APPS_SCRIPT_URL</code> na Vercel se for a primeira implantação.</li></ol></div></div></section>
+
+<section class="card ok"><div class="step"><div class="n">✓</div><div><h2>Depois fica simples</h2><p>Ao reabrir a planilha, aparece o menu <strong>Léxis</strong>. Para atualizações futuras use <strong>Léxis → 🚀 Instalar / atualizar CRM</strong>; o script confere as abas e mostra o estado do token e da implantação.</p></div></div></section>
+</main>
+<script>
+const area=document.getElementById('code'),status=document.getElementById('status');
+async function load(){
+  status.textContent='Carregando código…';
+  try{
+    const r=await fetch('/installer-script.txt',{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const t=await r.text();area.value=t;
+    status.textContent=t.length.toLocaleString('pt-BR')+' caracteres carregados.';
+  }catch(e){status.textContent='Falha ao carregar: '+e.message}
+}
+document.getElementById('copy').onclick=async()=>{
+  if(!area.value)await load();
+  try{await navigator.clipboard.writeText(area.value);status.textContent='Código copiado. Agora abra Extensões → Apps Script na planilha.'}
+  catch(e){area.focus();area.select();document.execCommand('copy');status.textContent='Código selecionado/copiado.'}
+};
+document.getElementById('reload').onclick=load;load();
+</script>
+</body></html>
