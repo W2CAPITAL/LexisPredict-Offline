@@ -219,3 +219,36 @@ Essa separação evita o erro em que um usuário visualiza somente a única linh
 
 A interface usa como referência de interação os padrões de CRM observados em **EspoCRM** (menu lateral/minimização, navegação por módulos e dashboard modular) e **IDURAR ERP/CRM** (sidebar persistente, rotas selecionadas, cards-resumo e tabelas recentes com ações contextuais). A implementação do SheetsPredict continua própria e focada em carteira jurídica, tarefas, DataJud e DJEN.
 
+
+
+## SheetsPredict 3.0 — Central Integrada
+
+O SheetsPredict passa a funcionar como **cockpit único** da operação. A planilha continua sendo a fonte de verdade operacional; os demais projetos entram como motores especializados, sem duplicar a carteira.
+
+| Motor | Origem | Integração no SheetsPredict |
+|---|---|---|
+| PredictLM | `W2CAPITAL/PredictLm` | IA principal para análise operacional e dossiês |
+| WA.Auto | `W2CAPITAL/Wa.Auto` | estado do WhatsApp, fila e envio explícito |
+| LexisPredict | `W2CAPITAL/LexisPredict` | regras jurídicas, KPIs e padrões de dossiê |
+| SyncCRM | `W1CAPITAL/SyncCRM` | auditoria e mapeamento de cabeçalhos |
+| LEADCHECKIN | `W2CAPITAL/LEADCHECKIN` | scanner de fontes públicas e descoberta opcional |
+| OFFLINE-LEXISPREDICT | `W1CAPITAL/OFFLINE-LEXISPREDICT` | IndexedDB, outbox e continuidade offline |
+| Leadcheck | `W1CAPITAL/Leadcheck` | Bacen SGS 25471/20749 e simulação revisional |
+| GREY | `W1CAPITAL/GREY` | IA privada/self-hosted e fallback do PredictLM |
+
+A rota `/central` reúne **Visão geral, IA, WhatsApp, Leads, Revisional, Planilha e Integrações**.
+
+### Variáveis opcionais
+
+```dotenv
+PREDICTLM_URL=
+PREDICTLM_ACCESS_TOKEN=
+WA_AUTO_URL=
+GREY_URL=
+GREY_API_KEY=
+LEADCHECKIN_URL=
+LEXISPREDICT_URL=
+LEXISPREDICT_TOKEN=
+```
+
+Sem serviços remotos configurados, a Central continua oferecendo auditoria da planilha, Bacen/revisional, scanner público por URL e o núcleo offline. O envio de WhatsApp só ocorre por ação explícita do usuário e continua respeitando a lista de não contatar do WA.Auto.
