@@ -1,54 +1,21 @@
-const PUBLIC_DJEN = process.env.DJEN_UPSTREAM || "https://comunicaapi.pje.jus.br/api/v1/comunicacao";
-
-function digits(v){return String(v||"").replace(/\D/g,"")}
-function masked(d){return d.length===20?d.slice(0,7)+"-"+d.slice(7,9)+"."+d.slice(9,13)+"."+d.slice(13,14)+"."+d.slice(14,16)+"."+d.slice(16):d}
-function latest(items){
-  return [...items].sort((a,b)=>new Date(b.data_disponibilizacao||b.datadisponibilizacao||0)-new Date(a.data_disponibilizacao||a.datadisponibilizacao||0))[0]||null;
-}
-async function get(cnj,tribunal){
-  const q=new URLSearchParams({numeroProcesso:cnj,pagina:"1",itensPorPagina:"100"});
-  if(tribunal)q.set("siglaTribunal",tribunal);
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),18000);
-  try{
-    const r=await fetch(PUBLIC_DJEN+"?"+q.toString(),{
-      headers:{Accept:"application/json","User-Agent":"LexisPredict-Offline/1.1"},
-      redirect:"follow",signal:controller.signal
-    });
-    const txt=await r.text();let data=null;try{data=JSON.parse(txt)}catch{}
-    return {r,data,txt};
-  }finally{clearTimeout(timer)}
-}
+const {requireSession}=require("../lib/bridge-auth");
+const {fetchDjenByCnj,sortRecent}=require("../lib/djen");
 module.exports=async(req,res)=>{
+  const auth=await requireSession(req,res);if(!auth)return;
   if(req.method!=="GET")return res.status(405).json({ok:false,error:"Método não permitido"});
-  const d=digits(req.query.cnj);
-  if(d.length!==20)return res.status(400).json({ok:false,error:"CNJ inválido: esperado 20 dígitos"});
-  const cnj=masked(d),tribunal=String(req.query.tribunal||"").trim().toUpperCase();
-  try{
-    const x=await get(cnj,tribunal);
-    const remaining=x.r.headers.get("x-ratelimit-remaining"),limit=x.r.headers.get("x-ratelimit-limit");
-    res.setHeader("Cache-Control","s-maxage=300, stale-while-revalidate=1800");
-    if(remaining)res.setHeader("X-Lexis-RateLimit-Remaining",remaining);
-    if(limit)res.setHeader("X-Lexis-RateLimit-Limit",limit);
-
-    if(x.r.status===429){
-      const retry=Math.max(60000,Number(x.r.headers.get("retry-after")||60)*1000);
-      return res.status(429).json({ok:false,error:"DJEN HTTP 429: limite oficial atingido; aguarde 1 minuto antes de retomar.",retryAfterMs:retry,rate:{remaining,limit}});
-    }
-    if(x.r.status===403){
-      return res.status(403).json({ok:false,error:"DJEN HTTP 403: origem temporariamente bloqueada pelo CNJ. O último dado válido deve ser preservado.",retryAfterMs:21600000,rate:{remaining,limit}});
-    }
-    if(!x.r.ok){
-      return res.status(x.r.status).json({ok:false,error:"DJEN HTTP "+x.r.status,detail:String(x.txt||"").slice(0,500)});
-    }
-    const items=Array.isArray(x.data?.items)?x.data.items:[];
-    return res.status(200).json({
-      ok:true,found:items.length>0,count:Number(x.data?.count||items.length),
-      latest:latest(items),items:items.slice(0,20),rate:{remaining,limit},
-      source:"CNJ • API pública DJEN"
-    });
-  }catch(e){
-    const timeout=e?.name==="AbortError";
-    return res.status(502).json({ok:false,error:timeout?"DJEN excedeu 18s e será tentado novamente depois.":"Falha de rede ao consultar DJEN: "+(e?.message||String(e))});
+  const cnj=String(req.query?.cnj||"").trim();
+  const tribunal=String(req.query?.tribunal||"").trim().toUpperCase();
+  const dataInicio=String(req.query?.dataInicio||"").trim()||undefined;
+  const dataFim=String(req.query?.dataFim||"").trim()||undefined;
+  const out=await fetchDjenByCnj(cnj,{siglaTribunal:tribunal||undefined,dataInicio,dataFim,itensPorPagina:100});
+  if(out?.retryAfterMs)res.setHeader("Retry-After",String(Math.ceil(out.retryAfterMs/1000)));
+  if(out?.rate?.remaining)res.setHeader("X-Lexis-RateLimit-Remaining",out.rate.remaining);
+  if(out?.rate?.limit)res.setHeader("X-Lexis-RateLimit-Limit",out.rate.limit);
+  res.setHeader("Cache-Control","no-store");
+  if(!out.success){
+    const status=out.isRateLimited?429:out.isGeoBlocked?403:502;
+    return res.status(status).json({ok:false,error:out.error||"Falha DJEN",retryAfterMs:out.retryAfterMs||0,rate:out.rate||null});
   }
+  const items=sortRecent(out.items||[]),latest=items[0]||null;
+  return res.status(200).json({ok:true,found:items.length>0,count:out.count??items.length,latest,items:items.slice(0,20),rate:out.rate||null,source:"CNJ • DJEN oficial"});
 };
