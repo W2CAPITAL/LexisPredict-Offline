@@ -511,13 +511,14 @@ async function scanOne(cnj,quiet=false){
     const j={ok:false,error:"DJEN em pausa por limite oficial. Tente novamente em "+wait+"s.",retry:true,retryAfterMs:wait*1000};
     state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);return j;
   }
-  const row=state.rows.find(x=>digits(pick(x,"Protocolo"))===d)||null;
+  const row=state.companyRows.find(x=>digits(pick(x,"Protocolo"))===d)||null;
   try{
     const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",cliente:row?pick(row,"Cliente"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",lastDjenId:row?pick(row,"_DJENId"):"",lastDjenDate:row?pick(row,"_DJENDate","DJEN • Data"):"",mode:"both"}),cache:"no-store"});
     const j=await r.json();state.lastScan=j;
     if(j.patch&&row){
       Object.assign(row,j.patch);
-      await saveRows(state.rows);
+      refreshScopes();
+      await saveRows(state.companyRows);
       const writePatch={"Protocolo":pick(row,"Protocolo"),...j.patch};
       try{
         const wr=await apiSheets({action:"write",rows:[writePatch]});
@@ -557,17 +558,116 @@ async function scanQueue(){
 }
 
 function bindGotos(){$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
+function findRow(key){return state.companyRows.find(x=>keyOf(x)===key)||state.rows.find(x=>keyOf(x)===key)||null}
+function todayBrazil(){
+  const parts=new Intl.DateTimeFormat("pt-BR",{timeZone:"America/Sao_Paulo",day:"2-digit",month:"2-digit",year:"numeric"}).formatToParts(new Date());
+  const o={};parts.forEach(p=>o[p.type]=p.value);return o.day+"/"+o.month+"/"+o.year;
+}
+function updateLocalRow(row){
+  const idx=state.companyRows.findIndex(x=>keyOf(x)===keyOf(row));
+  if(idx>=0)state.companyRows[idx]=row;else state.companyRows.unshift(row);
+  refreshScopes();
+}
+async function markContacted(key){
+  const row=findRow(key);if(!row)return;
+  const actor=currentUser().nome||currentUser().usuario||"Usuário";
+  const retorno=todayBrazil(),nowIso=new Date().toISOString();
+  Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso});
+  updateLocalRow(row);await saveRows(state.companyRows);
+  const patch={"Protocolo":pick(row,"Protocolo"),"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
+  await queueWrite(patch);render();
+  if(!navigator.onLine){showBanner("Atendimento salvo no cache. Será enviado quando a conexão voltar.","good");return}
+  try{await flushOutbox();showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
+  catch(e){showBanner("Atendimento ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
+}
+function auditCached(row){
+  return {
+    move:latestMove(row)||"Sem movimentação registrada no cache.",
+    moveDate:pick(row,"DataJud • Data","Data da Movimentação","Data_Movimentacao")||"",
+    djen:pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo")||"",
+    djenDate:pick(row,"DJEN • Data","_DJENDate")||"",
+    owner:pick(row,"Assistente")||"—",
+    attended:pick(row,"AtendidoPor")||"—",
+    lastReturn:pick(row,"Último Retorno")||"—",
+    nextReturn:pick(row,"Próximo Retorno")||"—"
+  };
+}
+function scanLatestMovement(scan){
+  const movs=scan?.datajud?.movimentos||scan?.movimentos||[];
+  const m=scan?.intelligence?.datajud?.last||movs[0]||null;
+  return m?[m.nome,m.complemento,m.descricao].filter(Boolean).join(" — "):"";
+}
+function scanLatestDjen(scan){
+  const item=scan?.intelligence?.djen?.latest||scan?.djen?.items?.[0]||scan?.comunicacoes?.[0]||null;
+  return item?String(item.texto||item.conteudo||item.inteiroTeor||item.tipoComunicacao||""):"";
+}
+function renderAuditDialog(){
+  const row=findRow(state.auditKey);if(!row)return;
+  const cached=auditCached(row),scan=state.auditScan||null;
+  const networkMove=scanLatestMovement(scan),networkDjen=scanLatestDjen(scan);
+  const move=networkMove||cached.move,djen=networkDjen||cached.djen;
+  const suggestions=state.auditSuggest&&window.LexisSuggest?.suggestResponses?window.LexisSuggest.suggestResponses({row,scan}):[];
+  $("#auditTitle").textContent=(state.auditSuggest?"Sugerir resposta • ":"Audit 3D • ")+(pick(row,"Cliente")||"Processo");
+  $("#auditContent").innerHTML=
+    '<div class="audit-hero"><div><span class="eyebrow">CACHE-FIRST • GOOGLE SHEETS</span><h4>'+esc(pick(row,"Cliente")||"SEM NOME")+'</h4><p>'+esc(cnjFormatted(pick(row,"Protocolo")))+' · '+esc(pick(row,"Tribunal")||"")+' · Assistente '+esc(cached.owner)+'</p></div><div>'+badge(statusRet(row),statusRet(row)==="VENCIDO"?"bad":statusRet(row)==="ATENÇÃO"||statusRet(row)==="É HOJE"?"warn":"good")+'</div></div>'+
+    '<div class="audit-grid"><section class="audit-panel"><h4>Movimentação mais recente</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.moveDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkMove?"DataJud atualizado agora":"Planilha / cache local")+'</strong></div><div class="audit-source">'+esc(move)+'</div></section>'+
+    '<section class="audit-panel"><h4>Publicação DJEN</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.djenDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkDjen?"DJEN atualizado agora":"Planilha / cache local")+'</strong></div><div class="audit-source">'+esc(djen||"Nenhuma publicação DJEN registrada.")+'</div></section></div>'+
+    '<div class="audit-grid"><section class="audit-panel"><h4>Operação</h4><div class="audit-kv"><span>Assistente</span><strong>'+esc(cached.owner)+'</strong></div><div class="audit-kv"><span>Atendido por</span><strong>'+esc(cached.attended)+'</strong></div><div class="audit-kv"><span>Último retorno</span><strong>'+esc(cached.lastReturn)+'</strong></div><div class="audit-kv"><span>Próximo retorno</span><strong>'+esc(cached.nextReturn)+'</strong></div></section>'+
+    '<section class="audit-panel"><h4>Leitura simples</h4><div class="audit-source"><strong>'+esc(plainStatus(row))+'</strong><br><br>'+esc(String(move).slice(0,900))+'</div></section></div>'+
+    (state.auditSuggest?'<section class="audit-panel"><h4>Sugestões de resposta</h4><div class="suggestions">'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar resposta</button></div></div>').join("")+'</div></section>':'')+
+    (scan?.error?'<div class="banner bad">'+esc(scan.error)+'</div>':'')+
+    '<div class="audit-actions"><button class="btn" id="auditEditBtn">Editar cadastro</button><button class="btn" id="auditContactBtn">Registrar atendimento</button><button class="btn" id="auditSuggestBtn">Sugerir resposta</button><button class="btn primary" id="auditRefreshBtn">Atualizar DataJud + DJEN</button></div>';
+  $("#auditEditBtn").onclick=()=>{ $("#auditDialog").close();openProcess(state.auditKey) };
+  $("#auditContactBtn").onclick=()=>markContacted(state.auditKey);
+  $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;renderAuditDialog()};
+  $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
+  $$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
+    const s=suggestions[Number(b.dataset.copySuggestion)];if(!s)return;
+    try{await navigator.clipboard.writeText(s.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
+  });
+}
+function openAudit(key,suggest=false){
+  const row=findRow(key);if(!row)return;
+  state.auditKey=key;state.auditScan=null;state.auditSuggest=!!suggest;
+  $("#auditDialog").showModal();renderAuditDialog();
+  const hasCache=!!latestMove(row)||!!pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo");
+  if(!hasCache&&navigator.onLine)void refreshAudit(suggest);
+}
+async function refreshAudit(keepSuggest=false){
+  const row=findRow(state.auditKey);if(!row)return;
+  const cnj=digits(pick(row,"Protocolo"));
+  if(cnj.length!==20){showBanner("CNJ inválido para atualização oficial.","bad");return}
+  const btn=$("#auditRefreshBtn");if(btn){btn.disabled=true;btn.textContent="Atualizando…"}
+  try{
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:"both"}),cache:"no-store"});
+    const j=await r.json();state.auditScan=j;state.auditSuggest=!!keepSuggest;
+    if(j.patch){
+      Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
+      await queueWrite({"Protocolo":pick(row,"Protocolo"),...j.patch});
+      if(navigator.onLine)await flushOutbox();
+    }
+    if(r.status===429||j?.djen?.isRateLimited){
+      const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);state.djenBlockedUntil=Date.now()+ms;
+    }
+  }catch(e){state.auditScan={ok:false,error:e.message||String(e)}}
+  renderAuditDialog();render();
+}
 function openProcess(key){
-  const r=state.rows.find(x=>keyOf(x)===key)||{};$("#editKey").value=key||"";$("#processDialogTitle").textContent=key?"Editar processo":"Novo processo";
-  $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");$("#fAssistente").value=pick(r,"Assistente");$("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações");$("#processStatus").textContent="";$("#processDialog").showModal()
+  const r=findRow(key)||{},isNew=!key,u=currentUser();
+  $("#editKey").value=key||"";$("#processDialogTitle").textContent=isNew?"Novo cadastro":"Editar processo";
+  $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");
+  $("#fAssistente").value=pick(r,"Assistente")||(u.nome||u.usuario||"");
+  $("#fAssistente").readOnly=!isNew;$("#fProtocolo").readOnly=!isNew;
+  $("#assistenteHint").textContent=isNew?"Novo cadastro entra na sua carteira por padrão.":"Editar não transfere a carteira. Assistente permanece "+($("#fAssistente").value||"inalterado")+".";
+  $("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório","Escritorio");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações","Observacao");$("#processStatus").textContent="";$("#processDialog").showModal()
 }
 async function saveProcess(){
-  const key=$("#editKey").value;
-  const current=state.rows.find(x=>keyOf(x)===key)||{};
+  const key=$("#editKey").value,isNew=!key;
+  const current=findRow(key)||{};
   const next={...current,
     "Cliente":$("#fCliente").value.trim(),
     "Protocolo":$("#fProtocolo").value.trim(),
-    "Assistente":$("#fAssistente").value.trim(),
+    "Assistente":isNew?($("#fAssistente").value.trim()||currentUser().nome||currentUser().usuario||""):pick(current,"Assistente"),
     "Advogado":$("#fAdvogado").value.trim(),
     "Escritório":$("#fEscritorio").value.trim(),
     "Tribunal":$("#fTribunal").value.trim(),
@@ -577,42 +677,25 @@ async function saveProcess(){
     "Próximo Retorno":$("#fProximo").value.trim(),
     "Observações":$("#fObs").value.trim()
   };
+  if(!String(next["Protocolo"]||"").trim()){showBanner("Informe o Protocolo/CNJ.","bad");return}
   if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
-  const idx=state.rows.findIndex(x=>keyOf(x)===key);
-  if(idx>=0)state.rows[idx]=next;else state.rows.unshift(next);
-  await saveRows(state.rows);
+  updateLocalRow(next);await saveRows(state.companyRows);
   const writePayload={
-    "Protocolo":next["Protocolo"],
-    "Cliente":next["Cliente"],
-    "Assistente":next["Assistente"],
-    "Advogado":next["Advogado"],
-    "Escritório":next["Escritório"],
-    "Tribunal":next["Tribunal"],
-    "Status":next["Status"],
-    "Telefone":next["Telefone"],
-    "Último Retorno":next["Último Retorno"],
-    "Próximo Retorno":next["Próximo Retorno"],
-    "Observações":next["Observações"],
-    "Automação":next["Automação"]||"",
-    "Próxima Sincronização":next["Próxima Sincronização"]||""
+    "Protocolo":next["Protocolo"],"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
   };
-  await queueWrite(writePayload);
-  render();
+  if(isNew)writePayload["Assistente"]=next["Assistente"];
+  await queueWrite(writePayload);render();
   $("#processStatus").textContent="Salvo neste dispositivo. Enviando para a planilha…";
+  if(!navigator.onLine){$("#processDialog").close();showBanner("Cadastro salvo no cache e aguardando conexão.","good");return}
   try{
-    const j=await flushOutbox();
-    if(Number(j.rejected_count||0)>0)throw new Error("A planilha recusou a alteração.");
-    $("#processDialog").close();
-    showBanner("Alteração salva no app e confirmada na planilha.","good");
-    await syncFromCloud({quiet:true});
-  }catch(e){
-    $("#processDialog").close();
-    showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad");
-  }
+    const j=await flushOutbox();if(Number(j.rejected_count||0)>0)throw new Error("A planilha recusou a alteração.");
+    $("#processDialog").close();showBanner((isNew?"Cadastro criado":"Alteração salva")+" sem transferir a carteira.","good");
+  }catch(e){$("#processDialog").close();showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
 }
-function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.rows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
+
+function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.companyRows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
-async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.rows=rows;await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
+async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
   $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
