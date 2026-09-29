@@ -9,7 +9,7 @@ module.exports=async(req,res)=>{
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"Método não permitido"});
   try{
     const body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});
-    const url=safeUrl(body.url),payload=body.payload||{};
+    const url=safeUrl(body.url || process.env.LEXIS_APPS_SCRIPT_URL),payload=body.payload||{};
     const fixedToken=String(process.env.LEXIS_SHEETS_TOKEN||"").trim();
     if(!fixedToken)return res.status(500).json({ok:false,error:"LEXIS_SHEETS_TOKEN não está configurado na Vercel."});
     const up=await fetch(url,{
