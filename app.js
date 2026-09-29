@@ -488,6 +488,7 @@ function render(){
   else if(state.view==="report")renderReport();
   else if(state.view==="scanner")renderScanner();
   else setView("dashboard",false);
+  scheduleGlobalXScroll();
 }
 async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
@@ -541,6 +542,60 @@ function filteredRows(source=state.rows){
 }
 function resetPage(view){if(state.pageSize[view]!=null)state.pageSize[view]=PAGE_DEFAULT}
 function pageLimit(view){return Math.max(1,Number(state.pageSize[view]||PAGE_DEFAULT))}
+function searchFieldHtml(id,placeholder,value){
+  return '<label class="search-field" for="'+esc(id)+'"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg><input id="'+esc(id)+'" type="search" autocomplete="off" spellcheck="false" placeholder="'+esc(placeholder)+'" value="'+esc(value||"")+'"/></label>';
+}
+function bindSearchInput(selector,view,renderFn){
+  const input=$(selector);if(!input)return;
+  input.oninput=e=>{
+    const pos=e.target.selectionStart??String(e.target.value||"").length;
+    state.query=e.target.value;resetPage(view);renderFn();
+    const next=$(selector);
+    if(next){next.focus({preventScroll:true});try{next.setSelectionRange(pos,pos)}catch(_){}}
+  };
+}
+let globalXTarget=null,globalXBusy=false,globalXTick=0;
+function ensureGlobalXScroll(){
+  let dock=document.getElementById("globalXScroll");
+  if(dock)return dock;
+  dock=document.createElement("div");
+  dock.id="globalXScroll";dock.className="global-x-scroll";
+  dock.setAttribute("aria-label","Rolagem horizontal da tabela visível");
+  dock.innerHTML='<div class="global-x-scroll-inner"></div>';
+  document.body.appendChild(dock);
+  dock.addEventListener("scroll",()=>{
+    if(globalXBusy||!globalXTarget)return;
+    globalXBusy=true;globalXTarget.scrollLeft=dock.scrollLeft;globalXBusy=false;
+  });
+  return dock;
+}
+function horizontalScrollCandidates(){
+  const root=$("#content");if(!root)return[];
+  return [...root.querySelectorAll(".table-wrap,.pipeline-board,.lexis-tabbar")].filter(el=>el.scrollWidth>el.clientWidth+4);
+}
+function updateGlobalXScroll(){
+  const dock=ensureGlobalXScroll(),root=$("#content");
+  if(!root){dock.classList.remove("active");globalXTarget=null;return}
+  const rr=root.getBoundingClientRect();
+  const visible=horizontalScrollCandidates().map(el=>({el,r:el.getBoundingClientRect()}))
+    .filter(x=>x.r.bottom>rr.top+24&&x.r.top<rr.bottom-24)
+    .sort((a,b)=>{
+      const av=Math.max(0,Math.min(a.r.bottom,rr.bottom)-Math.max(a.r.top,rr.top));
+      const bv=Math.max(0,Math.min(b.r.bottom,rr.bottom)-Math.max(b.r.top,rr.top));
+      return bv-av;
+    });
+  const target=visible[0]?.el||null;
+  if(!target){dock.classList.remove("active");globalXTarget=null;return}
+  globalXTarget=target;
+  const inner=dock.firstElementChild;
+  inner.style.width=Math.max(target.scrollWidth,target.clientWidth)+"px";
+  dock.classList.add("active");
+  globalXBusy=true;dock.scrollLeft=target.scrollLeft;globalXBusy=false;
+}
+function scheduleGlobalXScroll(){
+  if(globalXTick)return;
+  globalXTick=requestAnimationFrame(()=>{globalXTick=0;updateGlobalXScroll()});
+}
 function paginationHtml(view,shown,total,noun){
   const limit=pageLimit(view),safeTotal=Math.max(0,Number(total)||0),more=shown<safeTotal;
   return '<div class="list-pagination"><span>Mostrando <strong>'+shown+'</strong> de <strong>'+safeTotal+'</strong> '+esc(noun||"registros")+'</span><div class="pagination-actions">'+
@@ -559,7 +614,7 @@ function processTable(rows,{company=false,total=rows.length,view=company?"empres
   const subtitle=company
     ?"Todos os usuários autenticados podem consultar e editar. Editar ou atender não transfere a carteira."
     :"Processos vinculados ao seu Assistente/perfil.";
-  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' de '+total+' registro(s)</span></div><div class="toolbar"><input id="search" placeholder="Pesquisar cliente, CNJ, advogado, andamento…" value="'+esc(state.query)+'"/><select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
+  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' de '+total+' registro(s)</span></div><div class="toolbar">'+searchFieldHtml("search","Pesquisar cliente, CNJ, advogado, assistente ou andamento…",state.query)+'<select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
   '<div class="company-note">'+esc(subtitle)+'</div>'+
   '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Última movimentação</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Retorno</th><th>Assistente</th><th>Atendido por</th><th></th></tr></thead><tbody>'+
   rows.map(r=>{
@@ -570,8 +625,8 @@ function processTable(rows,{company=false,total=rows.length,view=company?"empres
   '</tbody></table></div>'+paginationHtml(view,rows.length,total,company?"processos da empresa":"processos");
 }
 function bindProcessList(renderFn,view){
-  const search=$("#search"),status=$("#statusFilter"),qual=$("#qualityFilter");
-  if(search)search.oninput=e=>{state.query=e.target.value;resetPage(view);renderFn()};
+  const status=$("#statusFilter"),qual=$("#qualityFilter");
+  bindSearchInput("#search",view,renderFn);
   if(status)status.onchange=e=>{state.status=e.target.value;resetPage(view);renderFn()};
   if(qual)qual.onchange=e=>{state.quality=e.target.value;resetPage(view);renderFn()};
   $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
@@ -640,14 +695,25 @@ function bindTaskActions(){
   $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
   $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
 }
+function taskMatchesSearch(x,q){
+  if(!q)return true;
+  const g=x.group||{},cases=Array.isArray(g.cases)?g.cases:[x.r||{}];
+  return cases.some(r=>norm([
+    pick(r,"Cliente"),pick(r,"Protocolo"),pick(r,"Advogado Atual","Advogado"),
+    pick(r,"Assistente"),pick(r,"Escritório","Escritorio"),pick(r,"Tribunal"),
+    latestMove(r),pick(r,"Telefone"),pick(r,"Status")
+  ].join(" ")).includes(q));
+}
 function renderTarefas(){
-  const all=tasks(),list=all.slice(0,pageLimit("tarefas"));
-  const critical=all.filter(x=>x.w>=950).length,high=all.filter(x=>x.w>=800&&x.w<950).length,explicit=(state.crm.TarefasCRM||[]).filter(x=>!/conclu|feito|cancel/i.test(String(x.Status||"")));
+  const source=tasks(),q=norm(state.query),all=source.filter(x=>taskMatchesSearch(x,q)),list=all.slice(0,pageLimit("tarefas"));
+  const critical=all.filter(x=>x.w>=950).length,high=all.filter(x=>x.w>=800&&x.w<950).length,explicit=(state.crm.TarefasCRM||[]).filter(x=>!/conclu|feito|cancel/i.test(String(x.Status||""))&&(!q||norm([x.Titulo,x.Responsavel,x.Protocolo,x.Descricao].join(" ")).includes(q)));
   $("#content").innerHTML=
-    '<div class="task-header"><div><span class="eyebrow">FILA DE ATENDIMENTO</span><h2>Prioridade operacional</h2><p>Do pior caso e maior urgência até a rotina mais tranquila. Movimentações já salvas na planilha são reaproveitadas.</p></div><div class="queue-summary">'+badge(critical+" críticas","bad")+badge(high+" altas","warn")+badge(all.length+" clientes","gray")+'</div></div>'+
-    '<div class="kpi-grid">'+kpi("Fila total",all.length,"clientes priorizados")+kpi("Tarefas CRM",explicit.length,"registradas")+kpi("Críticas",critical,"ação imediata","bad")+kpi("Altas",high,"alta prioridade","warn")+kpi("Novidades",all.filter(x=>boolish(pick(x.r,"Nova Atualização","Novo Andamento"))).length,"já registradas na planilha")+kpi("Vencidos",all.filter(x=>statusRet(x.r)==="VENCIDO").length,"retorno vencido","bad")+'</div>'+
+    '<div class="task-header"><div><span class="eyebrow">FILA DE ATENDIMENTO</span><h2>Prioridade operacional</h2><p>Do pior caso e maior urgência até a rotina mais tranquila. Movimentações já salvas na planilha são reaproveitadas.</p></div><div class="queue-summary">'+badge(critical+" críticas","bad")+badge(high+" altas","warn")+badge(all.length+(q?" de "+source.length:"")+" clientes","gray")+'</div></div>'+
+    '<div class="task-searchbar">'+searchFieldHtml("taskSearch","Pesquisar cliente, CNJ, advogado, assistente ou movimentação…",state.query)+'</div>'+
+    '<div class="kpi-grid">'+kpi("Fila filtrada",all.length,q?source.length+" no total":"clientes priorizados")+kpi("Tarefas CRM",explicit.length,"registradas")+kpi("Críticas",critical,"ação imediata","bad")+kpi("Altas",high,"alta prioridade","warn")+kpi("Novidades",all.filter(x=>boolish(pick(x.r,"Nova Atualização","Novo Andamento"))).length,"já registradas na planilha")+kpi("Vencidos",all.filter(x=>statusRet(x.r)==="VENCIDO").length,"retorno vencido","bad")+'</div>'+
     (explicit.length?'<section class="card explicit-tasks"><div class="card-head"><h3>Tarefas registradas</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Tarefa</th><th>Responsável</th><th>Prioridade</th><th>Vencimento</th><th>Status</th></tr></thead><tbody>'+explicit.slice(0,50).map(x=>'<tr><td>'+esc(x.Titulo||"Tarefa")+'</td><td>'+esc(x.Responsavel||"—")+'</td><td>'+esc(x.Prioridade||"—")+'</td><td>'+esc(x.Vencimento||"—")+'</td><td>'+badge(x.Status||"PENDENTE","gray")+'</td></tr>').join("")+'</tbody></table></div></section>':'')+
     '<div class="task-grid">'+list.map(taskCardHtml).join("")+'</div>'+paginationHtml("tarefas",list.length,all.length,"clientes na fila");
+  bindSearchInput("#taskSearch","tarefas",renderTarefas);
   bindTaskActions();bindPagination("tarefas",renderTarefas,all.length);
 }
 
@@ -1297,6 +1363,18 @@ function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date()
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
 async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;invalidateCrmIndexes();refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
+  ensureGlobalXScroll();
+  const content=$("#content");
+  if(content){
+    content.addEventListener("scroll",e=>{
+      if(e.target===globalXTarget&&!globalXBusy){
+        const dock=document.getElementById("globalXScroll");
+        if(dock){globalXBusy=true;dock.scrollLeft=e.target.scrollLeft;globalXBusy=false}
+      }
+      scheduleGlobalXScroll();
+    },true);
+  }
+  window.addEventListener("resize",scheduleGlobalXScroll);
   const savedSidebar=localStorage.getItem("lexis_sidebar_collapsed")==="1";
   document.body.classList.toggle("sidebar-collapsed",savedSidebar);
   const toggle=$("#sidebarToggle");
@@ -1307,6 +1385,7 @@ function setupEvents(){
       document.body.classList.toggle("sidebar-collapsed",collapsed);
       localStorage.setItem("lexis_sidebar_collapsed",collapsed?"1":"0");
       toggle.textContent=collapsed?"›":"‹";
+      scheduleGlobalXScroll();
     };
   }
   $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
