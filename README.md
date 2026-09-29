@@ -38,7 +38,7 @@ O proxy **não tenta burlar rate limit**. HTTP 429 é devolvido ao cliente e o s
 
 1. Abra a planilha.
 2. Extensões → Apps Script.
-3. Siga [apps-script/ROUTER-INSTALACAO.md](apps-script/ROUTER-INSTALACAO.md) para deixar apenas um `doGet`, um `doPost` e um `onOpen` no projeto.
+3. Copie os quatro arquivos de `apps-script/` para o projeto vinculado à planilha: `Code.gs`, `LEXIS-SYNC-AppsScript.gs`, `LexisApp.gs` e `LexisSheet.gs`.
 4. Em **Configurações do projeto → Propriedades do script**, crie `LEXIS_SHEETS_TOKEN`.
 5. Na Vercel, crie a Environment Variable `LEXIS_SHEETS_TOKEN` com exatamente o mesmo valor.
 6. Implantar → Gerenciar implantações → Nova versão do Aplicativo da web.
@@ -86,7 +86,7 @@ As rotas `/api` são Vercel Functions e funcionam integralmente quando publicada
 
 ## Status
 
-**v1.2.0 — base funcional com router único do Apps Script e token server-side.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
+**v1.3.0 — Apps Script unificado, responsáveis compostos, sessão obrigatória e token server-side.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
 
 
 ## DJEN — fonte oficial
