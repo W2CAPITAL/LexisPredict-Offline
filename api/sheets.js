@@ -64,6 +64,17 @@ module.exports=async(req,res)=>{
       return res.status(401).json({ok:false,error:data.error});
     }
 
+    if((action==="write"||action==="upsert_batch")&&data){
+      const rejected=Number(data.rejected_count||0);
+      if(rejected>0){
+        const why=(Array.isArray(data.rejected)?data.rejected:[]).map(x=>x?.motivo||x?.reason).filter(Boolean).join("; ");
+        return res.status(409).json({...data,ok:false,error:why||"Uma ou mais alterações foram recusadas pela planilha."});
+      }
+      if(data.ok!==false&&Number(data.written??data.updated??data.added??0)===0&&Array.isArray(payload.rows)&&payload.rows.length){
+        return res.status(409).json({...data,ok:false,error:"A planilha não confirmou nenhuma linha gravada."});
+      }
+    }
+
     return res.status(up.ok?200:up.status).json(data);
   }catch(e){
     return res.status(400).json({ok:false,error:e?.message||String(e)});
