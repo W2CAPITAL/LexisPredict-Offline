@@ -1093,6 +1093,21 @@ async function loadHistory(key,{force=false}={}){
       setDjenBlock(Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000));
     }
     state.historyScan=mergeJudicialScan(state.historyScan,j);
+
+    // Se o scanner unificado não trouxe o histórico completo do DataJud,
+    // consulta a rota dedicada e injeta todos os movimentos disponíveis.
+    const liveDjCount=state.historyScan?.datajud?.movimentos?.length||0;
+    if(liveDjCount<=1){
+      try{
+        const djResp=await fetch("/api/datajud?cnj="+encodeURIComponent(cnjFormatted(cnj))+"&ultimoRetorno="+encodeURIComponent(pick(row,"Último Retorno")||""),{cache:"no-store"});
+        const djJson=await djResp.json();
+        if(djJson?.data&&!djJson.data.error&&Array.isArray(djJson.data.movimentos)&&djJson.data.movimentos.length){
+          state.historyScan=mergeJudicialScan(state.historyScan,{datajud:djJson.data});
+          j=mergeJudicialScan(j,{datajud:djJson.data});
+        }
+      }catch(_){}
+    }
+
     if(j.patch){
       Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
       await queueWrite(judicialWritePatch(row,j));
