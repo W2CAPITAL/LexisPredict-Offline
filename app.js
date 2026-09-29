@@ -776,6 +776,128 @@ async function markContacted(key){
   try{await flushOutbox();await flushCrmOutbox().catch(()=>{});showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
   catch(e){showBanner("Atendimento ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
 }
+
+function dateInputValue(v){
+  const d=parseDate(v);if(!d)return"";
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");
+  return y+"-"+m+"-"+day;
+}
+function brDateFromInput(v){
+  const m=String(v||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m?m[3]+"/"+m[2]+"/"+m[1]:String(v||"");
+}
+function openAttendance(key){
+  const row=findRow(key);if(!row)return;
+  $("#attendanceKey").value=key;
+  $("#attendanceTitle").textContent="Registrar atendimento • "+(pick(row,"Cliente")||"Processo");
+  $("#attendanceResult").value=isClosed(row)?"ENCERRADO":"EM ANDAMENTO";
+  $("#attendanceNext").value=dateInputValue(pick(row,"Próximo Retorno"));
+  $("#attendanceNote").value="";
+  $("#attendanceStatus").textContent="";
+  $("#attendanceSummary").innerHTML='<strong>'+esc(pick(row,"Cliente")||"SEM NOME")+'</strong><span class="mono">'+esc(cnjFormatted(pick(row,"Protocolo")))+'</span><span>Assistente: '+esc(pick(row,"Assistente")||"—")+'</span><span>Último retorno: '+esc(pick(row,"Último Retorno")||"—")+'</span>';
+  $("#attendanceDialog").showModal();
+}
+async function saveAttendance(){
+  const key=$("#attendanceKey").value,row=findRow(key);if(!row)return;
+  const btn=$("#saveAttendanceBtn");btn.disabled=true;btn.textContent="Salvando…";
+  const actor=currentUser().nome||currentUser().usuario||"Usuário";
+  const nowIso=new Date().toISOString(),retorno=todayBrazil();
+  const result=$("#attendanceResult").value||"EM ANDAMENTO";
+  const next=brDateFromInput($("#attendanceNext").value);
+  const note=$("#attendanceNote").value.trim();
+  const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
+  const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
+  if(next)patch["Próximo Retorno"]=next;
+  if(result==="ENCERRADO"){patch["Status"]="Encerrado";patch["Situacao"]="ENCERRADO"}
+  else if(result!=="SEM CONTATO"){patch["Situacao"]="EM ANDAMENTO"}
+  if(note)patch["Observações"]=note;
+  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);await queueWrite(patch);
+  if(clientId){
+    const interaction={
+      InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),
+      ClienteId:clientId,Protocolo:pick(row,"Protocolo"),Canal:"Atendimento",Tipo:"Retorno",
+      Assunto:result==="ENCERRADO"?"Atendimento e encerramento":"Atendimento registrado",
+      Conteudo:note||("Resultado: "+result),Usuario:actor,DataHora:nowIso,Resultado:result,
+      ProximoPasso:next?"Retorno em "+next:"",DataProximoPasso:next,OptOut:""
+    };
+    await crmWrite("Interacoes",interaction,{quiet:true});
+  }
+  render();
+  try{
+    if(navigator.onLine){await flushOutbox();await flushCrmOutbox().catch(()=>{})}
+    $("#attendanceDialog").close();
+    showBanner("Atendimento registrado por "+actor+" sem transferir o processo.","good");
+  }catch(e){
+    $("#attendanceDialog").close();
+    showBanner("Atendimento salvo no cache e pendente para a planilha: "+(e.message||String(e)),"bad");
+  }finally{btn.disabled=false;btn.textContent="Registrar atendimento"}
+}
+function historyDate(raw){
+  const d=parseDate(raw);return d&&!Number.isNaN(d.getTime())?d:new Date(0);
+}
+function buildTribunalTimeline(scan,row){
+  const out=[];
+  const movs=scan?.datajud?.movimentos||scan?.movimentos||[];
+  for(const m of movs){
+    const date=m?.dataHora||m?.data||m?.dataMovimento||m?.data_hora||"";
+    const title=m?.nome||m?.nomeMovimento||m?.descricao||m?.movimento||"Movimentação";
+    const detail=[m?.complemento,m?.observacao,m?.descricao].filter(Boolean).join(" — ");
+    out.push({source:"DataJud",date,title,detail,link:""});
+  }
+  const pubs=scan?.djen?.items||scan?.comunicacoes||[];
+  for(const d of pubs){
+    const date=d?.data_disponibilizacao||d?.dataDisponibilizacao||d?.data||"";
+    const title=d?.tipoComunicacao||d?.tipoDocumento||"Publicação DJEN";
+    const detail=String(d?.texto||d?.conteudo||d?.inteiroTeor||"");
+    out.push({source:"DJEN",date,title,detail,link:d?.link||""});
+  }
+  if(!out.length&&row){
+    if(latestMove(row))out.push({source:"Planilha / DataJud",date:pick(row,"DataJud • Data","Data da Movimentação","Data_Movimentacao"),title:"Último movimento salvo",detail:String(latestMove(row)),link:""});
+    const pub=pick(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo");
+    if(pub)out.push({source:"Planilha / DJEN",date:pick(row,"DJEN • Data","_DJENDate"),title:"Última publicação salva",detail:String(pub),link:""});
+  }
+  return out.sort((a,b)=>historyDate(b.date).getTime()-historyDate(a.date).getTime());
+}
+function renderHistoryDialog(){
+  const row=findRow(state.historyKey);if(!row)return;
+  const items=buildTribunalTimeline(state.historyScan,row),scan=state.historyScan;
+  $("#historyTitle").textContent="Histórico inteiro • "+(pick(row,"Cliente")||"Processo");
+  $("#historyMeta").innerHTML='<span class="mono">'+esc(cnjFormatted(pick(row,"Protocolo")))+'</span><span>'+esc(pick(row,"Tribunal")||"Tribunal não informado")+'</span><span>'+items.length+' evento(s)</span>'+(state.historyLoading?'<span class="history-loading">Atualizando…</span>':'');
+  if(state.historyLoading&&!scan){
+    $("#historyContent").innerHTML='<div class="history-empty">Consultando DataJud + DJEN e montando a cronologia completa…</div>';return;
+  }
+  if(!items.length){
+    $("#historyContent").innerHTML='<div class="history-empty">Nenhum histórico retornado. Use “Atualizar DataJud + DJEN”.</div>';return;
+  }
+  $("#historyContent").innerHTML='<div class="history-list">'+items.map((x,i)=>
+    '<article class="history-item '+(x.source.includes("DJEN")?"djen":"court")+'"><div class="history-index">'+(i+1)+'</div><div class="history-body"><div class="history-item-head"><strong>'+esc(x.title)+'</strong><span>'+esc(x.source)+'</span></div><small>'+esc(x.date||"Data não informada")+'</small><p>'+esc(x.detail||"Sem complemento.")+'</p>'+(x.link?'<a target="_blank" rel="noopener" href="'+esc(x.link)+'">Abrir publicação oficial</a>':'')+'</div></article>'
+  ).join("")+'</div>';
+}
+async function loadHistory(key,{force=false}={}){
+  const row=findRow(key);if(!row)return;
+  if(state.historyLoading)return;
+  if(state.historyScan&&!force){renderHistoryDialog();return}
+  const cnj=digits(pick(row,"Protocolo"));
+  if(cnj.length!==20){showBanner("CNJ inválido para consultar histórico.","bad");return}
+  if(!navigator.onLine){renderHistoryDialog();return}
+  state.historyLoading=true;renderHistoryDialog();
+  try{
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:"both"}),cache:"no-store"});
+    const j=await r.json();state.historyScan=j;
+    if(j.patch){
+      Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
+      await queueWrite({"Protocolo":pick(row,"Protocolo"),...j.patch});
+      if(navigator.onLine)await flushOutbox().catch(()=>{});
+    }
+    if(!r.ok&&r.status!==207&&r.status!==429)showBanner(j.error||"Histórico retornou resultado parcial.","bad");
+  }catch(e){state.historyScan={error:e.message||String(e)}}
+  finally{state.historyLoading=false;renderHistoryDialog();render()}
+}
+function openHistory(key){
+  const row=findRow(key);if(!row)return;
+  state.historyKey=key;state.historyScan=null;state.historyLoading=false;
+  $("#historyDialog").showModal();renderHistoryDialog();void loadHistory(key);
+}
 function auditCached(row){
   return {
     move:latestMove(row)||"Sem movimentação registrada no cache.",
