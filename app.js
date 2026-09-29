@@ -3,7 +3,7 @@
 
 const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit";
 const DB_NAME="lexispredict-offline-v1";
-const LS={cfg:"lexis.offline.config",session:"lexis.offline.session"};
+const LS={session:"lexis.offline.session"};
 const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,serverCfg:{}};
 
 const $=s=>document.querySelector(s);
@@ -12,8 +12,7 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const norm=s=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
 const digits=s=>String(s??"").replace(/\D/g,"");
 const now=()=>new Date().toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"});
-const cfg=()=>{try{return {...{bridgeUrl:"",sheetUrl:SHEET_DEFAULT},...JSON.parse(localStorage.getItem(LS.cfg)||"{}")}}catch{return{bridgeUrl:"",sheetUrl:SHEET_DEFAULT}}};
-const saveCfg=x=>localStorage.setItem(LS.cfg,JSON.stringify(x));
+
 const keyOf=r=>digits(pick(r,"Protocolo","protocolo","CNJ"))||"row:"+hash(JSON.stringify(r));
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(36)}
 function pick(r,...keys){for(const k of keys){if(r&&r[k]!==undefined&&r[k]!==null&&String(r[k]).trim()!=="")return r[k]}const map={};Object.keys(r||{}).forEach(k=>map[norm(k)]=k);for(const k of keys){const real=map[norm(k)];if(real&&String(r[real]??"").trim()!=="")return r[real]}return ""}
@@ -50,10 +49,10 @@ async function queueWrite(row){await idbPut("outbox",{row,ts:Date.now()});update
 async function outboxCount(){return (await idbAll("outbox")).length}
 
 async function apiSheets(payload){
-  const c=cfg();
-  const body={payload}; if(c.bridgeUrl) body.url=c.bridgeUrl;
-  const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));if(!r.ok||j.ok===false)throw new Error(j.error||"Falha ao acessar a planilha");return j;
+  const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload}),cache:"no-store"});
+  const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));
+  if(!r.ok||j.ok===false)throw new Error(j.error||"Falha ao acessar a planilha");
+  return j;
 }
 async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
 async function syncFromCloud(){
@@ -96,10 +95,10 @@ function taskLabel(r){
   if(/cumprimento|execu/.test(move))return"Cumprimento / execução";if(boolish(pick(r,"Nova Atualização")))return"Nova atualização";if(quality(r)==="RUIM")return"Qualidade processual ruim";return"Revisão operacional";
 }
 
-function titleFor(v){return {dashboard:["CARTEIRA JURÍDICA","Visão geral"],processos:["BASE PRINCIPAL","Processos"],tarefas:["FILA INTELIGENTE","Tarefas"],analise:["INTELIGÊNCIA OPERACIONAL","Análise"],scanner:["DATAJUD + DJEN","Scanner DJEN"],config:["OFFLINE FIRST","Configurações"]}[v]||["LEXISPREDICT","Painel"]}
+function titleFor(v){return {dashboard:["CARTEIRA JURÍDICA","Visão geral"],processos:["BASE PRINCIPAL","Processos"],tarefas:["FILA INTELIGENTE","Tarefas"],analise:["INTELIGÊNCIA OPERACIONAL","Análise"],scanner:["DATAJUD + DJEN","Scanner DJEN"]}[v]||["LEXISPREDICT","Painel"]}
 function setView(v){state.view=v;$$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));const [e,t]=titleFor(v);$("#viewEyebrow").textContent=e;$("#viewTitle").textContent=t;render()}
-function render(){const m=metrics();$("#navProcessos").textContent=m.total;$("#navTarefas").textContent=tasks().length;updateSyncUi();if(state.view==="dashboard")renderDashboard();else if(state.view==="processos")renderProcessos();else if(state.view==="tarefas")renderTarefas();else if(state.view==="analise")renderAnalise();else if(state.view==="scanner")renderScanner();else renderConfig()}
-async function updateSyncUi(){const c=cfg(),count=await outboxCount();const online=navigator.onLine,connected=!!(c.bridgeUrl||state.serverCfg.bridgeConfigured);$("#modeChip").textContent=connected?(online?"SHEETS + LOCAL":"OFFLINE CACHE"):"LOCAL";$("#syncDot").className="dot "+(connected&&online?"ok":online?"warn":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Local")+(count?" • "+count+" pendente(s)":"")}
+function render(){const m=metrics();$("#navProcessos").textContent=m.total;$("#navTarefas").textContent=tasks().length;updateSyncUi();if(state.view==="dashboard")renderDashboard();else if(state.view==="processos")renderProcessos();else if(state.view==="tarefas")renderTarefas();else if(state.view==="analise")renderAnalise();else if(state.view==="scanner")renderScanner();else setView("dashboard")}
+async function updateSyncUi(){const count=await outboxCount(),online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+(count?" • "+count+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function renderDashboard(){
   const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
@@ -193,17 +192,7 @@ async function scanQueue(){
   state.scanning=false;state.scanStop=false;try{await flushOutbox()}catch{}logQueue("Fila finalizada/pausada.");renderScanner();
 }
 
-function renderConfig(){
-  const c=cfg();
-  $("#content").innerHTML='<div class="config-grid"><div class="config-item"><h3>Google Sheets</h3><p>O app trabalha com IndexedDB local e sincroniza com a planilha por um Apps Script bridge. O offline continua funcionando mesmo sem a ponte.</p><div class="row"><button class="btn primary" id="cfgBridge">Configurar bridge</button><a class="btn" target="_blank" rel="noopener" href="'+esc(c.sheetUrl||SHEET_DEFAULT)+'">Abrir planilha</a></div></div>'+
-  '<div class="config-item"><h3>Cache offline</h3><p>'+state.rows.length+' processos salvos neste navegador. Alterações offline entram na outbox e são enviadas na próxima sincronização.</p><div class="row"><button class="btn" id="exportBtn">Exportar JSON</button><label class="btn">Importar CSV<input id="csvFile" type="file" accept=".csv,text/csv" hidden></label></div></div>'+
-  '<div class="config-item"><h3>DJEN</h3><p>Consulta server-side no endpoint público do CNJ, preservando rate limit e cache. A rota compatível com o scanner da planilha é <code>/api/v1/comunicacao</code>.</p><button class="btn" data-goto="scanner">Abrir scanner</button></div>'+
-  '<div class="config-item"><h3>Diagnóstico</h3><p>Última sincronização: '+esc(state.lastSync||"nunca")+'<br>Online: '+(navigator.onLine?"sim":"não")+'<br>Bridge: '+(c.bridgeUrl?"configurado":"não configurado")+'</p><button class="btn danger" id="clearCacheBtn">Limpar cache local</button></div></div>';
-  $("#cfgBridge").onclick=openSetup;$("#exportBtn").onclick=exportJson;$("#csvFile").onchange=importCsv;$("#clearCacheBtn").onclick=async()=>{if(confirm("Apagar dados locais deste navegador?")){await idbClear("rows");await idbClear("outbox");state.rows=[];render()}};bindGotos();
-}
 function bindGotos(){$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
-function openSetup(){const c=cfg();$("#bridgeUrl").value=c.bridgeUrl||"";$("#sheetUrl").value=c.sheetUrl||SHEET_DEFAULT;$("#setupStatus").textContent="";$("#setupDialog").showModal()}
-async function testBridge(){const old=cfg(),tmp={bridgeUrl:$("#bridgeUrl").value.trim(),sheetUrl:$("#sheetUrl").value.trim()||SHEET_DEFAULT};saveCfg(tmp);$("#setupStatus").textContent="Testando…";try{const j=await apiSheets({action:"ping"});$("#setupStatus").textContent=j.pong?"Conexão OK • bridge "+(j.v||""):"Bridge respondeu."}catch(e){$("#setupStatus").textContent="Falha: "+e.message}finally{saveCfg(tmp.bridgeUrl?tmp:old)}}
 function openProcess(key){
   const r=state.rows.find(x=>keyOf(x)===key)||{};$("#editKey").value=key||"";$("#processDialogTitle").textContent=key?"Editar processo":"Novo processo";
   $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");$("#fAssistente").value=pick(r,"Assistente");$("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações");$("#processStatus").textContent="";$("#processDialog").showModal()
@@ -212,26 +201,65 @@ async function saveProcess(){
   const key=$("#editKey").value;let r=state.rows.find(x=>keyOf(x)===key);if(!r){r={};state.rows.unshift(r)}
   Object.assign(r,{"Cliente":$("#fCliente").value.trim(),"Protocolo":$("#fProtocolo").value.trim(),"Assistente":$("#fAssistente").value.trim(),"Advogado":$("#fAdvogado").value.trim(),"Escritório":$("#fEscritorio").value.trim(),"Tribunal":$("#fTribunal").value.trim(),"Status":$("#fStatus").value.trim(),"Telefone":$("#fTelefone").value.trim(),"Último Retorno":$("#fRetorno").value.trim(),"Próximo Retorno":$("#fProximo").value.trim(),"Observações":$("#fObs").value.trim()});
   if(digits(r["Protocolo"]).length===20){r["Automação"]="PENDENTE";r["Próxima Sincronização"]=""}
-  await saveRows(state.rows);await queueWrite(r);$("#processDialog").close();showBanner("Processo salvo localmente. A sincronização enviará a alteração para a planilha.","good");render()
+  await saveRows(state.rows);await queueWrite(r);$("#processDialog").close();showBanner("Processo salvo e colocado na fila de sincronização.","good");render()
 }
 function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.rows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
 async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.rows=rows;await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
-  $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));$("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};$("#newProcessBtn").onclick=()=>openProcess("");$("#logoutBtn").onclick=()=>{saveSession(null);setLogged(false)};$("#openSetupBtn").onclick=openSetup;$("#testBridgeBtn").onclick=testBridge;$("#saveProcessBtn").onclick=saveProcess;
-  $("#setupForm").addEventListener("submit",e=>{e.preventDefault();const c={bridgeUrl:$("#bridgeUrl").value.trim(),sheetUrl:$("#sheetUrl").value.trim()||SHEET_DEFAULT};saveCfg(c);$("#setupDialog").close();showBanner("Conexão salva neste navegador.","good");updateSyncUi()});
-  $("#loginBtn").onclick=async()=>{const u=$("#loginUser").value.trim(),p=$("#loginPass").value;$("#loginStatus").textContent="Entrando…";try{const j=await loginCloud(u,p);saveSession({user:j.user||j.usuario||{usuario:u},sess:j.sess||j.session||j.token||""});await loadLocal();setLogged(true);applyUser();try{await syncFromCloud()}catch(e){showBanner("Entrou com cache local; sync falhou: "+e.message,"bad")}render()}catch(e){$("#loginStatus").textContent=e.message}};
-  $("#offlineBtn").onclick=async()=>{await loadLocal();saveSession({user:{nome:"Modo local",perfil:"offline"}});setLogged(true);applyUser();render();if(!state.rows.length)showBanner("Cache vazio. Importe CSV ou configure a conexão com a planilha.","bad")};
-  window.addEventListener("online",()=>{updateSyncUi();showBanner("Conexão restaurada. Você pode sincronizar a outbox.","good")});window.addEventListener("offline",()=>{updateSyncUi();showBanner("Sem internet: o LexisPredict continua no cache local.","")});
+  $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
+  $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
+  $("#newProcessBtn").onclick=()=>openProcess("");
+  $("#logoutBtn").onclick=()=>{saveSession(null);state.rows=[];setLogged(false);updateSyncUi()};
+  $("#saveProcessBtn").onclick=saveProcess;
+  $("#loginBtn").onclick=async()=>{
+    const u=$("#loginUser").value.trim(),p=$("#loginPass").value;
+    $("#loginStatus").textContent="Autenticando…";
+    if(!u||!p){$("#loginStatus").textContent="Informe usuário e senha.";return}
+    try{
+      const j=await loginCloud(u,p);
+      const next={user:j.user||j.usuario||{usuario:u},sess:j.sess||j.session||j.token||""};
+      if(!next.sess)throw new Error("O servidor não retornou uma sessão válida.");
+      saveSession(next);
+      state.rows=[];
+      await syncFromCloud();
+      setLogged(true);
+      applyUser();
+      render();
+      $("#loginStatus").textContent="";
+    }catch(e){
+      saveSession(null);
+      state.rows=[];
+      setLogged(false);
+      $("#loginStatus").textContent=e.message||String(e);
+    }
+  };
+  window.addEventListener("online",()=>{updateSyncUi();if(state.session)showBanner("Conexão restaurada. Sincronize a carteira.","good")});
+  window.addEventListener("offline",()=>{updateSyncUi();showBanner("Sem conexão. Novo login e sincronização exigem acesso ao servidor.","bad")});
 }
-function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Modo local";$("#userRole").textContent=u.perfil||"offline"}
+function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
 
 async function boot(){
-  setupEvents();restoreSession();
-  try{const r=await fetch("/api/config",{cache:"no-store"});if(r.ok)state.serverCfg=await r.json()}catch(_){}
-  if(state.serverCfg.sheetUrl){const c=cfg();if(!c.sheetUrl||c.sheetUrl===SHEET_DEFAULT)saveCfg({...c,sheetUrl:state.serverCfg.sheetUrl})}
-  await loadLocal();if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
-  if(state.session){setLogged(true);applyUser();render()}else setLogged(false);
+  setupEvents();
+  restoreSession();
+  if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+  if(state.session?.sess){
+    try{
+      const check=await apiSheets({action:"auto",sess:state.session.sess});
+      if(!check?.ok)throw new Error(check?.error||"Sessão inválida");
+      if(check.user)state.session.user=check.user;
+      await syncFromCloud();
+      setLogged(true);
+      applyUser();
+      render();
+    }catch(_){
+      saveSession(null);
+      state.rows=[];
+      setLogged(false);
+    }
+  }else{
+    setLogged(false);
+  }
   updateSyncUi();
 }
 document.addEventListener("DOMContentLoaded",boot);
