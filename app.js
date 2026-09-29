@@ -1042,6 +1042,11 @@ async function loadHistory(key,{force=false}={}){
   try{
     const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:djenPaused()?"datajud":"both"}),cache:"no-store"});
     const j=await r.json();state.historyScan=j;
+    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403){
+      setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Pausa de 6h; DataJud continua.";
+    }else if(r.status===429||j?.djen?.isRateLimited){
+      setDjenBlock(Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000));
+    }
     if(j.patch){
       Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
       await queueWrite(judicialWritePatch(row,j));
@@ -1123,8 +1128,10 @@ async function refreshAudit(keepSuggest=false){
       await queueWrite(judicialWritePatch(row,j));
       if(navigator.onLine)await flushOutbox();
     }
-    if(r.status===429||j?.djen?.isRateLimited){
-      const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);state.djenBlockedUntil=Date.now()+ms;
+    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403){
+      setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Pausa de 6h; DataJud continua.";showBanner(j.djenPauseMessage,"bad");
+    }else if(r.status===429||j?.djen?.isRateLimited){
+      const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);setDjenBlock(ms);
     }
   }catch(e){state.auditScan={...(state.auditScan||{}),ok:false,error:e.message||String(e)};showBanner(e.message||String(e),"bad")}
   renderAuditDialog();render();
