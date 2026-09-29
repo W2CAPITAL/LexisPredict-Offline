@@ -115,3 +115,19 @@ O GET público não exige login, mas possui controle de taxa por IP. O app e o p
 Depois de conectar este repositório à Vercel, o deploy é automático a cada push na `main`. Não há build de frontend; `index.html` e assets são estáticos e `/api/*` são Vercel Functions.
 
 [Importar este repositório na Vercel](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FW2CAPITAL%2FLexisPredict-Offline)
+
+## Regra de propriedade da carteira
+
+A coluna canônica para definir a carteira visível de um assistente é **`Processos!Assistente`**.
+
+- **`CreatedBy` / `Criado por`** é trilha de auditoria/proveniência e **não** deve ser usada para filtrar a carteira.
+- Assistentes veem as linhas em que `Assistente` corresponde ao seu nome, inclusive combinações como `ADRIANA/DRIKA`.
+- Supervisor, administrador e superadmin podem receber a carteira completa.
+- A API `/api/sheets` aplica esse escopo no servidor antes de devolver os processos ao navegador.
+
+Essa separação evita o erro em que um usuário visualiza somente a única linha que possui `CreatedBy` preenchido.
+
+## Referências de interface CRM
+
+A interface usa como referência de interação os padrões de CRM observados em **EspoCRM** (menu lateral/minimização, navegação por módulos e dashboard modular) e **IDURAR ERP/CRM** (sidebar persistente, rotas selecionadas, cards-resumo e tabelas recentes com ações contextuais). A implementação do LexisPredict continua própria e focada em carteira jurídica, tarefas, DataJud e DJEN.
+
