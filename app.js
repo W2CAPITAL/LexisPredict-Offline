@@ -173,15 +173,74 @@ function renderAnalise(){
 function bars(entries,total){const max=Math.max(...entries.map(x=>x[1]),1);return '<div class="bars">'+entries.map(([k,v])=>'<div class="barline"><span title="'+esc(k)+'">'+esc(k.slice(0,22))+'</span><div class="bar"><span style="width:'+Math.round(v/max*100)+'%"></span></div><b>'+v+'</b></div>').join("")+'</div>'}
 
 function renderScanner(){
-  const valid=state.rows.filter(r=>digits(pick(r,"Protocolo")).length===20),withDjen=state.rows.filter(r=>pick(r,"DJEN • Última Publicação")).length;
-  $("#content").innerHTML='<div class="scanner-grid"><div class="card"><div class="card-head"><h3>Consultar DJEN oficial</h3><span class="muted">produção CNJ • rate limit respeitado</span></div><div class="card-body"><div class="scan-box"><input id="scanCnj" placeholder="CNJ do processo"/><button class="btn primary" id="scanOneBtn">Consultar</button></div><div id="scanResult" class="scan-result" style="margin-top:14px">'+(state.lastScan?renderScanResult(state.lastScan):'<div class="offline-note">A consulta usa o endpoint público oficial do DJEN pelo servidor Vercel. Em HTTP 429, o scanner pausa e informa quando pode retomar.</div>')+'</div></div></div>'+
-  '<div class="card"><div class="card-head"><h3>Varredura da carteira</h3></div><div class="card-body"><div class="metric-list">'+metricRow("CNJs válidos",valid.length,"aptos para consulta")+metricRow("Com publicação local",withDjen,"cache atual")+metricRow("Restantes estimados",Math.max(0,valid.length-withDjen),"não significa inexistência")+'</div><div class="row" style="margin-top:14px"><button class="btn primary" id="scanQueueBtn">'+(state.scanning?"Parar":"Iniciar fila DJEN")+'</button><button class="btn" id="clearScanLog">Limpar log</button></div><div class="progress" style="margin:14px 0"><span id="scanProgress" style="width:0%"></span></div><div id="queueLog" class="queue-log"></div></div></div></div>';
-  $("#scanOneBtn").onclick=()=>scanOne($("#scanCnj").value);$("#scanQueueBtn").onclick=()=>state.scanning?(state.scanStop=true):(scanQueue());$("#clearScanLog").onclick=()=>$("#queueLog").innerHTML="";
+  const valid=state.rows.filter(r=>digits(pick(r,"Protocolo")).length===20);
+  const withDjen=state.rows.filter(r=>pick(r,"DJEN • Última Publicação")).length;
+  const withDataJud=state.rows.filter(r=>pick(r,"DataJud • Último Movimento")).length;
+  $("#content").innerHTML=
+  '<div class="scanner-grid">'+
+    '<div class="card"><div class="card-head"><h3>Consulta unificada DataJud + DJEN</h3><span class="muted">APIs públicas oficiais • sessão autenticada</span></div><div class="card-body">'+
+      '<div class="scan-box"><input id="scanCnj" placeholder="CNJ do processo"/><button class="btn primary" id="scanOneBtn">Consultar e atualizar</button></div>'+
+      '<div id="scanResult" class="scan-result" style="margin-top:14px">'+(state.lastScan?renderScanResult(state.lastScan):'<div class="offline-note">Consulta DataJud e DJEN em uma única operação. Se houver processo na carteira, os campos oficiais são gravados na planilha após a consulta.</div>')+'</div>'+
+    '</div></div>'+
+    '<div class="card"><div class="card-head"><h3>Pesquisa avançada</h3><span class="muted">recursos portados do LexisPredict</span></div><div class="card-body">'+
+      '<div class="form-grid">'+
+        '<label>Fonte / modo<select id="judSearchMode"><option value="datajud-nome">DataJud • Nome</option><option value="datajud-cpf">DataJud • CPF/CNPJ</option><option value="djen-nome">DJEN • Nome da parte</option><option value="djen-texto">DJEN • Texto</option></select></label>'+
+        '<label>Consulta<input id="judSearchQuery" placeholder="nome, CPF/CNPJ ou texto"/></label>'+
+        '<label>Tribunal (opcional)<input id="judSearchTribunal" placeholder="TJSP"/></label>'+
+        '<label class="full"><button type="button" class="btn" id="judSearchBtn">Pesquisar</button></label>'+
+      '</div><div id="judSearchResult" class="scan-result" style="margin-top:14px"></div>'+
+    '</div></div>'+
+    '<div class="card"><div class="card-head"><h3>Varredura da carteira</h3></div><div class="card-body">'+
+      '<div class="metric-list">'+metricRow("CNJs válidos",valid.length,"aptos para consulta")+metricRow("Com DataJud",withDataJud,"movimento salvo")+metricRow("Com DJEN",withDjen,"publicação salva")+'</div>'+
+      '<div class="row" style="margin-top:14px"><button class="btn primary" id="scanQueueBtn">'+(state.scanning?"Parar":"Iniciar DataJud + DJEN")+'</button><button class="btn" id="clearScanLog">Limpar log</button></div>'+
+      '<div class="progress" style="margin:14px 0"><span id="scanProgress" style="width:0%"></span></div><div id="queueLog" class="queue-log"></div>'+
+    '</div></div>'+
+  '</div>';
+  $("#scanOneBtn").onclick=()=>scanOne($("#scanCnj").value);
+  $("#judSearchBtn").onclick=advancedJudicialSearch;
+  $("#scanQueueBtn").onclick=()=>state.scanning?(state.scanStop=true):(scanQueue());
+  $("#clearScanLog").onclick=()=>$("#queueLog").innerHTML="";
 }
 function renderScanResult(x){
-  if(!x)return"";if(!x.ok)return '<div class="banner bad">'+esc(x.error||"Falha no DJEN")+'</div>';
-  if(!x.found)return '<div class="offline-note">Nenhuma comunicação retornada nesta consulta. Isso não prova inexistência de publicação; o processo permanece elegível para nova varredura.</div>';
-  const y=x.latest||{};return '<div class="publication"><h4>'+esc(y.tipoComunicacao||y.tipo||"Publicação DJEN")+'</h4><small>'+esc(y.data_disponibilizacao||y.data||"")+" • "+esc(y.nomeOrgao||y.orgao||"")+'</small><p>'+esc(y.texto||y.resumo||"")+'</p>'+(y.link?'<a target="_blank" rel="noopener" href="'+esc(y.link)+'">Abrir inteiro teor</a>':'')+'</div>';
+  if(!x)return "";
+  if(x.retry&&(!x.datajud&&!x.djen))return '<div class="banner bad">'+esc(x.error||"Consulta temporariamente pausada")+'</div>';
+  const data=x.datajud||null,djen=x.djen||null,intel=x.intelligence||{},parts=[];
+  if(data){
+    const last=intel.datajud?.last||data.movimentos?.[0]||null;
+    parts.push('<div class="publication"><h4>DataJud • '+esc(data.classe||"Processo")+'</h4><small>'+esc(data.tribunal||"")+(data.orgaoJulgador?" • "+esc(data.orgaoJulgador):"")+'</small><p><strong>Último movimento:</strong> '+esc(last?[last.nome,last.complemento].filter(Boolean).join(" — "):data.message||"Nenhum movimento retornado")+'</p><p><strong>Fase:</strong> '+esc(x.patch?.["Diagnóstico Processual"]||"sem classificação")+'</p></div>');
+  }
+  if(djen){
+    if(djen.success){
+      const y=intel.djen?.latest||djen.items?.[0]||null;
+      parts.push(y?'<div class="publication"><h4>DJEN • '+esc(intel.djen?.event||y.tipoComunicacao||"Publicação")+'</h4><small>'+esc(y.data_disponibilizacao||"")+" • "+esc(y.nomeOrgao||"")+'</small><p>'+esc(y.texto||"")+'</p>'+(y.link?'<a target="_blank" rel="noopener" href="'+esc(y.link)+'">Abrir publicação</a>':'')+'</div>':'<div class="offline-note">DJEN consultado: nenhuma publicação localizada no período.</div>');
+    }else parts.push('<div class="banner bad">'+esc(djen.error||"Falha DJEN")+'</div>');
+  }
+  if(!parts.length)parts.push('<div class="banner bad">'+esc(x.error||"Consulta sem resultado")+'</div>');
+  if(x.partial)parts.unshift('<div class="offline-note">Consulta parcial: a fonte disponível foi preservada; a fonte indisponível poderá ser tentada novamente.</div>');
+  return parts.join("");
+}
+async function advancedJudicialSearch(){
+  const mode=$("#judSearchMode").value,q=$("#judSearchQuery").value.trim(),trib=$("#judSearchTribunal").value.trim();
+  const out=$("#judSearchResult");out.innerHTML='<div class="offline-note">Pesquisando…</div>';
+  if(!q){out.innerHTML='<div class="banner bad">Informe uma consulta.</div>';return}
+  try{
+    let url,body;
+    if(mode.startsWith("datajud-")){
+      url="/api/datajud-search";
+      body={mode:mode.endsWith("cpf")?"cpf":"nome",query:q,size:12};
+    }else{
+      url="/api/djen-search";
+      body={mode:mode.endsWith("texto")?"texto":"nome",query:q,siglaTribunal:trib||undefined,itensPorPagina:50};
+    }
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),cache:"no-store"});
+    const j=await r.json();if(!r.ok&&r.status!==429)throw new Error(j.error||"Falha na pesquisa");
+    if(r.status===429){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);state.djenBlockedUntil=Date.now()+ms;out.innerHTML='<div class="banner bad">'+esc(j.error||"DJEN 429")+'</div>';return}
+    const items=j.items||[];
+    if(!items.length){out.innerHTML='<div class="offline-note">Nenhum resultado localizado.</div>';return}
+    out.innerHTML='<div class="table-wrap"><table class="table"><thead><tr><th>Processo / Data</th><th>Tribunal</th><th>Classe / Tipo</th><th>Detalhe</th></tr></thead><tbody>'+
+      items.slice(0,50).map(it=>'<tr><td>'+esc(it.numeroProcesso||it.numero_processo||it.data_disponibilizacao||"—")+'</td><td>'+esc(it.tribunal||it.siglaTribunal||"—")+'</td><td>'+esc(it.classe||it.tipoComunicacao||it.tipoDocumento||"—")+'</td><td>'+esc(String(it.texto||[...(it.poloAtivo||[]),...(it.poloPassivo||[])].join(" × ")||it.orgaoJulgador||"").slice(0,220))+'</td></tr>').join("")+
+      '</tbody></table></div>';
+  }catch(e){out.innerHTML='<div class="banner bad">'+esc(e.message||String(e))+'</div>'}
 }
 async function scanOne(cnj,quiet=false){
   const d=digits(cnj);if(d.length!==20){if(!quiet)showBanner("CNJ inválido. Use 20 dígitos.","bad");return null}
@@ -190,25 +249,45 @@ async function scanOne(cnj,quiet=false){
     const j={ok:false,error:"DJEN em pausa por limite oficial. Tente novamente em "+wait+"s.",retry:true,retryAfterMs:wait*1000};
     state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);return j;
   }
+  const row=state.rows.find(x=>digits(pick(x,"Protocolo"))===d)||null;
   try{
-    const r=await fetch("/api/djen?cnj="+encodeURIComponent(cnjFormatted(d)),{cache:"no-store"});const j=await r.json();state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);
-    if(j.ok&&j.found){const row=state.rows.find(x=>digits(pick(x,"Protocolo"))===d);if(row){const y=j.latest||{};row["DJEN • Última Publicação"]=[y.tipoComunicacao,y.tipoDocumento,y.nomeOrgao,y.texto].filter(Boolean).join(" — ").slice(0,2000);row["DJEN • Data"]=y.data_disponibilizacao||"";row["_DJENId"]=String(y.id||y.hash||"");row["_DJENDate"]=y.data_disponibilizacao||"";row["Fonte"]=pick(row,"Fonte")?String(pick(row,"Fonte"))+" + DJEN":"DJEN";row["Última Sincronização"]=now();await saveRows(state.rows);await queueWrite(row)}}
-    if(r.status===429){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);state.djenBlockedUntil=Date.now()+ms;return {...j,retry:true,retryAfterMs:ms}}return j;
-  }catch(e){const j={ok:false,error:e.message||String(e)};state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);return j}
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",mode:"both"}),cache:"no-store"});
+    const j=await r.json();state.lastScan=j;
+    if(j.patch&&row){
+      Object.assign(row,j.patch);
+      await saveRows(state.rows);
+      try{await apiSheets({action:"write",rows:[row]})}catch(e){j.sheetError=e.message||String(e)}
+    }
+    if(r.status===429||j?.djen?.isRateLimited){
+      const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);
+      state.djenBlockedUntil=Date.now()+ms;j.retry=true;j.retryAfterMs=ms;
+    }
+    if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);
+    if(j.sheetError&&!quiet)showBanner("Consulta concluída, mas a planilha recusou o salvamento: "+j.sheetError,"bad");
+    return j;
+  }catch(e){
+    const j={ok:false,error:e.message||String(e)};state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);return j;
+  }
 }
 function logQueue(msg){const el=$("#queueLog");if(!el)return;const d=document.createElement("div");d.textContent=new Date().toLocaleTimeString("pt-BR")+" • "+msg;el.appendChild(d);el.scrollTop=el.scrollHeight}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function scanQueue(){
   if(state.scanning)return;state.scanning=true;state.scanStop=false;renderScanner();
-  const list=state.rows.filter(r=>digits(pick(r,"Protocolo")).length===20).sort((a,b)=>Number(!pick(a,"DJEN • Última Publicação"))-Number(!pick(b,"DJEN • Última Publicação"))).reverse();
+  const list=state.rows.filter(r=>digits(pick(r,"Protocolo")).length===20).sort((a,b)=>{
+    const aa=Number(!pick(a,"DataJud • Último Movimento"))+Number(!pick(a,"DJEN • Última Publicação"));
+    const bb=Number(!pick(b,"DataJud • Último Movimento"))+Number(!pick(b,"DJEN • Última Publicação"));
+    return bb-aa;
+  });
   let done=0;
   for(const row of list){
-    if(state.scanStop)break;const cnj=pick(row,"Protocolo");logQueue("Consultando "+cnjFormatted(cnj));
+    if(state.scanStop)break;
+    const cnj=pick(row,"Protocolo");logQueue("DataJud + DJEN • "+cnjFormatted(cnj));
     const j=await scanOne(cnj,true);done++;const p=$("#scanProgress");if(p)p.style.width=Math.round(done/list.length*100)+"%";
-    if(j?.retry){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);logQueue("HTTP 429 • pausa de "+Math.ceil(ms/1000)+"s");await sleep(ms)}else await sleep(5000);
-    if(done%10===0){try{await flushOutbox();logQueue("Checkpoint salvo • "+done+" processos")}catch(e){logQueue("Sync adiado: "+e.message)}}
+    if(j?.retry){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);logQueue("DJEN 429 • pausa de "+Math.ceil(ms/1000)+"s");await sleep(ms)}
+    else await sleep(6000);
+    if(done%10===0)logQueue("Checkpoint • "+done+" processos");
   }
-  state.scanning=false;state.scanStop=false;try{await flushOutbox()}catch{}logQueue("Fila finalizada/pausada.");renderScanner();
+  state.scanning=false;state.scanStop=false;logQueue("Fila finalizada/pausada.");renderScanner();
 }
 
 function bindGotos(){$$("[data-goto]").forEach(b=>b.onclick=()=>setView(b.dataset.goto))}
