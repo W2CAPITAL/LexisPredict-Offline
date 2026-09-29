@@ -335,7 +335,7 @@ async function syncFromCloud(opts={}){
       showBanner("Sincronização concluída: "+rows.length+" processos da empresa em cache"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
     }
     render();
-    void syncCRM({quiet:true}).catch(()=>{});
+    void syncCRM({quiet:true}).then(()=>{if(window.WAAutoModule?.backgroundSync)void window.WAAutoModule.backgroundSync(state.companyRows,crmClients());}).catch(()=>{});
   } finally { state.syncing=false; }
 }
 function startAutoSync(){
@@ -484,6 +484,7 @@ function titleFor(v){return {
   dashboard:["COMMAND CENTER","Dashboard"],
   hub:["CENTRAL","Central Integrada"],
   studio:["AI FABRIC","Predict Studio"],
+  waauto:["WHATSAPP","WA.Auto"],
   processos:["CARTEIRA","Processos"],
   empresa:["EMPRESA","Processos da empresa"],
   clientes:["CRM","Clientes"],
@@ -496,7 +497,7 @@ function titleFor(v){return {
   scanner:["REDE JUDICIAL","DataJud + DJEN"],
   settings:["PREFERÊNCIAS","Configurações"]
 }[v]||["SHEETSPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",hub:"/central",studio:"/studio",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner",settings:"/configuracoes"};
+const viewPaths={dashboard:"/",hub:"/central",studio:"/studio",waauto:"/wa-auto",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner",settings:"/configuracoes"};
 function pathView(){
   const rawHash=String(location.hash||"").replace(/^#/,"").replace(/\/+$/,"");
   if(rawHash){
@@ -523,6 +524,7 @@ function render(){
   if(state.view==="dashboard")renderDashboard();
   else if(state.view==="hub")renderHub();
   else if(state.view==="studio")renderPredictStudio();
+  else if(state.view==="waauto")renderWAAuto();
   else if(state.view==="processos")renderProcessos();
   else if(state.view==="empresa")renderEmpresa();
   else if(state.view==="clientes")renderClientes();
@@ -548,6 +550,19 @@ function renderPredictStudio(){
     showBanner,
     user:currentUser,
     context:()=>hubContext(state.hub?.selectedCnj||"")
+  });
+}
+function renderWAAuto(){
+  const root=$("#content");
+  if(!root)return;
+  if(!window.WAAutoModule){
+    root.innerHTML='<div class="banner bad">WA.Auto não carregou. Atualize o PWA e tente novamente.</div>';
+    return;
+  }
+  window.WAAutoModule.render(root,{
+    rows:()=>state.companyRows,
+    clients:()=>crmClients(),
+    showBanner
   });
 }
 async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
@@ -1394,7 +1409,7 @@ async function saveAttendance(){
   if(result==="ENCERRADO"){patch["Status"]="Encerrado";patch["Situacao"]="ENCERRADO"}
   else if(result!=="SEM CONTATO"){patch["Situacao"]="EM ANDAMENTO"}
   if(note)patch["Observações"]=note;
-  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);await queueWrite(patch);
+  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);await queueWrite(patch);if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
   if(clientId){
     const interaction={
       InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),
