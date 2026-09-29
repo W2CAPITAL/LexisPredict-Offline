@@ -44,8 +44,23 @@ async function idbPut(store,value){const db=await openDb();return new Promise((r
 async function idbClear(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).clear();tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
 async function saveRows(rows){await idbClear("rows");const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction("rows","readwrite"),st=tx.objectStore("rows");rows.forEach(r=>st.put({...r,_key:keyOf(r)}));tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
 async function loadLocal(){state.rows=(await idbAll("rows")).map(({_key,...r})=>r);const meta=(await idbAll("meta")).find(x=>x.key==="lastSync");if(meta)state.lastSync=meta.value;return state.rows}
-async function queueWrite(row){await idbPut("outbox",{row,ts:Date.now()});updateSyncUi()}
+async function queueWrite(row){
+  const list=await idbAll("outbox"),k=keyOf(row);
+  const db=await openDb();
+  await new Promise((res,rej)=>{
+    const tx=db.transaction("outbox","readwrite"),st=tx.objectStore("outbox");
+    list.filter(x=>keyOf(x.row)===k).forEach(x=>st.delete(x.id));
+    st.add({row,ts:Date.now()});
+    tx.oncomplete=res;tx.onerror=()=>rej(tx.error);
+  });
+  updateSyncUi();
+}
 async function outboxCount(){return (await idbAll("outbox")).length}
+function mergePending(rows,pending){
+  const map=new Map(rows.map(r=>[keyOf(r),r]));
+  pending.forEach(x=>map.set(keyOf(x.row),{...(map.get(keyOf(x.row))||{}),...x.row}));
+  return [...map.values()];
+}
 
 async function apiSheets(payload){
   const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload}),cache:"no-store"});
@@ -59,10 +74,17 @@ async function syncFromCloud(opts={}){
   state.syncing=true;
   if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
   try{
-  const j=await apiSheets({action:"list",limit:8000});
-  const rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
-  state.rows=rows;await saveRows(rows);state.lastSync=now();await idbPut("meta",{key:"lastSync",value:state.lastSync});
-  await flushOutbox();if(!opts.quiet)showBanner("Sincronização concluída: "+rows.length+" processos carregados.","good");render();
+    try{await flushOutbox()}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
+    const u=state.session?.user||{},role=norm(u.perfil||"");
+    const payload={action:"list",limit:8000};
+    if(!/superadmin|supervisor|administrador/.test(role))payload.responsavel=u.nome||u.usuario||"";
+    const j=await apiSheets(payload);
+    let rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
+    const pending=await idbAll("outbox");
+    rows=mergePending(rows,pending);
+    state.rows=rows;await saveRows(rows);state.lastSync=now();await idbPut("meta",{key:"lastSync",value:state.lastSync});
+    if(!opts.quiet)showBanner("Sincronização concluída: "+rows.length+" processos carregados"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
+    render();
   } finally { state.syncing=false; }
 }
 function startAutoSync(){
@@ -77,10 +99,17 @@ function stopAutoSync(){
   state.autoSyncTimer=null;
 }
 async function flushOutbox(){
-  const list=await idbAll("outbox");if(!list.length)return;
-  const rows=list.map(x=>x.row);
+  const list=await idbAll("outbox");if(!list.length)return {ok:true,written:0};
+  const latest=new Map();list.forEach(x=>latest.set(keyOf(x.row),x.row));
+  const rows=[...latest.values()];
   const j=await apiSheets({action:"write",rows});
-  if(j.ok!==false)await idbClear("outbox");
+  const rejected=Number(j.rejected_count||0);
+  if(j.ok===false||rejected>0){
+    const why=(j.rejected||[]).map(x=>x.motivo||x.reason).filter(Boolean).join("; ");
+    throw new Error(why||j.error||"A planilha recusou uma ou mais alterações.");
+  }
+  await idbClear("outbox");
+  return {...j,written:Number(j.written??j.updated??rows.length)};
 }
 function showBanner(msg,type=""){const b=$("#banner");b.textContent=msg;b.className="banner "+type;b.classList.remove("hidden");clearTimeout(showBanner.t);showBanner.t=setTimeout(()=>b.classList.add("hidden"),7000)}
 function setLogged(on){$("#login").classList.toggle("hidden",on);$("#app").classList.toggle("hidden",!on)}
@@ -251,7 +280,7 @@ async function scanOne(cnj,quiet=false){
   }
   const row=state.rows.find(x=>digits(pick(x,"Protocolo"))===d)||null;
   try{
-    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",lastDjenId:row?pick(row,"_DJENId"):"",lastDjenDate:row?pick(row,"_DJENDate","DJEN • Data"):"",mode:"both"}),cache:"no-store"});
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",cliente:row?pick(row,"Cliente"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",lastDjenId:row?pick(row,"_DJENId"):"",lastDjenDate:row?pick(row,"_DJENDate","DJEN • Data"):"",mode:"both"}),cache:"no-store"});
     const j=await r.json();state.lastScan=j;
     if(j.patch&&row){
       Object.assign(row,j.patch);
@@ -312,16 +341,21 @@ async function saveProcess(){
     "Observações":$("#fObs").value.trim()
   };
   if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
-  $("#processStatus").textContent="Salvando na planilha…";
+  const idx=state.rows.findIndex(x=>keyOf(x)===key);
+  if(idx>=0)state.rows[idx]=next;else state.rows.unshift(next);
+  await saveRows(state.rows);
+  await queueWrite(next);
+  render();
+  $("#processStatus").textContent="Salvo neste dispositivo. Enviando para a planilha…";
   try{
-    const j=await apiSheets({action:"write",rows:[next]});
-    if(j.ok===false)throw new Error(j.error||"A planilha recusou a alteração.");
+    const j=await flushOutbox();
+    if(Number(j.rejected_count||0)>0)throw new Error("A planilha recusou a alteração.");
     $("#processDialog").close();
-    showBanner("Alteração salva na planilha.","good");
-    await syncFromCloud();
+    showBanner("Alteração salva no app e confirmada na planilha.","good");
+    await syncFromCloud({quiet:true});
   }catch(e){
-    $("#processStatus").textContent=e.message||String(e);
-    showBanner("Não foi possível salvar na planilha: "+(e.message||String(e)),"bad");
+    $("#processDialog").close();
+    showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad");
   }
 }
 function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.rows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
