@@ -1,4 +1,4 @@
-const CACHE="lexis-secure-v17";
+const CACHE="lexis-secure-v18";
 const SHELL=["/index.html","/styles.css","/app.js","/lib/crm-model.js","/lib/task-priority.js","/lib/suggest-response.js","/manifest.webmanifest"];
 
 self.addEventListener("install",event=>{
