@@ -470,7 +470,7 @@ function titleFor(v){return {
   analise:["INTELIGÊNCIA","Análise"],
   report:["EXECUTIVO","Report"],
   scanner:["REDE JUDICIAL","DataJud + DJEN"]
-}[v]||["LEXISPREDICT","Dashboard"]}
+}[v]||["SHEETSPREDICT","Dashboard"]}
 const viewPaths={dashboard:"/",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
 function pathView(){
   const rawHash=String(location.hash||"").replace(/^#/,"").replace(/\/+$/,"");
@@ -1378,7 +1378,7 @@ async function saveProcess(){
   }catch(e){$("#processDialog").close();showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
 }
 
-function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.companyRows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
+function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.companyRows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="sheetspredict-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
 async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;invalidateCrmIndexes();refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
