@@ -310,7 +310,15 @@ function ensureSheetsUI() {
 
   ensureSheets_();
 
-  SpreadsheetApp.getUi().alert("Abas Usuarios e Processos conferidas.");
+  try {
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      "Abas, cabeçalhos e estrutura CRM conferidos.",
+      "Léxis",
+      5
+    );
+  } catch (_) {}
+
+  return { ok: true, message: "Abas, cabeçalhos e estrutura CRM conferidos." };
 
 }
 
