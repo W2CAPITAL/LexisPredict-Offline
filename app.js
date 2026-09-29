@@ -1337,7 +1337,7 @@ async function boot(){
   restoreDjenBlock();
   state.view=pathView();
   const cachedSession=restoreSession();
-  if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+  if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});
   try{await loadLocal()}catch(_){state.companyRows=[];state.rows=[]}
   try{await loadCrmCache()}catch(_){}
 
