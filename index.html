@@ -7,31 +7,29 @@
   <meta name="description" content="LexisPredict Offline Web — CRM jurídico e monitor processual conectado ao Google Sheets."/>
   <link rel="manifest" href="/manifest.webmanifest"/>
   <link rel="stylesheet" href="/styles.css"/>
-  <title>LexisPredict Offline</title>
+  <title>LexisPredict</title>
 </head>
 <body>
   <div id="login" class="login-shell">
     <section class="login-art">
       <div class="brand"><span class="brand-mark">L</span><span>LexisPredict</span></div>
       <div>
-        <span class="eyebrow">OFFLINE WEB • SHEETS FIRST</span>
-        <h1>Seu gabinete jurídico continua funcionando com ou sem nuvem.</h1>
-        <p>Carteira, tarefas, análise, DataJud/DJEN, sincronização com planilha e cache local em um único sistema.</p>
+        <span class="eyebrow">LEXISPREDICT • ACESSO SEGURO</span>
+        <h1>Gabinete jurídico conectado à carteira oficial.</h1>
+        <p>Carteira, tarefas, análise, DataJud/DJEN e sincronização segura com a planilha oficial.</p>
       </div>
       <div class="login-points">
-        <span>Google Sheets</span><span>Offline local</span><span>DJEN</span><span>Vercel</span>
+        <span>Google Sheets</span><span>Autenticação</span><span>DJEN</span><span>Vercel</span>
       </div>
     </section>
     <section class="login-form">
       <div class="login-box">
-        <span class="eyebrow">LEXISPREDICT OFFLINE</span>
+        <span class="eyebrow">LEXISPREDICT</span>
         <h2>Entrar no gabinete</h2>
-        <p class="muted" id="loginHint">Conecte a planilha ou use os dados salvos neste dispositivo.</p>
+        <p class="muted" id="loginHint">Acesso autenticado pelo backend seguro da Vercel e pela aba Usuarios.</p>
         <label>Usuário<input id="loginUser" autocomplete="username" placeholder="usuário"/></label>
         <label>Senha<input id="loginPass" type="password" autocomplete="current-password" placeholder="senha"/></label>
         <button class="btn primary block" id="loginBtn">Entrar</button>
-        <button class="btn block" id="offlineBtn">Entrar offline neste dispositivo</button>
-        <button class="link-btn" id="openSetupBtn">Configurar conexão com a planilha</button>
         <p class="status-line" id="loginStatus"></p>
       </div>
     </section>
@@ -47,7 +45,6 @@
         <button class="nav-item" data-view="tarefas">Tarefas <span class="nav-count hot" id="navTarefas">0</span></button>
         <button class="nav-item" data-view="analise">Análise</button>
         <button class="nav-item" data-view="scanner">Scanner DJEN</button>
-        <button class="nav-item" data-view="config">Configurações</button>
       </nav>
       <div class="sidebar-foot">
         <strong id="userName">Modo local</strong>
@@ -73,23 +70,6 @@
       <section id="content" class="content"></section>
     </main>
   </div>
-
-  <dialog id="setupDialog" class="dialog">
-    <form method="dialog" class="dialog-card" id="setupForm">
-      <div class="dialog-head">
-        <div><span class="eyebrow">CONEXÃO</span><h3>Google Sheets / Apps Script</h3></div>
-        <button class="icon-btn" value="cancel">×</button>
-      </div>
-      <p class="muted">Use somente a URL <code>/exec</code> do Apps Script. A autenticação agora é feita pelo usuário da aba <code>Usuarios</code>; não existe mais token manual.</p>
-      <label>URL do Apps Script<input id="bridgeUrl" placeholder="https://script.google.com/macros/s/.../exec"/></label>
-      <label>URL da planilha<input id="sheetUrl" value="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit"/></label>
-      <div class="row">
-        <button type="button" class="btn" id="testBridgeBtn">Testar conexão</button>
-        <button type="submit" class="btn primary">Salvar</button>
-      </div>
-      <p id="setupStatus" class="status-line"></p>
-    </form>
-  </dialog>
 
   <dialog id="processDialog" class="dialog">
     <form method="dialog" class="dialog-card wide" id="processForm">
