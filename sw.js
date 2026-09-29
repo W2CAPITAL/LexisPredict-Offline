@@ -1,5 +1,5 @@
 const CACHE="lexis-secure-v19";
-const SHELL=["/index.html","/styles.css","/app.js","/lib/crm-model.js","/lib/task-priority.js","/lib/suggest-response.js","/manifest.webmanifest"];
+const SHELL=["/index.html","/styles.css","/app.js","/lib/crm-model.js","/lib/task-priority.js","/lib/suggest-response.js","/lib/sheets-hub.js","/manifest.webmanifest"];
 
 self.addEventListener("install",event=>{
   event.waitUntil(
