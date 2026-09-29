@@ -1,4 +1,4 @@
-# LexisPredict Offline Web
+# SheetsPredict
 
 ## Correção de históricos e navegação (29/09/2026)
 
@@ -10,7 +10,7 @@
 
 Validação: `npm test` inclui navegação com zero/vários botões, persistência e deduplicação de históricos, crescimento das abas e falhas de gravação. Consultas externas podem retornar resultados parciais ou limite de requisições; isso não equivale a ausência de movimentação.
 
-Versão **offline-first** do LexisPredict para Vercel, usando a planilha jurídica como fonte de verdade operacional.
+**SheetsPredict** é o aplicativo operacional conectado ao Google Sheets, com CRM jurídico, tarefas, DataJud e DJEN.
 
 ## O que está implementado
 
@@ -33,7 +33,7 @@ Google Sheets (Processos / Usuarios / DataJud / DJEN)
         ↕ Apps Script bridge
 Vercel /api/sheets
         ↕
-LexisPredict Offline Web
+SheetsPredict
         ↕
 IndexedDB + outbox
 
@@ -54,7 +54,7 @@ O bridge preserva colunas não alteradas ao editar um processo.
 
 ## DataJud + DJEN
 
-O módulo judicial do LexisPredict Sheets foi adaptado a partir do núcleo DataJud/DJEN do `W1CAPITAL/LexisPredict` para a arquitetura Sheets + Vercel.
+O módulo judicial do SheetsPredict foi adaptado a partir do núcleo DataJud/DJEN do `W1CAPITAL/LexisPredict` para a arquitetura Sheets + Vercel.
 
 Inclui:
 - consulta DataJud por CNJ, nome e CPF/CNPJ;
@@ -78,7 +78,7 @@ Depois do deploy na Vercel, coloque a URL base do site na configuração:
 
 Exemplo:
 
-`https://lexispredict-offline.vercel.app`
+`https://sheetpredict.vercel.app`
 
 O scanner V6 já concatena `/api/v1/comunicacao`. Essa rota usa primeiro o endpoint de produção do DJEN e preserva o comportamento oficial de 429/403.
 
@@ -217,5 +217,5 @@ Essa separação evita o erro em que um usuário visualiza somente a única linh
 
 ## Referências de interface CRM
 
-A interface usa como referência de interação os padrões de CRM observados em **EspoCRM** (menu lateral/minimização, navegação por módulos e dashboard modular) e **IDURAR ERP/CRM** (sidebar persistente, rotas selecionadas, cards-resumo e tabelas recentes com ações contextuais). A implementação do LexisPredict continua própria e focada em carteira jurídica, tarefas, DataJud e DJEN.
+A interface usa como referência de interação os padrões de CRM observados em **EspoCRM** (menu lateral/minimização, navegação por módulos e dashboard modular) e **IDURAR ERP/CRM** (sidebar persistente, rotas selecionadas, cards-resumo e tabelas recentes com ações contextuais). A implementação do SheetsPredict continua própria e focada em carteira jurídica, tarefas, DataJud e DJEN.
 
