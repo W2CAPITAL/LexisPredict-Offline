@@ -1040,7 +1040,7 @@ async function loadHistory(key,{force=false}={}){
   if(!navigator.onLine){renderHistoryDialog();return}
   state.historyLoading=true;renderHistoryDialog();
   try{
-    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:"both"}),cache:"no-store"});
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:djenPaused()?"datajud":"both"}),cache:"no-store"});
     const j=await r.json();state.historyScan=j;
     if(j.patch){
       Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
@@ -1116,7 +1116,7 @@ async function refreshAudit(keepSuggest=false){
   if(cnj.length!==20){showBanner("CNJ inválido para atualização oficial.","bad");return}
   const btn=$("#auditRefreshBtn");if(btn){btn.disabled=true;btn.textContent="Atualizando…"}
   try{
-    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:"both"}),cache:"no-store"});
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(cnj),tribunal:pick(row,"Tribunal"),cliente:pick(row,"Cliente"),ultimoRetorno:pick(row,"Último Retorno"),lastDjenId:pick(row,"_DJENId"),lastDjenDate:pick(row,"_DJENDate","DJEN • Data"),mode:djenPaused()?"datajud":"both"}),cache:"no-store"});
     const j=await r.json();state.auditScan=j;state.auditSuggest=!!keepSuggest;
     if(j.patch){
       Object.assign(row,j.patch);updateLocalRow(row);await saveRows(state.companyRows);
