@@ -1031,10 +1031,28 @@ function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date()
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
 async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
-  $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
+  const savedSidebar=localStorage.getItem("lexis_sidebar_collapsed")==="1";
+  document.body.classList.toggle("sidebar-collapsed",savedSidebar);
+  const toggle=$("#sidebarToggle");
+  if(toggle){
+    toggle.textContent=savedSidebar?"›":"‹";
+    toggle.onclick=()=>{
+      const collapsed=!document.body.classList.contains("sidebar-collapsed");
+      document.body.classList.toggle("sidebar-collapsed",collapsed);
+      localStorage.setItem("lexis_sidebar_collapsed",collapsed?"1":"0");
+      toggle.textContent=collapsed?"›":"‹";
+    };
+  }
+  $("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
   $("#newProcessBtn").onclick=()=>openProcess("");
   $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
+  $("#closeAttendanceBtn").onclick=()=>$("#attendanceDialog").close();
+  $("#cancelAttendanceBtn").onclick=()=>$("#attendanceDialog").close();
+  $("#saveAttendanceBtn").onclick=saveAttendance;
+  $("#closeHistoryBtn").onclick=()=>$("#historyDialog").close();
+  $("#historyRefreshBtn").onclick=()=>state.historyKey&&loadHistory(state.historyKey,{force:true});
+  $("#historyAttendanceBtn").onclick=()=>{const key=state.historyKey;$("#historyDialog").close();if(key)openAttendance(key)};
   $("#logoutBtn").onclick=async()=>{
     stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}
     saveSession(null);state.rows=[];state.companyRows=[];state.crm={Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]};state.lastSync=null;state.lastSyncAt=0;state.clientId=null;
