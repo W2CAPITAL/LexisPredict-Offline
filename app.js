@@ -2,8 +2,10 @@
 "use strict";
 
 const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit";
-const DB_NAME="lexispredict-secure-cache-v2";
-const state={rows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null};
+const DB_NAME="lexispredict-secure-cache-v3";
+const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
+const CACHE_TTL_MS=5*60*1000;
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -32,7 +34,7 @@ function statusRet(r){
   if(st.includes("VENC"))return"VENCIDO";if(st.includes("ATEN"))return"ATENÇÃO";if(st.includes("EM DIA")||st.includes("NO PRAZO"))return"EM DIA";
   const d=daysTo(pick(r,"Próximo Retorno"));if(d===null)return"SEM DATA";if(d<0)return"VENCIDO";if(d<=0)return"ATENÇÃO";return"EM DIA";
 }
-function latestMove(r){return pick(r,"Diagnóstico Processual","DataJud • Último Movimento","Último Andamento","Andamento")}
+function latestMove(r){return pick(r,"DataJud • Último Movimento","Último Andamento","Andamento","ultimo_movimento","Diagnóstico Processual")}
 function cnjFormatted(v){const d=digits(v);return d.length===20?d.slice(0,7)+"-"+d.slice(7,9)+"."+d.slice(9,13)+"."+d.slice(13,14)+"."+d.slice(14,16)+"."+d.slice(16):v}
 function badge(text,type){return '<span class="badge b-'+type+'">'+esc(text)+'</span>'}
 function qBadge(q){return q==="BOM"?badge("BOM","good"):q==="RUIM"?badge("RUIM","bad"):badge(q||"NEUTRO","warn")}
@@ -63,7 +65,29 @@ async function idbAll(store){const db=await openDb();return new Promise((res,rej
 async function idbPut(store,value){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).put(value);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
 async function idbClear(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).clear();tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
 async function saveRows(rows){await idbClear("rows");const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction("rows","readwrite"),st=tx.objectStore("rows");rows.forEach(r=>st.put({...r,_key:keyOf(r)}));tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
-async function loadLocal(){state.rows=(await idbAll("rows")).map(({_key,...r})=>r);const meta=(await idbAll("meta")).find(x=>x.key==="lastSync");if(meta)state.lastSync=meta.value;return state.rows}
+function currentUser(){return state.session?.user||{}}
+function elevatedUser(){return /superadmin|supervisor|administrador|admin/i.test(String(currentUser().perfil||""))}
+function assistantSegments(v){return String(v??"").split(/[\\/|;,]+/).map(x=>norm(x)).filter(Boolean)}
+function isMine(r){
+  if(elevatedUser())return true;
+  const u=currentUser(),target=norm(u.nome||u.usuario||"");
+  if(!target)return false;
+  const segs=assistantSegments(pick(r,"Assistente"));
+  if(segs.includes(target))return true;
+  const first=target.split(/\\s+/)[0];
+  return !!first&&segs.includes(first);
+}
+function refreshScopes(){state.rows=(state.companyRows||[]).filter(isMine)}
+async function loadLocal(){
+  state.companyRows=(await idbAll("rows")).map(({_key,...r})=>r);
+  const metas=await idbAll("meta");
+  const sync=metas.find(x=>x.key==="lastSync"),at=metas.find(x=>x.key==="lastSyncAt");
+  if(sync)state.lastSync=sync.value;
+  if(at)state.lastSyncAt=Number(at.value||0);
+  refreshScopes();
+  return state.companyRows;
+}
+function cacheFresh(){return !!state.companyRows.length&&!!state.lastSyncAt&&(Date.now()-state.lastSyncAt)<CACHE_TTL_MS}
 async function queueWrite(row){
   const list=await idbAll("outbox"),k=keyOf(row);
   const db=await openDb();
@@ -95,15 +119,17 @@ async function syncFromCloud(opts={}){
   if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
   try{
     try{await flushOutbox()}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
-    const payload={action:"list",limit:8000};
+    const payload={action:"list",limit:8000,scope:"company"};
     const j=await apiSheets(payload);
     let rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
     const pending=await idbAll("outbox");
     rows=mergePending(rows,pending);
-    state.rows=rows;await saveRows(rows);state.lastSync=now();await idbPut("meta",{key:"lastSync",value:state.lastSync});
+    state.companyRows=rows;refreshScopes();await saveRows(rows);
+    state.lastSync=now();state.lastSyncAt=Date.now();
+    await idbPut("meta",{key:"lastSync",value:state.lastSync});
+    await idbPut("meta",{key:"lastSyncAt",value:state.lastSyncAt});
     if(!opts.quiet){
-      const scope=j.scope?.field==="Assistente"?" • carteira de "+(j.scope.value||"assistente"):"";
-      showBanner("Sincronização concluída: "+rows.length+" processos carregados"+scope+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
+      showBanner("Sincronização concluída: "+rows.length+" processos da empresa em cache"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
     }
     render();
   } finally { state.syncing=false; }
@@ -112,8 +138,10 @@ function startAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
   state.autoSyncTimer=setInterval(async()=>{
     if(!state.session||!navigator.onLine||document.hidden||state.syncing)return;
+    const pending=await outboxCount().catch(()=>0);
+    if(cacheFresh()&&!pending)return;
     try{await syncFromCloud({quiet:true})}catch(_){}
-  },60000);
+  },300000);
 }
 function stopAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
@@ -161,8 +189,22 @@ async function flushOutbox(){
 }
 function showBanner(msg,type=""){const b=$("#banner");b.textContent=msg;b.className="banner "+type;b.classList.remove("hidden");clearTimeout(showBanner.t);showBanner.t=setTimeout(()=>b.classList.add("hidden"),7000)}
 function setLogged(on){$("#login").classList.toggle("hidden",on);$("#app").classList.toggle("hidden",!on)}
-function saveSession(s){state.session=s||null}
-function restoreSession(){state.session=null}
+function saveSession(s){
+  state.session=s||null;
+  try{
+    if(state.session?.user)localStorage.setItem(SESSION_SNAPSHOT_KEY,JSON.stringify({user:state.session.user,ts:Date.now()}));
+    else localStorage.removeItem(SESSION_SNAPSHOT_KEY);
+  }catch(_){}
+  refreshScopes();
+}
+function restoreSession(){
+  try{
+    const snap=JSON.parse(localStorage.getItem(SESSION_SNAPSHOT_KEY)||"null");
+    state.session=snap?.user?{user:snap.user,cached:true}:null;
+  }catch(_){state.session=null}
+  refreshScopes();
+  return state.session;
+}
 
 function metrics(rows=state.rows){
   const m={total:rows.length,active:0,closed:0,venc:0,attention:0,good:0,neutral:0,bad:0,newer:0,djen:0,dj:0,scoreSum:0,scoreN:0,proc:0,improc:0};
@@ -189,12 +231,13 @@ function taskLabel(r){
 function titleFor(v){return {
   dashboard:["COMMAND CENTER","Dashboard"],
   processos:["CARTEIRA","Processos"],
+  empresa:["EMPRESA","Processos da empresa"],
   tarefas:["OPERAÇÃO","Tarefas"],
   analise:["INTELIGÊNCIA","Análise"],
   report:["EXECUTIVO","Report"],
   scanner:["REDE JUDICIAL","DataJud + DJEN"]
 }[v]||["LEXISPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",processos:"/processos",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
+const viewPaths={dashboard:"/",processos:"/processos",empresa:"/processos-empresa",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
 function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
 function setView(v,push=true){
   state.view=v;
@@ -204,9 +247,10 @@ function setView(v,push=true){
   render();
 }
 function render(){
-  const m=metrics();$("#navProcessos").textContent=m.total;$("#navTarefas").textContent=tasks().length;updateSyncUi();
+  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
   if(state.view==="dashboard")renderDashboard();
   else if(state.view==="processos")renderProcessos();
+  else if(state.view==="empresa")renderEmpresa();
   else if(state.view==="tarefas")renderTarefas();
   else if(state.view==="analise")renderAnalise();
   else if(state.view==="report")renderReport();
