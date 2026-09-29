@@ -8,7 +8,7 @@ const CACHE_TTL_MS=5*60*1000;
 const PAGE_DEFAULT=200;
 const DJEN_GEO_BLOCK_MS=10*60*1000;
 const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:""};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -460,6 +460,7 @@ function taskLabel(r){
 
 function titleFor(v){return {
   dashboard:["COMMAND CENTER","Dashboard"],
+  hub:["CENTRAL","Central Integrada"],
   processos:["CARTEIRA","Processos"],
   empresa:["EMPRESA","Processos da empresa"],
   clientes:["CRM","Clientes"],
@@ -471,7 +472,7 @@ function titleFor(v){return {
   report:["EXECUTIVO","Report"],
   scanner:["REDE JUDICIAL","DataJud + DJEN"]
 }[v]||["SHEETSPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
+const viewPaths={dashboard:"/",hub:"/central",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
 function pathView(){
   const rawHash=String(location.hash||"").replace(/^#/,"").replace(/\/+$/,"");
   if(rawHash){
@@ -496,6 +497,7 @@ function setView(v,push=true){
 function render(){
   const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navClientes").textContent=crmClients().length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
   if(state.view==="dashboard")renderDashboard();
+  else if(state.view==="hub")renderHub();
   else if(state.view==="processos")renderProcessos();
   else if(state.view==="empresa")renderEmpresa();
   else if(state.view==="clientes")renderClientes();
@@ -526,7 +528,7 @@ function renderDashboard(){
   const tribunalSemana=state.rows.filter(r=>isRecentDate(pick(r,"Última Sincronização"),7)&&(pick(r,"DataJud • Último Movimento")||pick(r,"DJEN • Última Publicação"))).length;
   const vencidos=state.rows.filter(r=>statusRet(r)==="VENCIDO").length;
   $("#content").innerHTML=
-  '<div class="lexis-page-shell"><div class="lexis-page-header"><div><span class="eyebrow">COMMAND CENTER</span><h2>Dashboard</h2><p>Visão da carteira · Google Sheets + DataJud + DJEN</p></div><div class="command-actions"><button class="btn" data-goto="report">Dossiê operacional</button><button class="btn" data-goto="processos">Meus processos</button><button class="btn primary" data-goto="scanner">DataJud + DJEN</button></div></div>'+
+  '<div class="lexis-page-shell"><div class="lexis-page-header"><div><span class="eyebrow">COMMAND CENTER</span><h2>Dashboard</h2><p>Visão da carteira · Google Sheets + DataJud + DJEN</p></div><div class="command-actions"><button class="btn" data-goto="hub">Central Integrada</button><button class="btn" data-goto="report">Dossiê operacional</button><button class="btn" data-goto="processos">Meus processos</button><button class="btn primary" data-goto="scanner">DataJud + DJEN</button></div></div>'+
   '<div class="lexis-tabbar"><button class="active">Visão da carteira</button><button data-goto="empresa">Processos da empresa</button><button data-goto="tarefas">Fila</button><button data-goto="report">Report</button></div>'+
   '<div class="kpi-grid dashboard-kpis">'+
     kpi("Processos",m.total,m.active+" ativos")+
@@ -553,6 +555,195 @@ function renderDashboard(){
   bindGotos();
   $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
   $$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
+}
+
+async function hubApi(payload){
+  const r=await fetch("/api/integration-hub",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload||{}),cache:"no-store"});
+  const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida da Central Integrada"}));
+  if(!r.ok||j.ok===false)throw new Error(j.error||"Falha na Central Integrada");
+  return j;
+}
+function hubSourceStatus(id){
+  const h=state.hub.status||{},all=[...(h.services||[]),...(h.builtins||[])];
+  return all.find(x=>x.id===id)||null;
+}
+function hubSourceCard(src){
+  const st=hubSourceStatus(src.id),ok=!!st?.ok,configured=st?st.configured!==false:false;
+  const label=!st?"carregando":ok?"ativo":configured?"indisponível":"não configurado";
+  const cls=ok?"good":configured?"warn":"gray";
+  return '<article class="hub-source-card"><div class="hub-source-head"><strong>'+esc(src.name)+'</strong>'+badge(label,cls)+'</div><p>'+esc(src.feature||src.role||"")+'</p><small>'+esc(src.repo||"")+'</small></article>';
+}
+function hubTabs(){
+  const tabs=[["overview","Visão geral"],["ai","IA"],["whatsapp","WhatsApp"],["leads","Leads"],["revisional","Revisional"],["sheets","Planilha"],["integrations","Integrações"]];
+  return '<div class="hub-tabs">'+tabs.map(([id,label])=>'<button class="'+(state.hub.tab===id?"active":"")+'" data-hub-tab="'+id+'">'+label+'</button>').join("")+'</div>';
+}
+function hubPortfolio(){
+  return window.SheetsHub?.portfolio?window.SheetsHub.portfolio(state.companyRows,statusRet):{total:state.companyRows.length};
+}
+function hubAudit(){
+  return window.SheetsHub?.audit?window.SheetsHub.audit(state.companyRows):null;
+}
+function hubOverviewHtml(){
+  const p=hubPortfolio(),a=hubAudit(),sources=window.SheetsHub?.sources||[];
+  return '<div class="hub-kpis">'+
+    kpi("Processos",p.total||0,(p.ativos||0)+" ativos")+
+    kpi("Vencidos",p.vencidos||0,(p.atencao||0)+" em atenção",(p.vencidos||0)?"bad":"good")+
+    kpi("DataJud",p.datajud||0,"com movimento")+
+    kpi("DJEN",p.djen||0,"com publicação oficial")+
+    kpi("Saúde planilha",a?a.health+"%":"—",a?(a.duplicates+" duplicidade(s)"):"auditoria local")+
+    kpi("Offline",navigator.onLine?"Pronto":"Ativo","IndexedDB + outbox",navigator.onLine?"good":"warn")+
+  '</div>'+
+  '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">FUSÃO</span><h3>8 motores, um SheetsPredict</h3></div></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div></section>'+
+  '<section class="card"><div class="card-head"><div><span class="eyebrow">ATALHOS</span><h3>Operação integrada</h3></div></div><div class="hub-actions">'+
+    '<button class="hub-action" data-hub-open="ai"><strong>IA operacional</strong><span>PredictLM → GREY → fallback local</span></button>'+
+    '<button class="hub-action" data-hub-open="whatsapp"><strong>WhatsApp</strong><span>Estado e envio via WA.Auto</span></button>'+
+    '<button class="hub-action" data-hub-open="leads"><strong>Leads públicos</strong><span>Scanner LEADCHECKIN + CRM</span></button>'+
+    '<button class="hub-action" data-hub-open="revisional"><strong>Revisional</strong><span>Bacen SGS + simulação Leadcheck</span></button>'+
+    '<button class="hub-action" data-hub-open="sheets"><strong>Planilha inteligente</strong><span>Mapeamento e auditoria SyncCRM</span></button>'+
+  '</div></section></div>';
+}
+function hubAiHtml(){
+  const msgs=state.hub.ai||[];
+  return '<div class="hub-grid ai-layout"><section class="card hub-ai-card"><div class="card-head"><div><span class="eyebrow">PREDICTLM + GREY</span><h3>Assistente operacional</h3></div><span class="cell-sub">A carteira entra como contexto; a IA não altera dados sozinha.</span></div>'+
+    '<div class="hub-chat">'+(msgs.length?msgs.map(m=>'<article class="hub-msg '+esc(m.role)+'"><div class="hub-msg-meta">'+esc(m.role==="user"?"Você":(m.engine||"SheetsPredict"))+(m.provider?' · '+esc(m.provider):'')+'</div><div>'+esc(m.content).replace(/\n/g,"<br>")+'</div></article>').join(""):'<div class="empty">Pergunte sobre a carteira, um processo, prioridades, dossiê ou atendimento.</div>')+'</div>'+
+    '<div class="hub-compose"><input id="hubAiCnj" placeholder="CNJ para contexto (opcional)" value="'+esc(state.hub.selectedCnj||"")+'"/><textarea id="hubAiPrompt" placeholder="Ex.: analise este processo e diga o próximo passo operacional"></textarea><div class="row end"><label class="hub-check"><input id="hubAiDeep" type="checkbox"/> análise profunda</label><button class="btn" id="hubAiPortfolio">Analisar carteira</button><button class="btn primary" id="hubAiSend">'+(state.hub.aiBusy?"Analisando…":"Enviar")+'</button></div></div></section>'+
+    '<aside class="card"><div class="card-head"><div><span class="eyebrow">CONTEXTO</span><h3>O que a IA recebe</h3></div></div><div class="card-body"><p class="hub-note">KPIs da carteira, auditoria da planilha e, quando informado, o processo selecionado. Histórico judicial continua vindo de DataJud/DJEN e não é inventado pela IA.</p></div></aside></div>';
+}
+function hubWaHtml(){
+  const wa=state.hub.wa,st=wa?.state||{},health=wa?.health||{},conn=st.connection||{},legal=st.legal||{};
+  return '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">WA.AUTO</span><h3>WhatsApp operacional</h3></div><button class="btn sm" id="hubWaRefresh">Atualizar estado</button></div>'+
+    '<div class="hub-kpis compact">'+kpi("Conexão",conn.status||health.whatsapp||"—","WA.Auto")+kpi("Fila",st.busy?"ocupada":"livre","campanhas")+kpi("Monitor",legal.running===false?"parado":"ativo","DataJud/DJEN")+'</div>'+
+    '<div class="hub-form"><div class="grid-2"><label>CNJ<input id="hubWaCnj" placeholder="processo opcional"/></label><label>Telefone<input id="hubWaPhone" placeholder="DDD + número"/></label></div><label>Mensagem<textarea id="hubWaMessage" placeholder="Mensagem ao cliente"></textarea></label><div class="row end"><button class="btn" id="hubWaLoad">Carregar do processo</button><button class="btn primary" id="hubWaSend">'+(state.hub.waBusy?"Enviando…":"Enviar via WA.Auto")+'</button></div><p class="field-hint">O envio só acontece ao clicar. Lista de não contatar e validações continuam no WA.Auto.</p></div></section>'+
+    '<section class="card"><div class="card-head"><div><span class="eyebrow">MONITOR</span><h3>Integração processual</h3></div></div><div class="card-body"><p class="hub-note">O WA.Auto reaproveita a sessão cloud, fila idempotente, opt-out e monitor DataJud/DJEN. O SheetsPredict não cria um segundo cliente WhatsApp.</p></div></section></div>';
+}
+function hubLeadResultHtml(){
+  const r=state.hub.lead;if(!r)return '<div class="empty">Nenhuma página analisada.</div>';
+  if(!r.ok)return '<div class="banner bad">'+esc(r.error||"Não foi possível analisar a página.")+'</div>';
+  return '<div class="lead-result"><div><strong>'+esc(r.personName||r.title||"Página pública")+'</strong><small>'+esc(r.url||"")+'</small></div>'+
+    '<div class="lead-contact-row">'+badge((r.phones||[]).length+" telefone(s)","blue")+badge((r.emails||[]).length+" e-mail(s)","gray")+badge((r.scannedPages||0)+" página(s)","gray")+'</div>'+
+    '<p>'+esc(r.snippet||"").slice(0,800)+'</p>'+
+    '<div class="lead-contact-list">'+(r.phones||[]).map(x=>'<span>☎ '+esc(x)+'</span>').join("")+(r.emails||[]).map(x=>'<span>✉ '+esc(x)+'</span>').join("")+'</div>'+
+    '<button class="btn primary sm" id="hubLeadSave">Salvar no CRM</button><small>'+esc(r.privacy||"")+'</small></div>';
+}
+function hubLeadsHtml(){
+  const disc=state.hub.leadDiscover;
+  return '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">LEADCHECKIN</span><h3>Scanner de fonte pública</h3></div></div><div class="hub-form"><label>URL pública<input id="hubLeadUrl" placeholder="https://site-publico/..."/></label><button class="btn primary" id="hubLeadScan">'+(state.hub.leadBusy?"Analisando…":"Analisar página")+'</button></div><div class="card-body">'+hubLeadResultHtml()+'</div></section>'+
+  '<section class="card"><div class="card-head"><div><span class="eyebrow">DESCOBERTA CONTÍNUA</span><h3>Buscar sinais públicos</h3></div></div><div class="hub-form"><div class="grid-2"><label>Interesse / produto<input id="hubLeadQuery" placeholder="financiamento, revisional..."/></label><label>Cidade<input id="hubLeadCity" placeholder="São Paulo"/></label></div><button class="btn" id="hubLeadDiscover">Buscar via LEADCHECKIN</button></div><div class="card-body">'+
+    (disc?.leads?.length?disc.leads.slice(0,10).map(x=>'<div class="report-list-item"><div><strong>'+esc(x.personName||x.title||"Resultado público")+'</strong><small>'+esc(x.url||"")+'</small></div>'+badge(x.contactType||"público","gray")+'</div>').join(""):'<div class="empty">Se o serviço LEADCHECKIN estiver configurado, os resultados aparecem aqui.</div>')+
+  '</div></section></div>';
+}
+function money(n){return Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}
+function hubRevisionalHtml(){
+  const b=state.hub.bacen,e=state.hub.bacenEstimate;
+  return '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">LEADCHECK + BACEN</span><h3>Simulação revisional</h3></div></div><div class="hub-form"><div class="grid-2"><label>Mês do contrato<input id="hubBacenDate" type="month" value="'+esc(new Date().toISOString().slice(0,7))+'"/></label><label>Parcela atual<input id="hubBacenInstallment" type="number" min="0" step="0.01" placeholder="1500"/></label><label>Prazo (meses)<input id="hubBacenMonths" type="number" min="1" value="48"/></label><label>Spread estimado (pp a.m.)<input id="hubBacenSpread" type="number" step="0.1" value="0.4"/></label></div><button class="btn primary" id="hubBacenRun">'+(state.hub.bacenBusy?"Consultando…":"Consultar Bacen e simular")+'</button></div></section>'+
+  '<section class="card"><div class="card-head"><div><span class="eyebrow">PRÉ-ANÁLISE</span><h3>Resultado orientativo</h3></div></div><div class="card-body">'+
+  (b?'<div class="metric-list">'+metricRow("Bacen mensal",Number(b.monthlyRate).toFixed(2)+"% a.m.",b.period||"")+metricRow("Bacen anual",b.annualRate!=null?Number(b.annualRate).toFixed(2)+"% a.a.":"—",b.seriesName||"")+(e?metricRow("Parcela simulada",money(e.bacenInstallment),"Price · "+e.months+" meses")+metricRow("Economia estimada",money(e.monthlySavings)+"/mês",money(e.totalSavings)+" no prazo"):"")+'</div><p class="hub-note">Estimativa de triagem; não substitui CET oficial nem cálculo pericial do contrato.</p>':'<div class="empty">Informe mês e parcela para consultar a série SGS e simular.</div>')+
+  '</div></section></div>';
+}
+function hubSheetsHtml(){
+  const a=hubAudit();if(!a)return '<div class="empty">Módulo SheetsHub ainda não carregou.</div>';
+  return '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">SYNCCRM</span><h3>Auditoria estrutural</h3></div><button class="btn sm" id="hubSheetSync">Sincronizar agora</button></div>'+
+    '<div class="hub-kpis compact">'+kpi("Saúde",a.health+"%",a.rows+" linhas",a.health<80?"warn":"good")+kpi("Cabeçalhos",a.headers,a.mapped+"/"+a.required+" campos mapeados")+kpi("CNJ inválido",a.invalidCnj,"linhas",a.invalidCnj?"bad":"good")+kpi("Duplicados",a.duplicates,"CNJs",a.duplicates?"warn":"good")+kpi("Sem cliente",a.missingClient,"linhas")+kpi("Sem retorno",a.missingReturn,"linhas")+'</div></section>'+
+    '<section class="card"><div class="card-head"><div><span class="eyebrow">MAPEAMENTO</span><h3>Cabeçalho → campo operacional</h3></div></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Campo</th><th>Cabeçalho detectado</th><th>Confiança</th></tr></thead><tbody>'+a.mapping.map(x=>'<tr><td>'+esc(x.field)+'</td><td>'+esc(x.sheetHeader||"não localizado")+'</td><td>'+badge(x.confidence+"%",x.confidence>=80?"good":x.confidence>=50?"warn":"bad")+'</td></tr>').join("")+'</tbody></table></div></section></div>';
+}
+function hubIntegrationsHtml(){
+  const h=state.hub.status,sources=window.SheetsHub?.sources||[];
+  return '<section class="card"><div class="card-head"><div><span class="eyebrow">RUNTIME FEDERADO</span><h3>Fontes e motores</h3></div><button class="btn sm" id="hubStatusRefresh">Revalidar</button></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div><div class="card-body"><p class="hub-note">Motores externos são ativados por variáveis de ambiente no deploy. Funcionalidades embutidas (planilha inteligente, Bacen, scanner público e offline) continuam disponíveis sem outro serviço.</p><div class="integration-env"><code>PREDICTLM_URL</code><code>WA_AUTO_URL</code><code>GREY_URL</code><code>LEADCHECKIN_URL</code><code>LEXISPREDICT_URL</code></div></div></section>'+
+  (!h?'<div class="empty">Carregando estado das integrações…</div>':'');
+}
+function renderHub(){
+  const content=$("#content");if(!content)return;
+  content.innerHTML='<div class="hub-shell"><div class="lexis-page-header"><div><span class="eyebrow">SHEETSPREDICT CENTRAL</span><h2>Central Integrada</h2><p>IA, WhatsApp, leads, revisional, planilha e operação jurídica no mesmo aplicativo.</p></div><div class="command-actions"><button class="btn" data-goto="processos">Carteira</button><button class="btn" data-goto="tarefas">Fila</button><button class="btn primary" data-goto="scanner">Tribunal</button></div></div>'+hubTabs()+'<div class="hub-body">'+
+    (state.hub.tab==="ai"?hubAiHtml():state.hub.tab==="whatsapp"?hubWaHtml():state.hub.tab==="leads"?hubLeadsHtml():state.hub.tab==="revisional"?hubRevisionalHtml():state.hub.tab==="sheets"?hubSheetsHtml():state.hub.tab==="integrations"?hubIntegrationsHtml():hubOverviewHtml())+
+  '</div></div>';
+  bindGotos();
+  $("[data-hub-tab],[data-hub-open]").forEach(b=>b.onclick=()=>{state.hub.tab=b.dataset.hubTab||b.dataset.hubOpen;renderHub()});
+  if(!state.hub.status&&!state.hub.loading)void loadHubStatus();
+  if($("#hubStatusRefresh"))$("#hubStatusRefresh").onclick=()=>loadHubStatus(true);
+  if($("#hubAiSend"))$("#hubAiSend").onclick=hubRunAi;
+  if($("#hubAiPortfolio"))$("#hubAiPortfolio").onclick=()=>{const el=$("#hubAiPrompt");if(el)el.value="Analise a carteira atual, priorize os principais riscos operacionais e indique as próximas ações sem inventar fatos judiciais.";};
+  if($("#hubAiCnj"))$("#hubAiCnj").oninput=e=>state.hub.selectedCnj=e.target.value;
+  if($("#hubWaRefresh"))$("#hubWaRefresh").onclick=hubLoadWa;
+  if($("#hubWaLoad"))$("#hubWaLoad").onclick=hubLoadProcessMessage;
+  if($("#hubWaSend"))$("#hubWaSend").onclick=hubSendWa;
+  if($("#hubLeadScan"))$("#hubLeadScan").onclick=hubScanLead;
+  if($("#hubLeadDiscover"))$("#hubLeadDiscover").onclick=hubDiscoverLeads;
+  if($("#hubLeadSave"))$("#hubLeadSave").onclick=hubSaveLead;
+  if($("#hubBacenRun"))$("#hubBacenRun").onclick=hubRunBacen;
+  if($("#hubSheetSync"))$("#hubSheetSync").onclick=async()=>{try{await syncFromCloud();renderHub()}catch(e){showBanner(e.message||String(e),"bad")}};
+  if(state.hub.tab==="whatsapp"&&!state.hub.wa&&!state.hub.waBusy)void hubLoadWa();
+}
+async function loadHubStatus(force=false){
+  if(state.hub.loading&&!force)return;state.hub.loading=true;
+  try{state.hub.status=await hubApi({action:"status"})}
+  catch(e){state.hub.status={ok:false,error:e.message||String(e),services:[],builtins:[]}}
+  finally{state.hub.loading=false;if(state.view==="hub")renderHub()}
+}
+function hubContext(cnj){
+  const p=hubPortfolio(),a=hubAudit(),d=digits(cnj||state.hub.selectedCnj),row=d?state.companyRows.find(r=>digits(pick(r,"Protocolo"))===d):null;
+  return JSON.stringify({metrics:{...p,vencidos:p.vencidos,atencao:p.atencao},sheetAudit:a?{health:a.health,duplicates:a.duplicates,invalidCnj:a.invalidCnj,missingReturn:a.missingReturn}:null,process:row?{cnj:cnjFormatted(pick(row,"Protocolo")),cliente:pick(row,"Cliente"),tribunal:pick(row,"Tribunal"),assistente:pick(row,"Assistente"),status:pick(row,"Status"),ultimoMovimento:latestMove(row),dataMovimento:pick(row,"DataJud • Data"),djen:officialDjen(row),proximoRetorno:pick(row,"Próximo Retorno")}:null});
+}
+async function hubRunAi(){
+  if(state.hub.aiBusy)return;const prompt=String($("#hubAiPrompt")?.value||"").trim();if(!prompt)return;
+  const cnj=String($("#hubAiCnj")?.value||state.hub.selectedCnj||"");state.hub.selectedCnj=cnj;
+  state.hub.ai.push({role:"user",content:prompt});state.hub.aiBusy=true;renderHub();
+  try{
+    const j=await hubApi({action:"ai_chat",prompt,context:hubContext(cnj),deep:!!$("#hubAiDeep")?.checked,messages:state.hub.ai.slice(-8).map(x=>({role:x.role,content:x.content})),sessionId:String(currentUser().usuario||currentUser().nome||"sheetspredict")});
+    state.hub.ai.push({role:"assistant",content:j.content||"Sem resposta.",engine:j.engine,provider:j.provider});
+  }catch(e){state.hub.ai.push({role:"assistant",content:"Falha: "+(e.message||String(e)),engine:"Central Integrada"})}
+  finally{state.hub.aiBusy=false;if(state.view==="hub")renderHub()}
+}
+async function hubLoadWa(){
+  if(state.hub.waBusy)return;state.hub.waBusy=true;
+  try{state.hub.wa=await hubApi({action:"wa_state"})}catch(e){state.hub.wa={ok:false,error:e.message||String(e)}}
+  finally{state.hub.waBusy=false;if(state.view==="hub")renderHub()}
+}
+function hubFindProcess(raw){
+  const d=digits(raw);if(d.length===20)return state.companyRows.find(r=>digits(pick(r,"Protocolo"))===d)||null;
+  const q=norm(raw);return q?state.companyRows.find(r=>norm(pick(r,"Cliente")).includes(q)):null;
+}
+function hubLoadProcessMessage(){
+  const row=hubFindProcess($("#hubWaCnj")?.value||"");if(!row){showBanner("Processo não encontrado.","bad");return}
+  const phone=$("#hubWaPhone"),msg=$("#hubWaMessage");
+  if(phone)phone.value=pick(row,"Telefone")||"";
+  if(msg)msg.value=window.LexisSuggest?.quickMessage?window.LexisSuggest.quickMessage(row):("Olá, "+(pick(row,"Cliente")||"")+". Temos uma atualização sobre seu processo "+cnjFormatted(pick(row,"Protocolo"))+".");
+}
+async function hubSendWa(){
+  if(state.hub.waBusy)return;const phone=String($("#hubWaPhone")?.value||""),message=String($("#hubWaMessage")?.value||"").trim();
+  if(!phone||!message){showBanner("Informe telefone e mensagem.","bad");return}
+  state.hub.waBusy=true;renderHub();
+  try{const j=await hubApi({action:"wa_send",phone,message});showBanner("Mensagem adicionada à fila do WA.Auto.","good");state.hub.wa=await hubApi({action:"wa_state"}).catch(()=>state.hub.wa)}
+  catch(e){showBanner(e.message||String(e),"bad")}
+  finally{state.hub.waBusy=false;if(state.view==="hub")renderHub()}
+}
+async function hubScanLead(){
+  if(state.hub.leadBusy)return;const url=String($("#hubLeadUrl")?.value||"").trim();if(!url)return;
+  state.hub.leadBusy=true;renderHub();
+  try{state.hub.lead=await hubApi({action:"lead_scan",url})}catch(e){state.hub.lead={ok:false,error:e.message||String(e)}}
+  finally{state.hub.leadBusy=false;if(state.view==="hub")renderHub()}
+}
+async function hubDiscoverLeads(){
+  if(state.hub.leadBusy)return;const query=String($("#hubLeadQuery")?.value||"").trim(),city=String($("#hubLeadCity")?.value||"").trim();if(!query||!city){showBanner("Informe interesse e cidade.","bad");return}
+  state.hub.leadBusy=true;renderHub();
+  try{state.hub.leadDiscover=await hubApi({action:"lead_discover",query,city})}catch(e){state.hub.leadDiscover={ok:false,error:e.message||String(e),leads:[]};showBanner(e.message||String(e),"bad")}
+  finally{state.hub.leadBusy=false;if(state.view==="hub")renderHub()}
+}
+async function hubSaveLead(){
+  const r=state.hub.lead;if(!r?.ok)return;const name=String(r.personName||r.title||"Lead público").trim(),phone=(r.phones||[])[0]||"",email=(r.emails||[])[0]||"",id="lead_"+hash(r.url||name);
+  const ts=new Date().toISOString();
+  await crmWrite("Clientes",{ClienteId:id,Tipo:"Lead",Nome:name,Telefone_Principal:phone,Email:email,Origem:"SheetsPredict · LEADCHECKIN",Status:"ATIVO",Responsavel:currentUser().nome||currentUser().usuario||"",AtualizadoEm:ts});
+  await crmWrite("PipelineCRM",{OportunidadeId:"opp_"+id,ClienteId:id,Etapa:"Triagem",Servico:"Oportunidade pública",Responsavel:currentUser().nome||currentUser().usuario||"",Origem:r.url||"",AtualizadoEm:ts},{quiet:true});
+  showBanner("Lead salvo em Clientes + Pipeline CRM.","good");
+}
+async function hubRunBacen(){
+  if(state.hub.bacenBusy)return;const contractDate=String($("#hubBacenDate")?.value||""),installment=Number($("#hubBacenInstallment")?.value||0),months=Number($("#hubBacenMonths")?.value||48),spread=Number($("#hubBacenSpread")?.value||.4);
+  if(!contractDate||installment<50){showBanner("Informe mês do contrato e parcela atual.","bad");return}
+  state.hub.bacenBusy=true;renderHub();
+  try{
+    state.hub.bacen=await hubApi({action:"bacen",contractDate});
+    state.hub.bacenEstimate=window.SheetsHub?.revisionalEstimate?window.SheetsHub.revisionalEstimate({currentInstallment:installment,bacenMonthlyPercent:state.hub.bacen.monthlyRate,months,assumedSpreadPp:spread}):null;
+  }catch(e){showBanner(e.message||String(e),"bad")}
+  finally{state.hub.bacenBusy=false;if(state.view==="hub")renderHub()}
 }
 function metricRow(label,value,sub){return '<div class="metric-row"><div><div class="cell-main">'+esc(label)+'</div><div class="cell-sub">'+esc(sub)+'</div></div><strong>'+esc(value)+'</strong></div>'}
 function filteredRows(source=state.rows){
