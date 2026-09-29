@@ -1,5 +1,5 @@
 const assert=require("node:assert/strict");
-const {detectExecution,commercialDecision}=require("../lib/judicial-intelligence");
+const {detectExecution,commercialDecision,buildSheetPatch}=require("../lib/judicial-intelligence");
 
 function dj({movimentos=[],classeCodigo=null,classe="Procedimento Comum Cível",poloAtivo=["Cliente Teste"],poloPassivo=["Banco Exemplo S.A."]}={}){
   return {error:false,movimentos,classeCodigo,classe,poloAtivo,poloPassivo};
@@ -56,6 +56,17 @@ function djen(items=[]){return {success:true,items};}
   assert.equal(e.status,"ENCERRADO");
   const c=commercialDecision({datajud:data,djen:djen(),cliente:"Cliente Teste"});
   assert.equal(c.decision,"NÃO VENDER");
+}
+
+
+{
+  const data=dj({movimentos:[{nome:"Conclusos para decisão",dataHora:"2026-09-29T12:00:00"}]});
+  const blocked={success:false,status:403,isGeoBlocked:true,error:"DJEN HTTP 403: origem bloqueada.",items:[]};
+  const patch=buildSheetPatch({datajud:data,djen:blocked,ultimoRetorno:"2026-09-20",lastDjenId:"antigo",lastDjenDate:"2026-09-28",cliente:"Cliente Teste"});
+  assert.equal(patch["DataJud • Último Movimento"],"Conclusos para decisão");
+  assert.equal(Object.prototype.hasOwnProperty.call(patch,"DJEN • Última Publicação"),false,"403 não pode mandar campo DJEN vazio para sobrescrever cache");
+  assert.equal(Object.prototype.hasOwnProperty.call(patch,"DJEN • Data"),false,"403 não pode apagar data DJEN já salva");
+  assert.equal(patch.Automação,"PARCIAL");
 }
 
 console.log("judicial-intelligence: ok");
