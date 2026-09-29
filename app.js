@@ -5,7 +5,7 @@ const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnB
 const DB_NAME="lexispredict-secure-cache-v3";
 const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
 const CACHE_TTL_MS=5*60*1000;
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -60,7 +60,7 @@ function execHtml(r){
   return badge(pick(r,"Cumprimento")==="SIM"?"CUMPRIMENTO":"—",pick(r,"Cumprimento")==="SIM"?"blue":"gray");
 }
 
-function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,1);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("rows"))db.createObjectStore("rows",{keyPath:"_key"});if(!db.objectStoreNames.contains("meta"))db.createObjectStore("meta",{keyPath:"key"});if(!db.objectStoreNames.contains("outbox"))db.createObjectStore("outbox",{keyPath:"id",autoIncrement:true})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
+function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,2);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("rows"))db.createObjectStore("rows",{keyPath:"_key"});if(!db.objectStoreNames.contains("meta"))db.createObjectStore("meta",{keyPath:"key"});if(!db.objectStoreNames.contains("outbox"))db.createObjectStore("outbox",{keyPath:"id",autoIncrement:true});if(!db.objectStoreNames.contains("crm"))db.createObjectStore("crm",{keyPath:"key"});if(!db.objectStoreNames.contains("crmOutbox"))db.createObjectStore("crmOutbox",{keyPath:"id",autoIncrement:true})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
 async function idbAll(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly"),rq=tx.objectStore(store).getAll();rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error)})}
 async function idbPut(store,value){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).put(value);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
 async function idbClear(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).clear();tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
@@ -88,6 +88,86 @@ async function loadLocal(){
   return state.companyRows;
 }
 function cacheFresh(){return !!state.companyRows.length&&!!state.lastSyncAt&&(Date.now()-state.lastSyncAt)<CACHE_TTL_MS}
+const CRM_KEYS={Clientes:"ClienteId",Interacoes:"InteracaoId",PipelineCRM:"OportunidadeId",AgendaCRM:"EventoId",Honorarios:"id"};
+async function loadCrmCache(){
+  const items=await idbAll("crm").catch(()=>[]);
+  for(const item of items||[])if(item?.key&&Array.isArray(item.rows))state.crm[item.key]=item.rows;
+  state.crmLoaded=items.length>0;
+  return state.crm;
+}
+async function saveCrmCache(table){
+  await idbPut("crm",{key:table,rows:state.crm[table]||[],ts:Date.now()});
+}
+function crmKey(table,row){
+  const k=CRM_KEYS[table]||"id";return String(row?.[k]||row?.id||"").trim();
+}
+function crmUpsertLocal(table,row){
+  if(!state.crm[table])state.crm[table]=[];
+  const key=crmKey(table,row),list=state.crm[table];
+  const i=key?list.findIndex(x=>crmKey(table,x)===key):-1;
+  if(i>=0)list[i]={...list[i],...row};else list.unshift(row);
+}
+async function queueCrmWrite(table,row){
+  const db=await openDb();
+  await new Promise((res,rej)=>{const tx=db.transaction("crmOutbox","readwrite");tx.objectStore("crmOutbox").add({table,row,ts:Date.now()});tx.oncomplete=res;tx.onerror=()=>rej(tx.error)});
+}
+async function flushCrmOutbox(){
+  const items=await idbAll("crmOutbox").catch(()=>[]);if(!items.length)return {ok:true,written:0};
+  const byTable=new Map();for(const x of items){const a=byTable.get(x.table)||[];a.push(x.row);byTable.set(x.table,a)}
+  let written=0;
+  for(const [table,rows] of byTable){
+    const j=await apiSheets({action:"crm_write",table,rows});
+    written+=Number(j.written||rows.length);
+  }
+  await idbClear("crmOutbox");return {ok:true,written};
+}
+async function crmWrite(table,row,{quiet=false}={}){
+  crmUpsertLocal(table,row);await saveCrmCache(table);
+  if(!navigator.onLine){await queueCrmWrite(table,row);if(!quiet)showBanner("CRM salvo offline; será enviado quando a conexão voltar.","good");return {ok:true,queued:true}}
+  try{
+    const j=await apiSheets({action:"crm_write",table,rows:[row]});
+    state.crmBridgeReady=true;return j;
+  }catch(e){
+    state.crmBridgeReady=false;await queueCrmWrite(table,row);
+    if(!quiet)showBanner("CRM preservado no cache. Bridge da planilha ainda precisa da versão CRM: "+(e.message||String(e)),"bad");
+    return {ok:false,queued:true,error:e.message||String(e)};
+  }
+}
+async function syncCRM({quiet=true}={}){
+  if(state.crmLoading||!state.session||!navigator.onLine)return;
+  state.crmLoading=true;
+  try{
+    await flushCrmOutbox().catch(()=>{});
+    const tables=["Clientes","Interacoes","PipelineCRM","AgendaCRM"];
+    if(elevatedUser())tables.push("Honorarios");
+    for(const table of tables){
+      try{
+        const j=await apiSheets({action:"crm_list",table,limit:table==="Interacoes"?12000:6000});
+        state.crm[table]=Array.isArray(j.rows)?j.rows:[];
+        await saveCrmCache(table);state.crmBridgeReady=true;
+      }catch(e){
+        state.crmBridgeReady=false;
+        if(!quiet&&table==="Clientes")showBanner("Usando CRM derivado da aba Processos até publicar o bridge CRM.","bad");
+        break;
+      }
+    }
+    state.crmLoaded=true;
+  }finally{state.crmLoading=false;render()}
+}
+function crmClients(){
+  const derived=window.LexisCRM?.groupProcessesByClient?window.LexisCRM.groupProcessesByClient(state.companyRows):[];
+  const pById=new Map(derived.map(x=>[String(x.ClienteId),x]));
+  if(!state.crm.Clientes?.length)return derived;
+  const out=state.crm.Clientes.map(c=>{
+    const id=String(c.ClienteId||""),p=pById.get(id)||{};
+    return {...p,...c,ClienteId:id,Nome:c.Nome||p.Nome||"",processos:p.processos||[],protocolos:p.protocolos||[],Telefone_Principal:c.Telefone_Principal||p.Telefone_Principal||"",Responsavel:c.Responsavel||p.Responsavel||""};
+  });
+  for(const d of derived)if(!out.some(x=>String(x.ClienteId)===String(d.ClienteId)))out.push(d);
+  return out.sort((a,b)=>String(a.Nome||"").localeCompare(String(b.Nome||""),"pt-BR"));
+}
+function clientById(id){return crmClients().find(c=>String(c.ClienteId)===String(id))||null}
+function crmRowsForClient(table,id){return (state.crm[table]||[]).filter(x=>String(x.ClienteId||x.cliente_id||"")===String(id))}
+
 async function queueWrite(row){
   const list=await idbAll("outbox"),k=keyOf(row);
   const db=await openDb();
