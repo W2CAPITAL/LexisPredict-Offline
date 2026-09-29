@@ -32,55 +32,11 @@
   ],
   "rewrites": [
     {
-      "source": "/installer",
-      "destination": "/installer.html"
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
     },
     {
-      "source": "/",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/cases",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/processos",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/processos-empresa",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/tarefas",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/clientes",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/pipeline",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/agenda",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/financeiro",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/analise",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/report",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/scanner",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ],
