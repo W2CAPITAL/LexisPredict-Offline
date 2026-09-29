@@ -410,7 +410,7 @@ function processTable(rows,{company=false}={}){
   rows.map(r=>{
     const key=keyOf(r),move=String(latestMove(r)||"Sem movimentação em cache").slice(0,180);
     const moveDate=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data");
-    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="actions"><button class="icon-action" data-edit="'+esc(key)+'">Editar</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-contact="'+esc(key)+'">Atendido</button></td></tr>';
+    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="actions process-actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></td></tr>';
   }).join("")+
   '</tbody></table></div>';
 }
@@ -419,11 +419,13 @@ function bindProcessList(renderFn){
   if(search)search.oninput=e=>{state.query=e.target.value;renderFn()};
   if(status)status.onchange=e=>{state.status=e.target.value;renderFn()};
   if(qual)qual.onchange=e=>{state.quality=e.target.value;renderFn()};
-  $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
-  $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
-  $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
-  $$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
-  $$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
+  $("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
+  $("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
+  $("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
+  $("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
+  $("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
+  $("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
+  $("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
 function renderProcessos(){
   const rows=filteredRows(state.rows).slice(0,1200);
