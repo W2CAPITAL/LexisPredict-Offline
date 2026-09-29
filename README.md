@@ -97,9 +97,31 @@ npx serve .
 
 As rotas `/api` são Vercel Functions e funcionam integralmente quando publicadas na Vercel.
 
+## SheetsPredict — Processos da empresa, fila Lexis e cache persistente
+
+A versão **1.6.0** consolida o modo SheetsPredict sem Supabase:
+
+- **Processos da empresa**: qualquer usuário autenticado pode consultar e editar a carteira completa da empresa.
+- **Sem roubar processo**: editar ou registrar atendimento **não altera** o campo `Assistente`/dono da carteira. O crédito fica em `AtendidoPor`.
+- **Novo cadastro**: o botão “Novo cadastro” cria processo novo e atribui o `Assistente` ao usuário atual por padrão.
+- **Última movimentação reutilizada**: DataJud/DJEN já salvos na planilha aparecem imediatamente no app e no Audit 3D; consulta de rede só ocorre quando necessária/solicitada.
+- **Tarefas estilo LexisPredict**: cards operacionais ordenados do caso mais crítico ao mais tranquilo, com mensagem rápida, WhatsApp, sugestão de resposta, Audit 3D e registro de atendimento.
+- **Audit 3D / Sugerir resposta**: substituem o antigo botão “Auditar” da listagem. O Audit 3D combina cache da planilha + DataJud/DJEN quando atualizado.
+- **F5 sem recarga pesada**: sessão visual + IndexedDB são reaproveitados; a carteira só é baixada novamente se o cache estiver antigo ou houver pendências.
+- **Arquitetura**: Google Sheets + Apps Script + IndexedDB/outbox + Vercel Functions. **Não usa Supabase.**
+
+Regra operacional principal:
+
+```text
+Assistente = dono/carteira
+AtendidoPor = quem efetivamente atendeu
+Editar != atender
+Atender != transferir carteira
+```
+
 ## Status
 
-**v1.4.0 — autenticação server-side, sincronização Sheets e núcleo DataJud + DJEN integrado.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
+**v1.6.0 — processos da empresa, fila Lexis, Audit 3D, atendimento sem transferência e cache persistente.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
 
 
 ## DJEN — fonte oficial
