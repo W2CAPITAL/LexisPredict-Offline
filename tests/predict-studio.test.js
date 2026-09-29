@@ -25,6 +25,9 @@ for(const route of ["/api/chat","/api/legal/process","/api/legal/dossier","/api/
 }
 assert.match(api,/PREDICTLM_URL/);
 assert.match(api,/PREDICTLM_ACCESS_TOKEN/);
+assert.match(api,/ASHNA_API_KEY/);
+assert.match(api,/https:\/\/api\.ashna\.ai\/v1\/api/);
+assert.match(api,/callAshna/);
 assert.match(api,/privateHost/);
 assert.doesNotMatch(api,/body\.path|body\.url/,"cliente não pode escolher caminho upstream arbitrário");
 
