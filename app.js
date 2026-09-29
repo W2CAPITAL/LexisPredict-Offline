@@ -5,7 +5,7 @@ const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnB
 const DB_NAME="lexispredict-secure-cache-v3";
 const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
 const CACHE_TTL_MS=5*60*1000;
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -60,7 +60,7 @@ function execHtml(r){
   return badge(pick(r,"Cumprimento")==="SIM"?"CUMPRIMENTO":"—",pick(r,"Cumprimento")==="SIM"?"blue":"gray");
 }
 
-function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,1);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("rows"))db.createObjectStore("rows",{keyPath:"_key"});if(!db.objectStoreNames.contains("meta"))db.createObjectStore("meta",{keyPath:"key"});if(!db.objectStoreNames.contains("outbox"))db.createObjectStore("outbox",{keyPath:"id",autoIncrement:true})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
+function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,2);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("rows"))db.createObjectStore("rows",{keyPath:"_key"});if(!db.objectStoreNames.contains("meta"))db.createObjectStore("meta",{keyPath:"key"});if(!db.objectStoreNames.contains("outbox"))db.createObjectStore("outbox",{keyPath:"id",autoIncrement:true});if(!db.objectStoreNames.contains("crm"))db.createObjectStore("crm",{keyPath:"key"});if(!db.objectStoreNames.contains("crmOutbox"))db.createObjectStore("crmOutbox",{keyPath:"id",autoIncrement:true})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
 async function idbAll(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly"),rq=tx.objectStore(store).getAll();rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error)})}
 async function idbPut(store,value){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).put(value);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
 async function idbClear(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).clear();tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
@@ -88,6 +88,86 @@ async function loadLocal(){
   return state.companyRows;
 }
 function cacheFresh(){return !!state.companyRows.length&&!!state.lastSyncAt&&(Date.now()-state.lastSyncAt)<CACHE_TTL_MS}
+const CRM_KEYS={Clientes:"ClienteId",Interacoes:"InteracaoId",PipelineCRM:"OportunidadeId",AgendaCRM:"EventoId",Honorarios:"id"};
+async function loadCrmCache(){
+  const items=await idbAll("crm").catch(()=>[]);
+  for(const item of items||[])if(item?.key&&Array.isArray(item.rows))state.crm[item.key]=item.rows;
+  state.crmLoaded=items.length>0;
+  return state.crm;
+}
+async function saveCrmCache(table){
+  await idbPut("crm",{key:table,rows:state.crm[table]||[],ts:Date.now()});
+}
+function crmKey(table,row){
+  const k=CRM_KEYS[table]||"id";return String(row?.[k]||row?.id||"").trim();
+}
+function crmUpsertLocal(table,row){
+  if(!state.crm[table])state.crm[table]=[];
+  const key=crmKey(table,row),list=state.crm[table];
+  const i=key?list.findIndex(x=>crmKey(table,x)===key):-1;
+  if(i>=0)list[i]={...list[i],...row};else list.unshift(row);
+}
+async function queueCrmWrite(table,row){
+  const db=await openDb();
+  await new Promise((res,rej)=>{const tx=db.transaction("crmOutbox","readwrite");tx.objectStore("crmOutbox").add({table,row,ts:Date.now()});tx.oncomplete=res;tx.onerror=()=>rej(tx.error)});
+}
+async function flushCrmOutbox(){
+  const items=await idbAll("crmOutbox").catch(()=>[]);if(!items.length)return {ok:true,written:0};
+  const byTable=new Map();for(const x of items){const a=byTable.get(x.table)||[];a.push(x.row);byTable.set(x.table,a)}
+  let written=0;
+  for(const [table,rows] of byTable){
+    const j=await apiSheets({action:"crm_write",table,rows});
+    written+=Number(j.written||rows.length);
+  }
+  await idbClear("crmOutbox");return {ok:true,written};
+}
+async function crmWrite(table,row,{quiet=false}={}){
+  crmUpsertLocal(table,row);await saveCrmCache(table);
+  if(!navigator.onLine){await queueCrmWrite(table,row);if(!quiet)showBanner("CRM salvo offline; será enviado quando a conexão voltar.","good");return {ok:true,queued:true}}
+  try{
+    const j=await apiSheets({action:"crm_write",table,rows:[row]});
+    state.crmBridgeReady=true;return j;
+  }catch(e){
+    state.crmBridgeReady=false;await queueCrmWrite(table,row);
+    if(!quiet)showBanner("CRM preservado no cache. Bridge da planilha ainda precisa da versão CRM: "+(e.message||String(e)),"bad");
+    return {ok:false,queued:true,error:e.message||String(e)};
+  }
+}
+async function syncCRM({quiet=true}={}){
+  if(state.crmLoading||!state.session||!navigator.onLine)return;
+  state.crmLoading=true;
+  try{
+    await flushCrmOutbox().catch(()=>{});
+    const tables=["Clientes","Interacoes","PipelineCRM","AgendaCRM"];
+    if(elevatedUser())tables.push("Honorarios");
+    for(const table of tables){
+      try{
+        const j=await apiSheets({action:"crm_list",table,limit:table==="Interacoes"?12000:6000});
+        state.crm[table]=Array.isArray(j.rows)?j.rows:[];
+        await saveCrmCache(table);state.crmBridgeReady=true;
+      }catch(e){
+        state.crmBridgeReady=false;
+        if(!quiet&&table==="Clientes")showBanner("Usando CRM derivado da aba Processos até publicar o bridge CRM.","bad");
+        break;
+      }
+    }
+    state.crmLoaded=true;
+  }finally{state.crmLoading=false;render()}
+}
+function crmClients(){
+  const derived=window.LexisCRM?.groupProcessesByClient?window.LexisCRM.groupProcessesByClient(state.companyRows):[];
+  const pById=new Map(derived.map(x=>[String(x.ClienteId),x]));
+  if(!state.crm.Clientes?.length)return derived;
+  const out=state.crm.Clientes.map(c=>{
+    const id=String(c.ClienteId||""),p=pById.get(id)||{};
+    return {...p,...c,ClienteId:id,Nome:c.Nome||p.Nome||"",processos:p.processos||[],protocolos:p.protocolos||[],Telefone_Principal:c.Telefone_Principal||p.Telefone_Principal||"",Responsavel:c.Responsavel||p.Responsavel||""};
+  });
+  for(const d of derived)if(!out.some(x=>String(x.ClienteId)===String(d.ClienteId)))out.push(d);
+  return out.sort((a,b)=>String(a.Nome||"").localeCompare(String(b.Nome||""),"pt-BR"));
+}
+function clientById(id){return crmClients().find(c=>String(c.ClienteId)===String(id))||null}
+function crmRowsForClient(table,id){return (state.crm[table]||[]).filter(x=>String(x.ClienteId||x.cliente_id||"")===String(id))}
+
 async function queueWrite(row){
   const list=await idbAll("outbox"),k=keyOf(row);
   const db=await openDb();
@@ -119,6 +199,7 @@ async function syncFromCloud(opts={}){
   if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
   try{
     try{await flushOutbox()}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
+    try{await flushCrmOutbox()}catch(_){}
     const payload={action:"list",limit:8000,scope:"company"};
     const j=await apiSheets(payload);
     let rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
@@ -132,14 +213,15 @@ async function syncFromCloud(opts={}){
       showBanner("Sincronização concluída: "+rows.length+" processos da empresa em cache"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
     }
     render();
+    void syncCRM({quiet:true}).catch(()=>{});
   } finally { state.syncing=false; }
 }
 function startAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
   state.autoSyncTimer=setInterval(async()=>{
     if(!state.session||!navigator.onLine||document.hidden||state.syncing)return;
-    const pending=await outboxCount().catch(()=>0);
-    if(cacheFresh()&&!pending)return;
+    const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
+    if(cacheFresh()&&!pending&&!crmPending)return;
     try{await syncFromCloud({quiet:true})}catch(_){}
   },300000);
 }
@@ -244,12 +326,16 @@ function titleFor(v){return {
   dashboard:["COMMAND CENTER","Dashboard"],
   processos:["CARTEIRA","Processos"],
   empresa:["EMPRESA","Processos da empresa"],
+  clientes:["CRM","Clientes"],
+  pipeline:["CRM","Pipeline"],
+  agenda:["CRM","Agenda"],
+  financeiro:["CRM","Financeiro"],
   tarefas:["OPERAÇÃO","Tarefas"],
   analise:["INTELIGÊNCIA","Análise"],
   report:["EXECUTIVO","Report"],
   scanner:["REDE JUDICIAL","DataJud + DJEN"]
 }[v]||["LEXISPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",processos:"/processos",empresa:"/processos-empresa",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
+const viewPaths={dashboard:"/",processos:"/processos",empresa:"/processos-empresa",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner"};
 function pathView(){const p=location.pathname.replace(/\/+$/,"")||"/";return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard"}
 function setView(v,push=true){
   state.view=v;
@@ -259,17 +345,21 @@ function setView(v,push=true){
   render();
 }
 function render(){
-  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
+  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navClientes").textContent=crmClients().length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
   if(state.view==="dashboard")renderDashboard();
   else if(state.view==="processos")renderProcessos();
   else if(state.view==="empresa")renderEmpresa();
+  else if(state.view==="clientes")renderClientes();
+  else if(state.view==="pipeline")renderPipeline();
+  else if(state.view==="agenda")renderAgenda();
+  else if(state.view==="financeiro")renderFinanceiro();
   else if(state.view==="tarefas")renderTarefas();
   else if(state.view==="analise")renderAnalise();
   else if(state.view==="report")renderReport();
   else if(state.view==="scanner")renderScanner();
   else setView("dashboard",false);
 }
-async function updateSyncUi(){const count=await outboxCount(),online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+(count?" • "+count+" pendente(s)":"")}
+async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function renderDashboard(){
   const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
@@ -400,6 +490,103 @@ function renderTarefas(){
     '<div class="kpi-grid">'+kpi("Fila total",list.length,"clientes priorizados")+kpi("Críticas",critical,"ação imediata","bad")+kpi("Altas",high,"alta prioridade","warn")+kpi("Novidades",list.filter(x=>boolish(pick(x.r,"Nova Atualização","Novo Andamento"))).length,"já registradas na planilha")+kpi("Vencidos",list.filter(x=>statusRet(x.r)==="VENCIDO").length,"retorno vencido","bad")+kpi("Rotina",list.filter(x=>x.w<600).length,"casos mais tranquilos","good")+'</div>'+
     '<div class="task-grid">'+list.map(taskCardHtml).join("")+'</div>';
   bindTaskActions();
+}
+
+function clientProcesses(c){
+  const id=String(c?.ClienteId||"");
+  const byId=state.companyRows.filter(r=>String(pick(r,"ClienteId")||"")===id);
+  if(byId.length)return byId;
+  const name=norm(c?.Nome||c?.Cliente||"");
+  return state.companyRows.filter(r=>norm(pick(r,"Cliente"))===name);
+}
+function clientPipeline(c){
+  const rows=crmRowsForClient("PipelineCRM",c.ClienteId);
+  if(rows.length)return rows;
+  const procs=clientProcesses(c),sample=procs.find(r=>commercialStatus(r).includes("POTENCIAL"))||procs[0];
+  if(!sample)return[];
+  const cs=commercialStatus(sample);
+  const etapa=cs.includes("NÃO VENDER")?"Perdido":cs.includes("POTENCIAL")?"Oportunidade":"Triagem";
+  return [{OportunidadeId:"derived:"+c.ClienteId,ClienteId:c.ClienteId,Protocolo:pick(sample,"Protocolo"),Etapa:etapa,Servico:pick(sample,"Produto / Oportunidade","Produtos"),Responsavel:c.Responsavel,_derived:true}];
+}
+function parseMoney(v){
+  if(typeof v==="number")return v;
+  let s=String(v??"").trim().replace(/R\$\s*/g,"").replace(/\./g,"").replace(",",".");
+  const n=Number(s);return Number.isFinite(n)?n:0;
+}
+function money(v){return Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}
+function renderClientes(){
+  const clients=crmClients(),q=norm(state.query);
+  if(state.clientId){renderCliente360(state.clientId);return}
+  const rows=clients.filter(c=>!q||norm([c.Nome,c.Telefone_Principal,c.Responsavel,...(c.protocolos||[])].join(" ")).includes(q)).slice(0,3000);
+  $("#content").innerHTML=
+    '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">CRM • GOOGLE SHEETS</span><strong>Clientes</strong><span>'+rows.length+' de '+clients.length+' cliente(s)</span></div><div class="toolbar"><input id="clientSearch" placeholder="Pesquisar cliente, telefone ou CNJ…" value="'+esc(state.query)+'"/><span class="badge '+(state.crmBridgeReady?'b-good':'b-warn')+'">'+(state.crmBridgeReady?'CRM sincronizado':'CRM derivado de Processos')+'</span></div></div>'+
+    '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente</th><th>Contato</th><th>Processos</th><th>Assistente</th><th>Último retorno</th><th>Próximo retorno</th><th>Pipeline</th><th></th></tr></thead><tbody>'+
+    rows.map(c=>{
+      const procs=clientProcesses(c),pipe=clientPipeline(c)[0]||{};
+      return '<tr><td><div class="cell-main">'+esc(c.Nome||"SEM NOME")+'</div><div class="cell-sub mono">'+esc(c.ClienteId||"")+'</div></td><td><div class="cell-main">'+esc(c.Telefone_Principal||"—")+'</div><div class="cell-sub">'+esc(c.Email||"")+'</div></td><td>'+badge(procs.length,"blue")+'</td><td>'+esc(c.Responsavel||"—")+'</td><td>'+esc(c.ultimoRetorno||"—")+'</td><td>'+esc(c.proximoRetorno||"—")+'</td><td>'+badge(pipe.Etapa||"Triagem",pipe.Etapa==="Perdido"?"bad":pipe.Etapa==="Oportunidade"?"good":"gray")+'</td><td><button class="icon-action" data-client-open="'+esc(c.ClienteId)+'">Abrir 360°</button></td></tr>';
+    }).join("")+'</tbody></table></div>';
+  $("#clientSearch").oninput=e=>{state.query=e.target.value;renderClientes()};
+  $("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;state.query="";renderClientes()});
+}
+function renderCliente360(id){
+  const c=clientById(id);if(!c){state.clientId=null;renderClientes();return}
+  const procs=clientProcesses(c),inter=crmRowsForClient("Interacoes",id).sort((a,b)=>String(b.DataHora||"").localeCompare(String(a.DataHora||"")));
+  const pipe=clientPipeline(c),agenda=crmRowsForClient("AgendaCRM",id),fin=(state.crm.Honorarios||[]).filter(x=>String(x.cliente_id||x.ClienteId||"")===String(id)||procs.some(p=>digits(x.protocolo)===digits(pick(p,"Protocolo"))));
+  const openValue=fin.filter(x=>!/pago|quitado/i.test(String(x.status||""))).reduce((a,x)=>a+parseMoney(x.valor),0);
+  $("#content").innerHTML=
+    '<div class="crm360-head"><div><button class="btn sm" id="clientBack">← Clientes</button><span class="eyebrow">CLIENTE 360° • PLANILHA</span><h2>'+esc(c.Nome||"SEM NOME")+'</h2><p>'+esc(c.Telefone_Principal||"Sem telefone")+' · '+esc(c.Email||"sem e-mail")+' · Responsável '+esc(c.Responsavel||"—")+'</p></div><div class="command-actions"><button class="btn" id="clientWhatsApp">WhatsApp</button><button class="btn primary" id="clientNewProcess">Novo processo</button></div></div>'+
+    '<div class="kpi-grid crm-kpis">'+kpi("Processos",procs.length,"vinculados por ClienteId")+kpi("Interações",inter.length,"linha do tempo")+kpi("Pipeline",pipe[0]?.Etapa||"Triagem",pipe.length+" oportunidade(s)")+kpi("Agenda",agenda.length,"eventos CRM")+kpi("Financeiro",elevatedUser()?money(openValue):"Restrito","em aberto")+kpi("Próximo retorno",c.proximoRetorno||"—","carteira processual")+'</div>'+
+    '<div class="crm360-grid"><section class="card"><div class="card-head"><div><span class="eyebrow">RELACIONAMENTO</span><h3>Linha do tempo</h3></div></div><div class="card-body"><div class="interaction-compose"><select id="interactionCanal"><option>WhatsApp</option><option>Telefone</option><option>E-mail</option><option>Reunião</option><option>Interno</option></select><input id="interactionSubject" placeholder="Assunto"/><textarea id="interactionText" placeholder="Registre o que aconteceu e o próximo passo"></textarea><button class="btn primary" id="saveInteractionBtn">Registrar interação</button></div><div class="timeline">'+
+    (inter.length?inter.slice(0,30).map(x=>'<div class="timeline-item"><div class="timeline-dot"></div><div><strong>'+esc(x.Assunto||x.Tipo||x.Canal||"Interação")+'</strong><small>'+esc(x.DataHora||"")+' · '+esc(x.Usuario||"")+' · '+esc(x.Canal||"")+'</small><p>'+esc(x.Conteudo||"")+'</p>'+(x.ProximoPasso?'<span>Próximo: '+esc(x.ProximoPasso)+'</span>':'')+'</div></div>').join(""):'<div class="empty">Nenhuma interação CRM registrada ainda.</div>')+
+    '</div></div></section>'+
+    '<section class="card"><div class="card-head"><div><span class="eyebrow">OPERAÇÃO</span><h3>Processos vinculados</h3></div></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>CNJ</th><th>Status</th><th>Movimentação</th><th>Retorno</th><th></th></tr></thead><tbody>'+
+    procs.map(r=>'<tr><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":"gray")+'</td><td><div class="clamp2">'+esc(String(latestMove(r)||"").slice(0,160))+'</div></td><td>'+esc(pick(r,"Próximo Retorno")||"—")+'</td><td><button class="icon-action" data-edit="'+esc(keyOf(r))+'">Gerir</button></td></tr>').join("")+
+    '</tbody></table></div></section></div>'+
+    '<div class="grid-2 crm-bottom"><section class="card"><div class="card-head"><div><span class="eyebrow">PIPELINE</span><h3>Comercial</h3></div></div><div class="card-body metric-list">'+(pipe.length?pipe.map(x=>metricRow(x.Servico||"Oportunidade",x.Etapa||"Triagem",x.Responsavel||"")).join(""):'<div class="empty">Sem oportunidade.</div>')+'</div></section>'+
+    '<section class="card"><div class="card-head"><div><span class="eyebrow">AGENDA</span><h3>Próximos compromissos</h3></div></div><div class="card-body metric-list">'+(agenda.length?agenda.slice(0,10).map(x=>metricRow(x.Titulo||x.Tipo,x.Inicio||"—",x.Responsavel||"")).join(""):'<div class="empty">Sem eventos CRM.</div>')+'</div></section></div>';
+  $("#clientBack").onclick=()=>{state.clientId=null;renderClientes()};
+  $("#clientNewProcess").onclick=()=>openProcess("");
+  $("#clientWhatsApp").onclick=()=>{const tel=window.LexisCRM?.normalizePhone(c.Telefone_Principal)||"";if(!tel)return showBanner("Cliente sem telefone válido.","bad");window.open("https://wa.me/"+digits(tel),"_blank","noopener")};
+  $("#saveInteractionBtn").onclick=()=>saveClientInteraction(c);
+  $("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
+}
+async function saveClientInteraction(c){
+  const text=String($("#interactionText")?.value||"").trim();if(!text){showBanner("Escreva o conteúdo da interação.","bad");return}
+  const actor=currentUser().nome||currentUser().usuario||"Usuário",ts=new Date().toISOString();
+  const row={
+    InteracaoId:window.LexisCRM?.stableId("int",c.ClienteId,ts,actor)||("int_"+Date.now()),
+    ClienteId:c.ClienteId,Protocolo:"",Canal:$("#interactionCanal").value,Tipo:"Contato",
+    Assunto:$("#interactionSubject").value.trim()||"Contato com cliente",Conteudo:text,Usuario:actor,DataHora:ts,Resultado:"Registrado",ProximoPasso:"",DataProximoPasso:"",OptOut:c.OptOutWhatsApp||""
+  };
+  await crmWrite("Interacoes",row);renderCliente360(c.ClienteId);
+}
+function pipelineData(){
+  if(state.crm.PipelineCRM?.length)return state.crm.PipelineCRM;
+  const rows=[];for(const c of crmClients())rows.push(...clientPipeline(c));return rows;
+}
+function renderPipeline(){
+  const rows=pipelineData(),stages=["Lead","Triagem","Consulta","Oportunidade","Proposta","Contrato","Cliente Ativo","Perdido"];
+  const normalized=s=>String(s||"Triagem");
+  $("#content").innerHTML='<div class="command-strip"><div><span class="eyebrow">CRM • FUNIL COMERCIAL</span><h2>Pipeline</h2><p>Lead → consulta → proposta → contrato → cliente ativo. Enquanto não houver registro explícito, a triagem é derivada da análise comercial dos processos.</p></div></div><div class="pipeline-board">'+stages.map(stage=>{
+    const items=rows.filter(x=>normalized(x.Etapa)===stage);
+    return '<section class="pipeline-col"><header><strong>'+esc(stage)+'</strong><span>'+items.length+'</span></header><div>'+items.slice(0,80).map(x=>{const cl=clientById(x.ClienteId);return '<button class="pipeline-card" data-client-open="'+esc(x.ClienteId||"")+'"><strong>'+esc(cl?.Nome||x.Cliente||"Cliente")+'</strong><small>'+esc(x.Servico||x.Origem||"")+'</small>'+(x.ValorEstimado?'<span>'+esc(money(parseMoney(x.ValorEstimado)))+'</span>':'')+'</button>'}).join("")+'</div></section>';
+  }).join("")+'</div>';
+  $("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;setView("clientes")});
+}
+function renderAgenda(){
+  const explicit=[...(state.crm.AgendaCRM||[])].map(x=>({...x,_source:"CRM"}));
+  const derived=state.companyRows.filter(r=>pick(r,"Próximo Retorno")).map(r=>({
+    EventoId:"ret:"+keyOf(r),ClienteId:pick(r,"ClienteId"),Protocolo:pick(r,"Protocolo"),Tipo:"Retorno",Titulo:"Retorno • "+(pick(r,"Cliente")||"Cliente"),Inicio:pick(r,"Próximo Retorno"),Responsavel:pick(r,"Assistente"),Status:statusRet(r),_source:"Processos"
+  }));
+  const rows=[...explicit,...derived].sort((a,b)=>(parseDate(a.Inicio)?.getTime()||9e15)-(parseDate(b.Inicio)?.getTime()||9e15)).slice(0,1200);
+  $("#content").innerHTML='<div class="command-strip"><div><span class="eyebrow">CRM • AGENDA</span><h2>Agenda operacional</h2><p>Retornos processuais + compromissos gravados em AgendaCRM.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Quando</th><th>Tipo</th><th>Cliente / título</th><th>CNJ</th><th>Responsável</th><th>Status</th><th>Fonte</th></tr></thead><tbody>'+rows.map(x=>{const cl=clientById(x.ClienteId);return '<tr><td>'+esc(x.Inicio||"—")+'</td><td>'+esc(x.Tipo||"Evento")+'</td><td><div class="cell-main">'+esc(cl?.Nome||x.Titulo||"—")+'</div><div class="cell-sub">'+esc(x.Titulo||"")+'</div></td><td class="mono">'+esc(cnjFormatted(x.Protocolo||""))+'</td><td>'+esc(x.Responsavel||"—")+'</td><td>'+badge(x.Status||"PENDENTE",/venc/i.test(x.Status||"")?"bad":/aten|hoje/i.test(x.Status||"")?"warn":"gray")+'</td><td>'+esc(x._source)+'</td></tr>'}).join("")+'</tbody></table></div>';
+}
+function renderFinanceiro(){
+  if(!elevatedUser()){
+    $("#content").innerHTML='<div class="permission-card"><span class="eyebrow">FINANCEIRO • ACESSO RESTRITO</span><h2>Honorários e receita</h2><p>Esta área fica restrita a administrador/supervisor. A planilha continua sendo a fonte de verdade.</p></div>';return;
+  }
+  const rows=state.crm.Honorarios||[],total=rows.reduce((a,x)=>a+parseMoney(x.valor),0),paid=rows.filter(x=>/pago|quitado/i.test(String(x.status||""))).reduce((a,x)=>a+parseMoney(x.valor),0);
+  $("#content").innerHTML='<div class="kpi-grid">'+kpi("Honorários",rows.length,"lançamentos")+kpi("Valor total",money(total),"contratado")+kpi("Recebido",money(paid),"pago","good")+kpi("Em aberto",money(total-paid),"previsto",total-paid>0?"warn":"good")+kpi("Inadimplência",rows.filter(x=>/venc|inadimpl/i.test(String(x.status||""))).length,"títulos","bad")+kpi("Fonte","Honorarios","Google Sheets")+'</div><div class="table-wrap"><table class="table"><thead><tr><th>Cliente</th><th>Processo</th><th>Tipo</th><th>Valor</th><th>Status</th><th>Vencimento</th><th>Responsável</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+esc(x.cliente||clientById(x.cliente_id)?.Nome||"—")+'</td><td class="mono">'+esc(cnjFormatted(x.protocolo||""))+'</td><td>'+esc(x.tipo||"—")+'</td><td>'+esc(money(parseMoney(x.valor)))+'</td><td>'+badge(x.status||"—",/pago|quitado/i.test(x.status||"")?"good":/venc|inadimpl/i.test(x.status||"")?"bad":"warn")+'</td><td>'+esc(x.vencimento||"—")+'</td><td>'+esc(x.responsavel||"—")+'</td></tr>').join("")+'</tbody></table></div>';
 }
 
 function renderAnalise(){
@@ -572,12 +759,19 @@ async function markContacted(key){
   const row=findRow(key);if(!row)return;
   const actor=currentUser().nome||currentUser().usuario||"Usuário";
   const retorno=todayBrazil(),nowIso=new Date().toISOString();
+  const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
+  if(clientId&&!pick(row,"ClienteId"))row.ClienteId=clientId;
   Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso});
   updateLocalRow(row);await saveRows(state.companyRows);
-  const patch={"Protocolo":pick(row,"Protocolo"),"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
-  await queueWrite(patch);render();
-  if(!navigator.onLine){showBanner("Atendimento salvo no cache. Será enviado quando a conexão voltar.","good");return}
-  try{await flushOutbox();showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
+  const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
+  await queueWrite(patch);
+  if(clientId){
+    const interaction={InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),ClienteId:clientId,Protocolo:pick(row,"Protocolo"),Canal:"Atendimento",Tipo:"Retorno",Assunto:"Atendimento registrado",Conteudo:"Cliente marcado como contatado no SheetsPredict.",Usuario:actor,DataHora:nowIso,Resultado:"Contatado",ProximoPasso:"",DataProximoPasso:"",OptOut:""};
+    await crmWrite("Interacoes",interaction,{quiet:true});
+  }
+  render();
+  if(!navigator.onLine){showBanner("Atendimento e histórico CRM salvos no cache. Serão enviados quando a conexão voltar.","good");return}
+  try{await flushOutbox();await flushCrmOutbox().catch(()=>{});showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
   catch(e){showBanner("Atendimento ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
 }
 function auditCached(row){
@@ -653,13 +847,14 @@ async function refreshAudit(keepSuggest=false){
   renderAuditDialog();render();
 }
 function openProcess(key){
-  const r=findRow(key)||{},isNew=!key,u=currentUser();
+  const isNew=!key,u=currentUser(),linkedClient=isNew&&state.clientId?clientById(state.clientId):null;
+  const r=findRow(key)||{};
   $("#editKey").value=key||"";$("#processDialogTitle").textContent=isNew?"Novo cadastro":"Editar processo";
-  $("#fCliente").value=pick(r,"Cliente");$("#fProtocolo").value=pick(r,"Protocolo");
-  $("#fAssistente").value=pick(r,"Assistente")||(u.nome||u.usuario||"");
+  $("#fCliente").value=pick(r,"Cliente")||linkedClient?.Nome||"";$("#fProtocolo").value=pick(r,"Protocolo");
+  $("#fAssistente").value=pick(r,"Assistente")||linkedClient?.Responsavel||(u.nome||u.usuario||"");
   $("#fAssistente").readOnly=!isNew;$("#fProtocolo").readOnly=!isNew;
   $("#assistenteHint").textContent=isNew?"Novo cadastro entra na sua carteira por padrão.":"Editar não transfere a carteira. Assistente permanece "+($("#fAssistente").value||"inalterado")+".";
-  $("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório","Escritorio");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone");$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações","Observacao");$("#processStatus").textContent="";$("#processDialog").showModal()
+  $("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório","Escritorio");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone")||linkedClient?.Telefone_Principal||"";$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações","Observacao");$("#processStatus").textContent="";$("#processDialog").showModal()
 }
 async function saveProcess(){
   const key=$("#editKey").value,isNew=!key;
@@ -678,10 +873,23 @@ async function saveProcess(){
     "Observações":$("#fObs").value.trim()
   };
   if(!String(next["Protocolo"]||"").trim()){showBanner("Informe o Protocolo/CNJ.","bad");return}
+  const crm=window.LexisCRM;
+  if(crm){
+    const validation=crm.validateProcess(next);
+    if(!validation.ok){showBanner(validation.errors.join(" • "),"bad");return}
+    if(next["Telefone"])next["Telefone"]=crm.normalizePhone(next["Telefone"])||next["Telefone"];
+  }
+  const linkedClient=state.clientId?clientById(state.clientId):null;
+  const clientId=pick(current,"ClienteId")||linkedClient?.ClienteId||(crm?.stableClientId?crm.stableClientId({Cliente:next["Cliente"],Telefone:next["Telefone"]}):"");
+  next["ClienteId"]=clientId;
   if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
   updateLocalRow(next);await saveRows(state.companyRows);
+  if(clientId){
+    const clientRecord={ClienteId:clientId,Tipo:"Pessoa",Nome:next["Cliente"],Telefone_Principal:next["Telefone"],Origem:"App",Status:"ATIVO",Responsavel:next["Assistente"],OptOutWhatsApp:"NÃO",AtualizadoEm:new Date().toISOString()};
+    await crmWrite("Clientes",clientRecord,{quiet:true});
+  }
   const writePayload={
-    "Protocolo":next["Protocolo"],"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
+    "Protocolo":next["Protocolo"],"ClienteId":clientId,"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
   };
   if(isNew)writePayload["Assistente"]=next["Assistente"];
   await queueWrite(writePayload);render();
@@ -703,8 +911,8 @@ function setupEvents(){
   $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
   $("#logoutBtn").onclick=async()=>{
     stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}
-    saveSession(null);state.rows=[];state.companyRows=[];state.lastSync=null;state.lastSyncAt=0;
-    await Promise.all([idbClear("rows").catch(()=>{}),idbClear("meta").catch(()=>{}),idbClear("outbox").catch(()=>{})]);
+    saveSession(null);state.rows=[];state.companyRows=[];state.crm={Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]};state.lastSync=null;state.lastSyncAt=0;state.clientId=null;
+    await Promise.all([idbClear("rows").catch(()=>{}),idbClear("meta").catch(()=>{}),idbClear("outbox").catch(()=>{}),idbClear("crm").catch(()=>{}),idbClear("crmOutbox").catch(()=>{})]);
     setLogged(false);updateSyncUi();
   };
   $("#saveProcessBtn").onclick=saveProcess;
@@ -726,8 +934,8 @@ function setupEvents(){
   window.addEventListener("online",async()=>{
     updateSyncUi();
     if(state.session){
-      const pending=await outboxCount().catch(()=>0);
-      if(!cacheFresh()||pending){
+      const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
+      if(!cacheFresh()||pending||crmPending){
         showBanner("Conexão restaurada. Sincronizando alterações pendentes…","good");
         try{await syncFromCloud({quiet:true})}catch(_){}
       }
@@ -736,8 +944,8 @@ function setupEvents(){
   window.addEventListener("offline",()=>{updateSyncUi();if(state.session&&state.companyRows.length)showBanner("Modo offline: usando a carteira em cache.","good")});
   window.addEventListener("focus",async()=>{
     if(!state.session||!navigator.onLine||state.syncing)return;
-    const pending=await outboxCount().catch(()=>0);
-    if(!cacheFresh()||pending)try{await syncFromCloud({quiet:true})}catch(_){}
+    const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
+    if(!cacheFresh()||pending||crmPending)try{await syncFromCloud({quiet:true})}catch(_){}
   });
   window.addEventListener("popstate",()=>setView(pathView(),false));
 }
@@ -749,6 +957,7 @@ async function boot(){
   const cachedSession=restoreSession();
   if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
   try{await loadLocal()}catch(_){state.companyRows=[];state.rows=[]}
+  try{await loadCrmCache()}catch(_){}
 
   // Offline-first: em F5 sem rede, mantém a sessão visual e os dados já validados
   // anteriormente neste navegador. Nenhum token é salvo no localStorage.
@@ -767,6 +976,8 @@ async function boot(){
     if(!cacheFresh()||!state.companyRows.length||pending){
       // Renderiza primeiro o cache; a sincronização pesada vem depois.
       void syncFromCloud({quiet:true}).catch(e=>showBanner("Cache disponível; sincronização falhou: "+(e.message||String(e)),"bad"));
+    } else {
+      void syncCRM({quiet:true}).catch(()=>{});
     }
   }catch(e){
     saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);

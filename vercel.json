@@ -45,6 +45,22 @@
     {
       "source": "/scanner",
       "destination": "/index.html"
+    },
+    {
+      "source": "/clientes",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/pipeline",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/agenda",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/financeiro",
+      "destination": "/index.html"
     }
   ]
 }
