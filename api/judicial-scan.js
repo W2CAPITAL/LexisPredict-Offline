@@ -13,7 +13,8 @@ module.exports=async(req,res)=>{
       lastDjenDate:body.lastDjenDate||"",
       dataInicio:body.dataInicio||undefined,
       dataFim:body.dataFim||undefined,
-      mode:["datajud","djen","both"].includes(body.mode)?body.mode:"both"
+      mode:["datajud","djen","both"].includes(body.mode)?body.mode:"both",
+      cliente:body.cliente||""
     });
     const rateLimited=!!result?.djen?.isRateLimited;
     if(rateLimited&&result.djen.retryAfterMs)res.setHeader("Retry-After",String(Math.ceil(result.djen.retryAfterMs/1000)));
