@@ -251,7 +251,7 @@ async function scanOne(cnj,quiet=false){
   }
   const row=state.rows.find(x=>digits(pick(x,"Protocolo"))===d)||null;
   try{
-    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",mode:"both"}),cache:"no-store"});
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",lastDjenId:row?pick(row,"_DJENId"):"",lastDjenDate:row?pick(row,"_DJENDate","DJEN • Data"):"",mode:"both"}),cache:"no-store"});
     const j=await r.json();state.lastScan=j;
     if(j.patch&&row){
       Object.assign(row,j.patch);
