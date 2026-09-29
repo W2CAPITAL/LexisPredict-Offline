@@ -285,3 +285,23 @@ body.sidebar-collapsed .global-x-scroll{left:76px}
   .global-x-scroll{left:76px}
   .search-field{width:100%;min-width:0}
 }
+
+
+/* SheetsPredict 3.0 — Central Integrada */
+.hub-shell{display:grid;gap:14px;min-width:0}
+.hub-tabs{display:flex;gap:6px;align-items:center;overflow-x:auto;padding:5px;background:#fff;border:1px solid var(--line);border-radius:12px;scrollbar-width:thin}
+.hub-tabs button{height:36px;border:0;background:transparent;color:#667085;border-radius:8px;padding:0 13px;font-size:10px;font-weight:900;white-space:nowrap;letter-spacing:.02em}
+.hub-tabs button:hover{background:#f2f4f7;color:#344054}.hub-tabs button.active{background:#102a43;color:#fff}
+.hub-body{min-width:0}.hub-grid{display:grid;gap:14px;align-items:start}.hub-grid.two{grid-template-columns:minmax(0,1.4fr) minmax(320px,.8fr)}.hub-grid.ai-layout{grid-template-columns:minmax(0,1.55fr) minmax(260px,.45fr)}
+.hub-kpis{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:10px}.hub-kpis.compact{grid-template-columns:repeat(3,minmax(120px,1fr));padding:14px}
+.hub-source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:14px}.hub-source-card{border:1px solid var(--line);border-radius:10px;padding:11px;background:#fbfcfe;min-width:0}.hub-source-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.hub-source-card strong{font-size:11px}.hub-source-card p{font-size:10px;color:#475467;line-height:1.45;margin:8px 0 5px}.hub-source-card small{display:block;color:#98a2b3;font:8px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hub-actions{display:grid;gap:8px;padding:14px}.hub-action{border:1px solid var(--line);border-left:4px solid #1677d2;background:#fff;border-radius:9px;padding:11px;text-align:left;display:grid;gap:4px}.hub-action:hover{background:#f7faff;border-color:#98b8ec}.hub-action strong{font-size:11px;color:#1d2939}.hub-action span{font-size:9px;color:#667085}
+.hub-form{padding:14px;display:grid;gap:10px}.hub-form label{display:grid;gap:5px;font-size:9px;font-weight:850;color:#475467}.hub-form input,.hub-form textarea,.hub-compose input,.hub-compose textarea{width:100%;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#1d2939;padding:9px 10px;font:inherit}.hub-form input,.hub-compose input{height:38px}.hub-form textarea,.hub-compose textarea{min-height:104px;resize:vertical}
+.hub-note{font-size:10px;line-height:1.55;color:#475467;margin:0}.hub-check{display:flex!important;align-items:center;gap:6px!important;font-size:9px!important;color:#667085!important}.hub-check input{width:auto!important;height:auto!important}
+.hub-ai-card{min-height:580px;display:flex;flex-direction:column}.hub-chat{padding:14px;display:flex;flex-direction:column;gap:9px;min-height:330px;max-height:54vh;overflow:auto;background:#f8fafc;border-bottom:1px solid var(--line)}.hub-msg{max-width:88%;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:10px;line-height:1.55;background:#fff}.hub-msg.user{align-self:flex-end;background:#eef5ff;border-color:#bfd7fa}.hub-msg.assistant{align-self:flex-start}.hub-msg-meta{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#667085;margin-bottom:5px}.hub-compose{padding:12px;display:grid;gap:8px;margin-top:auto}
+.lead-result{display:grid;gap:9px}.lead-result strong{display:block;font-size:12px}.lead-result small{display:block;color:#667085;font-size:8px;margin-top:3px;word-break:break-all}.lead-result p{font-size:9px;line-height:1.5;color:#475467;max-height:120px;overflow:auto}.lead-contact-row,.lead-contact-list{display:flex;gap:6px;flex-wrap:wrap}.lead-contact-list span{font-size:9px;border:1px solid var(--line);border-radius:7px;padding:5px 7px;background:#f8fafc}
+.integration-env{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.integration-env code{font-size:9px;border:1px solid #d0d5dd;background:#f8fafc;border-radius:6px;padding:5px 7px;color:#344054}
+.hub-body .metric-list{display:grid;gap:0}.hub-body .table{min-width:680px}
+
+@media(max-width:1180px){.hub-kpis{grid-template-columns:repeat(3,1fr)}.hub-grid.two,.hub-grid.ai-layout{grid-template-columns:1fr}.hub-source-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:680px){.hub-kpis,.hub-kpis.compact{grid-template-columns:1fr 1fr}.hub-source-grid{grid-template-columns:1fr}.hub-msg{max-width:96%}}
