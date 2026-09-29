@@ -828,17 +828,26 @@ function ensureGlobalXScroll(){
   document.body.appendChild(dock);
   dock.addEventListener("scroll",()=>{
     if(globalXBusy||!globalXTarget)return;
-    globalXBusy=true;globalXTarget.scrollLeft=dock.scrollLeft;globalXBusy=false;
+    const dockRange=Math.max(0,dock.scrollWidth-dock.clientWidth);
+    const targetRange=Math.max(0,globalXTarget.scrollWidth-globalXTarget.clientWidth);
+    const ratio=dockRange?dock.scrollLeft/dockRange:0;
+    globalXBusy=true;
+    globalXTarget.scrollLeft=ratio*targetRange;
+    globalXBusy=false;
   });
   return dock;
 }
 function horizontalScrollCandidates(){
   const root=$("#content");if(!root)return[];
-  return [...root.querySelectorAll(".table-wrap,.pipeline-board,.lexis-tabbar")].filter(el=>el.scrollWidth>el.clientWidth+4);
+  return [...root.querySelectorAll(".table-wrap,.pipeline-board")].filter(el=>el.scrollWidth>el.clientWidth+4);
+}
+function clearGlobalXTarget(){
+  if(globalXTarget)globalXTarget.classList.remove("global-scroll-target");
+  globalXTarget=null;
 }
 function updateGlobalXScroll(){
   const dock=ensureGlobalXScroll(),root=$("#content");
-  if(!root){dock.classList.remove("active");globalXTarget=null;return}
+  if(!root){dock.classList.remove("active");clearGlobalXTarget();return}
   const rr=root.getBoundingClientRect();
   const visible=horizontalScrollCandidates().map(el=>({el,r:el.getBoundingClientRect()}))
     .filter(x=>x.r.bottom>rr.top+24&&x.r.top<rr.bottom-24)
@@ -848,12 +857,22 @@ function updateGlobalXScroll(){
       return bv-av;
     });
   const target=visible[0]?.el||null;
-  if(!target){dock.classList.remove("active");globalXTarget=null;return}
-  globalXTarget=target;
-  const inner=dock.firstElementChild;
-  inner.style.width=Math.max(target.scrollWidth,target.clientWidth)+"px";
+  if(!target){dock.classList.remove("active");clearGlobalXTarget();return}
+  if(globalXTarget!==target){
+    clearGlobalXTarget();
+    globalXTarget=target;
+    globalXTarget.classList.add("global-scroll-target");
+  }
   dock.classList.add("active");
-  globalXBusy=true;dock.scrollLeft=target.scrollLeft;globalXBusy=false;
+  const targetRange=Math.max(0,target.scrollWidth-target.clientWidth);
+  // Faz o range útil do dock ser exatamente equivalente ao range real da tabela.
+  const inner=dock.firstElementChild;
+  inner.style.width=(dock.clientWidth+targetRange)+"px";
+  const dockRange=Math.max(0,dock.scrollWidth-dock.clientWidth);
+  const ratio=targetRange?target.scrollLeft/targetRange:0;
+  globalXBusy=true;
+  dock.scrollLeft=ratio*dockRange;
+  globalXBusy=false;
 }
 function scheduleGlobalXScroll(){
   if(globalXTick)return;
@@ -1632,7 +1651,12 @@ function setupEvents(){
     content.addEventListener("scroll",e=>{
       if(e.target===globalXTarget&&!globalXBusy){
         const dock=document.getElementById("globalXScroll");
-        if(dock){globalXBusy=true;dock.scrollLeft=e.target.scrollLeft;globalXBusy=false}
+        if(dock){
+          const targetRange=Math.max(0,globalXTarget.scrollWidth-globalXTarget.clientWidth);
+          const dockRange=Math.max(0,dock.scrollWidth-dock.clientWidth);
+          const ratio=targetRange?globalXTarget.scrollLeft/targetRange:0;
+          globalXBusy=true;dock.scrollLeft=ratio*dockRange;globalXBusy=false;
+        }
       }
       scheduleGlobalXScroll();
     },true);
