@@ -1,126 +1,23 @@
 # SheetsPredict
 
-## Correção de históricos e navegação (29/09/2026)
+**SheetsPredict** é o cockpit operacional da carteira jurídica conectado ao Google Sheets. A planilha continua sendo a fonte de verdade; o navegador mantém uma réplica local para velocidade e continuidade, enquanto Vercel Functions e Apps Script fazem a ponte segura com serviços externos.
 
-- Corrigidos os seletores de listas que causavam `$(...).forEach is not a function`.
-- Scanner, histórico e Audit enviam os eventos retornados pelo DataJud e DJEN às abas `Movimentações_DataJud` e `Publicações_DJEN`, além do resumo em `Processos`.
-- A gravação preserva os registros anteriores e elimina repetições por CNJ + chave/ID. Falhas mantêm o histórico na fila local para nova tentativa.
-- É necessário atualizar **também** o Apps Script com `installer-script.txt` e publicar uma nova versão da implantação existente. Uma versão antiga recebe o resumo, mas o app mantém o histórico pendente e informa a atualização necessária.
-- O instalador inclui os pontos de entrada `doGet` e `doPost`. Se o projeto já possui um roteador com esses nomes, mantenha um único roteador delegando para `syncDoGet_` / `syncDoPost_`, preservando os demais scripts do scanner.
+**Versão atual: 3.1.2**
 
-Validação: `npm test` inclui navegação com zero/vários botões, persistência e deduplicação de históricos, crescimento das abas e falhas de gravação. Consultas externas podem retornar resultados parciais ou limite de requisições; isso não equivale a ausência de movimentação.
+## Visão geral
 
-**SheetsPredict** é o aplicativo operacional conectado ao Google Sheets, com CRM jurídico, tarefas, DataJud e DJEN.
+O aplicativo reúne em uma única interface:
 
-## O que está implementado
+- Dashboard de carteira, KPIs, retornos, qualidade e produtividade.
+- **Processos** da carteira atribuída ao usuário.
+- **Processos da empresa** com visão autorizada da carteira completa.
+- Clientes 360°, Pipeline CRM, Agenda, Financeiro, Tarefas, Análise e Report.
+- DataJud + DJEN, Audit 3D e histórico do tribunal.
+- Cache IndexedDB, outbox e funcionamento offline-first.
+- Central Integrada com PredictLM, GREY, WA.Auto, SyncCRM, LEADCHECKIN, Leadcheck e regras do LexisPredict.
+- Configurações com temas claros, escuros, jurídicos e de alto contraste.
 
-- Dashboard jurídico com KPIs da carteira.
-- Processos com busca, filtros, score 0–100, qualidade **BOM / NEUTRO / RUIM** e edição.
-- Fila automática de tarefas por prazo, audiência, cumprimento, trânsito/decurso, novidade e qualidade.
-- Aba de análise com fases processuais, advogados, procedência/improcedência e triagem comercial.
-- Cache local em **IndexedDB**: o app continua abrindo sem internet.
-- Outbox de alterações: edições offline são reenviadas quando a conexão volta.
-- Importação CSV e exportação JSON.
-- Bridge opcional de duas vias com Google Sheets via Apps Script.
-- Scanner DJEN server-side para evitar CORS no navegador.
-- Rota compatível com o scanner da planilha: `/api/v1/comunicacao`.
-- PWA/service worker para shell offline.
-
-## Arquitetura
-
-```
-Google Sheets (Processos / Usuarios / DataJud / DJEN)
-        ↕ Apps Script bridge
-Vercel /api/sheets
-        ↕
-SheetsPredict
-        ↕
-IndexedDB + outbox
-
-DJEN:
-Browser → /api/djen → API pública oficial CNJ
-Planilha V6 → <URL Vercel>/api/v1/comunicacao → API pública oficial CNJ
-```
-
-O proxy **não tenta burlar rate limit**. HTTP 429 é devolvido ao cliente e o scanner espera antes de retomar.
-
-## Conectar à planilha
-
-A integração com a planilha é feita por um Apps Script privado vinculado ao arquivo. O código-fonte do bridge não é distribuído neste repositório público.
-
-Configure no backend da Vercel as variáveis de ambiente necessárias e use a implantação `/exec` do Apps Script privado.
-
-O bridge preserva colunas não alteradas ao editar um processo.
-
-## DataJud + DJEN
-
-O módulo judicial do SheetsPredict foi adaptado a partir do núcleo DataJud/DJEN do `W1CAPITAL/LexisPredict` para a arquitetura Sheets + Vercel.
-
-Inclui:
-- consulta DataJud por CNJ, nome e CPF/CNPJ;
-- resolução de aliases TJ/TRF/TRT e tribunais superiores;
-- sanitização e deduplicação de movimentos;
-- detecção de encerramento, cumprimento de sentença, mérito e novidade pós-retorno;
-- consulta DJEN oficial por CNJ, nome, texto e intervalo de datas;
-- normalização de HTML, links de publicação, ato crítico, custas, Busca e Apreensão, CPF e veículo;
-- scanner combinado DataJud + DJEN com atualização dos campos da aba `Processos`;
-- pausa automática em HTTP 429, sem contornar bloqueios ou limites do CNJ.
-
-A chave DataJud não é versionada. Configure `DATAJUD_API_KEY` na Vercel. O DJEN usa por padrão:
-
-`https://comunicaapi.pje.jus.br/api/v1/comunicacao`
-
-## Corrigir o DJEN da planilha V6
-
-Depois do deploy na Vercel, coloque a URL base do site na configuração:
-
-`Config → DJEN proxy URL (opcional)`
-
-Exemplo:
-
-`https://sheetpredict.vercel.app`
-
-O scanner V6 já concatena `/api/v1/comunicacao`. Essa rota usa primeiro o endpoint de produção do DJEN e preserva o comportamento oficial de 429/403.
-
-## Segurança
-
-- O repositório público não contém o código-fonte do Apps Script privado.
-- O token do bridge não é enviado ao navegador; fica nas Environment Variables da Vercel e nas Script Properties do Apps Script.
-- `/api/sheets` aceita somente URLs HTTPS de Apps Script.
-- Não versionar chaves, tokens, URLs privadas de implantação ou credenciais.
-- A autenticação é validada pelo bridge privado conectado à planilha.
-
-## Base usada
-
-Este projeto combina:
-- visual e operação do `W2CAPITAL/LexisPredict`;
-- lógica offline-first do `W1CAPITAL/OFFLINE-LEXISPREDICT`;
-- estrutura real da planilha `LexisPredict_Relatorio_Carteira_2026-08-27`.
-
-## Desenvolvimento local
-
-Não há dependências de frontend.
-
-```bash
-npx serve .
-```
-
-As rotas `/api` são Vercel Functions e funcionam integralmente quando publicadas na Vercel.
-
-## SheetsPredict — Processos da empresa, fila Lexis e cache persistente
-
-A versão **1.6.0** consolida o modo SheetsPredict sem Supabase:
-
-- **Processos da empresa**: qualquer usuário autenticado pode consultar e editar a carteira completa da empresa.
-- **Sem roubar processo**: editar ou registrar atendimento **não altera** o campo `Assistente`/dono da carteira. O crédito fica em `AtendidoPor`.
-- **Novo cadastro**: o botão “Novo cadastro” cria processo novo e atribui o `Assistente` ao usuário atual por padrão.
-- **Última movimentação reutilizada**: DataJud/DJEN já salvos na planilha aparecem imediatamente no app e no Audit 3D; consulta de rede só ocorre quando necessária/solicitada.
-- **Tarefas estilo LexisPredict**: cards operacionais ordenados do caso mais crítico ao mais tranquilo, com mensagem rápida, WhatsApp, sugestão de resposta, Audit 3D e registro de atendimento.
-- **Audit 3D / Sugerir resposta**: substituem o antigo botão “Auditar” da listagem. O Audit 3D combina cache da planilha + DataJud/DJEN quando atualizado.
-- **F5 sem recarga pesada**: sessão visual + IndexedDB são reaproveitados; a carteira só é baixada novamente se o cache estiver antigo ou houver pendências.
-- **Arquitetura**: Google Sheets + Apps Script + IndexedDB/outbox + Vercel Functions. **Não usa Supabase.**
-
-Regra operacional principal:
+A regra operacional central continua sendo:
 
 ```text
 Assistente = dono/carteira
@@ -129,126 +26,262 @@ Editar != atender
 Atender != transferir carteira
 ```
 
-## SheetsPredict CRM — Google Sheets continua sendo a fonte da verdade
+## Arquitetura
 
-A partir da **v1.7.0**, a decisão arquitetural é explícita: o CRM continua na planilha. Não há migração obrigatória para Postgres/Supabase.
+```text
+Google Sheets
+  ├─ Processos
+  ├─ Clientes
+  ├─ Interacoes
+  ├─ PipelineCRM
+  ├─ AgendaCRM
+  ├─ TarefasCRM
+  ├─ DocumentosCRM
+  ├─ Honorarios
+  ├─ Movimentações_DataJud
+  └─ Publicações_DJEN
+          ↕
+Apps Script privado
+          ↕
+Vercel Functions
+  ├─ /api/sheets
+  ├─ /api/datajud
+  ├─ /api/djen
+  ├─ /api/judicial-scan
+  └─ /api/integration-hub
+          ↕
+SheetsPredict
+          ↕
+IndexedDB + outbox + PWA
+```
 
-Para evitar transformar `Processos` em uma tabela única impossível de manter, o CRM usa **abas relacionadas por IDs**:
+O Google Sheets é persistência operacional. IndexedDB é cache/réplica e não substitui a planilha.
+
+## Navegação e grandes listas
+
+As telas de Processos, Processos da empresa, Clientes e Tarefas começam com **200 registros**. A busca é aplicada antes da paginação e permite localizar cliente, CNJ, advogado, assistente e outros campos relevantes.
+
+Para listas largas:
+
+- existe **uma única rolagem vertical principal**, na área de conteúdo;
+- tabelas não mantêm uma segunda rolagem vertical interna;
+- existe **uma única barra horizontal fixa** no rodapé quando a tabela ultrapassa a largura disponível;
+- a barra horizontal é sincronizada proporcionalmente com o intervalo real de rolagem da tabela;
+- a barra horizontal nativa da tabela é ocultada enquanto a barra fixa está assumindo o controle;
+- o menu lateral continua rolável em telas baixas, mas sua barra visual fica oculta.
+
+Isso permite trabalhar em zoom de navegador de 100% sem precisar descer até o fim da tabela para encontrar o scroll horizontal.
+
+## Rotas
+
+| Rota | Tela |
+|---|---|
+| `/` | Dashboard |
+| `/central` | Central Integrada |
+| `/cases` | Processos da carteira |
+| `/processos` | Processos da empresa |
+| `/clientes` | Clientes |
+| `/pipeline` | Pipeline CRM |
+| `/agenda` | Agenda |
+| `/financeiro` | Financeiro |
+| `/tarefas` | Tarefas |
+| `/analise` | Análise |
+| `/report` | Report |
+| `/scanner` | DataJud + DJEN |
+| `/configuracoes` | Configurações e temas |
+
+A navegação interna usa hash routing para resiliência, e o `vercel.json` mantém fallback SPA global para evitar 404 em F5/deep-link.
+
+## CRM no Google Sheets
+
+O CRM permanece distribuído em abas relacionadas por IDs:
 
 | Aba | Função |
 |---|---|
-| `Clientes` | cadastro 360° da pessoa/empresa |
-| `Processos` | processos jurídicos; referencia `ClienteId` |
-| `Interacoes` | WhatsApp, telefone, e-mail, reunião e registros internos |
-| `PipelineCRM` | lead → consulta → proposta → contrato → cliente ativo/perdido |
-| `AgendaCRM` | retornos, reuniões, audiências e outros compromissos |
-| `TarefasCRM` | tarefas manuais, prioridade, SLA, recorrência e checklist |
-| `DocumentosCRM` | metadados de documentos/arquivos do Drive |
-| `Honorarios` | financeiro/honorários; acesso restrito a perfis elevados |
-| `AuditoriaLogsApp` | trilha de alteração com entidade, campo, valor anterior e valor novo |
+| `Clientes` | cadastro 360° |
+| `Processos` | carteira jurídica |
+| `Interacoes` | registros de contato |
+| `PipelineCRM` | funil |
+| `AgendaCRM` | compromissos |
+| `TarefasCRM` | tarefas manuais |
+| `DocumentosCRM` | metadados de documentos |
+| `Honorarios` | financeiro/honorários |
+| `AuditoriaLogsApp` | trilha de alterações |
 
-A aba `Processos` ganhou somente a coluna `ClienteId`; os dados existentes foram preservados.
+Editar ou registrar atendimento não transfere a carteira. O campo `Assistente` permanece como dono; `AtendidoPor` registra quem realizou o atendimento.
 
-### Migração inicial
+## DataJud + DJEN
 
-A carteira atual foi agrupada por cliente e recebeu IDs estáveis:
+O módulo judicial inclui:
 
-- 2.496 cadastros iniciais em `Clientes`;
-- 2.573 processos vinculados por `ClienteId`;
-- registros genéricos como “NÃO IDENTIFICADO” não foram unidos automaticamente.
+- consulta DataJud por CNJ;
+- normalização e deduplicação de movimentos;
+- detecção operacional de encerramento, mérito, cumprimento e novidade;
+- DJEN por CNJ e filtros de data;
+- persistência do histórico em `Movimentações_DataJud` e `Publicações_DJEN`;
+- histórico do tribunal combinando cache persistido + consulta atual;
+- atualização do resumo na aba `Processos`.
 
-### Cliente 360°
+Endpoint DJEN padrão no backend:
 
-A rota `/clientes` reúne processos, contatos, interações, pipeline, agenda e financeiro do mesmo cliente. Se o bridge CRM ainda não estiver publicado, a tela continua funcionando a partir da réplica de `Processos`; depois da publicação do Apps Script v8, carrega as abas CRM completas.
+```text
+https://comunicaapi.pje.jus.br/api/v1/comunicacao
+```
 
-### Cache e concorrência
+Pode ser alterado por `DJEN_UPSTREAM` para manutenção controlada.
 
-O navegador mantém `Processos` e as entidades CRM em IndexedDB. Edições offline usam outbox separado para processos e CRM. O Google Sheets continua sendo a fonte persistente; IndexedDB é apenas réplica/cache.
+O sistema **não tenta contornar 429/403**. Quando o DJEN está limitado ou bloqueado, o último dado válido é preservado e o DataJud continua funcionando quando disponível.
 
+Configure `DATAJUD_API_KEY` na Vercel. Nenhuma chave deve ser versionada.
 
-## SheetsPredict v1.8 — interface Lexis + rotas SPA
+## Central Integrada
 
-A interface operacional foi alinhada ao `W1CAPITAL/LexisPredict` sem trocar a arquitetura Google Sheets:
+A rota `/central` unifica oito motores/fontes:
 
-- `/cases` = **Processos** da carteira atribuída ao usuário;
-- `/processos` = **Processos da empresa**, visível a todos os usuários autenticados;
-- `/` = Dashboard operacional;
-- `/report` = dossiê executivo;
-- sidebar recolhível, com scroll próprio;
-- único scanner do menu: **DataJud + DJEN**;
-- listas de processos com scroll vertical e horizontal;
-- botão **Histórico tribunal** abre a cronologia completa retornada por DataJud + DJEN;
-- botão **Registrar atendimento** abre o fluxo detalhado e não altera `Assistente`;
-- o Service Worker não armazena respostas 404;
-- as rotas principais possuem rewrite para `index.html`, evitando 404 ao atualizar/F5.
-
-A atualização do bridge do Google Apps Script é documentada em `docs/APPS-SCRIPT-DEPLOY.md`.
-
-
-## Status
-
-**v1.8.0 — interface operacional Lexis, /cases + /processos, histórico completo do tribunal, atendimento detalhado e correção de F5/SPA.** A planilha continua sendo a fonte operacional e o navegador mantém uma réplica offline para continuidade.
-
-
-## DJEN — fonte oficial
-
-A consulta pública usa o endpoint documentado no Swagger oficial do DJEN:
-
-`https://hcomunicaapi.cnj.jus.br/api/v1/comunicacao`
-
-O GET público não exige login, mas possui controle de taxa por IP. O app e o proxy **não tentam contornar 429/403**: preservam o último dado válido e aguardam a janela indicada pelo CNJ antes de retomar. O upstream pode ser trocado por variável `DJEN_UPSTREAM` apenas para manutenção controlada.
-
-## Deploy rápido na Vercel
-
-Depois de conectar este repositório à Vercel, o deploy é automático a cada push na `main`. Não há build de frontend; `index.html` e assets são estáticos e `/api/*` são Vercel Functions.
-
-[Importar este repositório na Vercel](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FW2CAPITAL%2FLexisPredict-Offline)
-
-## Regra de propriedade da carteira
-
-A coluna canônica para definir a carteira visível de um assistente é **`Processos!Assistente`**.
-
-- **`CreatedBy` / `Criado por`** é trilha de auditoria/proveniência e **não** deve ser usada para filtrar a carteira.
-- Assistentes veem as linhas em que `Assistente` corresponde ao seu nome, inclusive combinações como `ADRIANA/DRIKA`.
-- Supervisor, administrador e superadmin podem receber a carteira completa.
-- A API `/api/sheets` aplica esse escopo no servidor antes de devolver os processos ao navegador.
-
-Essa separação evita o erro em que um usuário visualiza somente a única linha que possui `CreatedBy` preenchido.
-
-## Referências de interface CRM
-
-A interface usa como referência de interação os padrões de CRM observados em **EspoCRM** (menu lateral/minimização, navegação por módulos e dashboard modular) e **IDURAR ERP/CRM** (sidebar persistente, rotas selecionadas, cards-resumo e tabelas recentes com ações contextuais). A implementação do SheetsPredict continua própria e focada em carteira jurídica, tarefas, DataJud e DJEN.
-
-
-
-## SheetsPredict 3.0 — Central Integrada
-
-O SheetsPredict passa a funcionar como **cockpit único** da operação. A planilha continua sendo a fonte de verdade operacional; os demais projetos entram como motores especializados, sem duplicar a carteira.
-
-| Motor | Origem | Integração no SheetsPredict |
+| Motor | Repositório | Papel |
 |---|---|---|
-| PredictLM | `W2CAPITAL/PredictLm` | IA principal para análise operacional e dossiês |
-| WA.Auto | `W2CAPITAL/Wa.Auto` | estado do WhatsApp, fila e envio explícito |
-| LexisPredict | `W2CAPITAL/LexisPredict` | regras jurídicas, KPIs e padrões de dossiê |
-| SyncCRM | `W1CAPITAL/SyncCRM` | auditoria e mapeamento de cabeçalhos |
-| LEADCHECKIN | `W2CAPITAL/LEADCHECKIN` | scanner de fontes públicas e descoberta opcional |
-| OFFLINE-LEXISPREDICT | `W1CAPITAL/OFFLINE-LEXISPREDICT` | IndexedDB, outbox e continuidade offline |
-| Leadcheck | `W1CAPITAL/Leadcheck` | Bacen SGS 25471/20749 e simulação revisional |
-| GREY | `W1CAPITAL/GREY` | IA privada/self-hosted e fallback do PredictLM |
+| PredictLM | `W2CAPITAL/PredictLm` | IA principal, análise e dossiês |
+| WA.Auto | `W2CAPITAL/Wa.Auto` | WhatsApp, fila e monitor |
+| LexisPredict | `W2CAPITAL/LexisPredict` | regras jurídicas e KPIs |
+| SyncCRM | `W1CAPITAL/SyncCRM` | auditoria e mapeamento de planilha |
+| LEADCHECKIN | `W2CAPITAL/LEADCHECKIN` | scanner e descoberta pública |
+| OFFLINE-LEXISPREDICT | `W1CAPITAL/OFFLINE-LEXISPREDICT` | continuidade offline |
+| Leadcheck | `W1CAPITAL/Leadcheck` | Bacen e triagem revisional |
+| GREY | `W1CAPITAL/GREY` | IA privada/self-hosted e fallback |
 
-A rota `/central` reúne **Visão geral, IA, WhatsApp, Leads, Revisional, Planilha e Integrações**.
+Abas da Central:
 
-### Variáveis opcionais
+```text
+Visão geral | IA | WhatsApp | Leads | Revisional | Planilha | Integrações
+```
+
+Funcionalidades embutidas, como auditoria da planilha, Bacen/revisional, scanner público e núcleo offline, continuam funcionando sem os serviços remotos.
+
+Variáveis opcionais:
 
 ```dotenv
 PREDICTLM_URL=
 PREDICTLM_ACCESS_TOKEN=
+
 WA_AUTO_URL=
+
 GREY_URL=
 GREY_API_KEY=
+
 LEADCHECKIN_URL=
+
 LEXISPREDICT_URL=
 LEXISPREDICT_TOKEN=
 ```
 
-Sem serviços remotos configurados, a Central continua oferecendo auditoria da planilha, Bacen/revisional, scanner público por URL e o núcleo offline. O envio de WhatsApp só ocorre por ação explícita do usuário e continua respeitando a lista de não contatar do WA.Auto.
+O envio de WhatsApp só acontece por ação explícita do usuário e continua sujeito às regras de fila/opt-out do WA.Auto.
+
+## Temas e acessibilidade
+
+`Configurações → Tema do aplicativo` oferece:
+
+- SheetsPredict
+- Clean
+- Dark
+- Midnight
+- Graphite
+- Emerald
+- Vinho Jurídico
+- Executive Violet
+- Imperial Gold
+- Alto Contraste
+
+A preferência fica salva no navegador. A camada de temas cobre tabelas, cards, Central Integrada, Tarefas, Pipeline, histórico, Audit 3D, formulários e diálogos.
+
+Os testes verificam contraste mínimo de **4,5:1** nos principais pares de texto/fundo, links, botões e estados semânticos.
+
+## Offline e sincronização
+
+O navegador utiliza IndexedDB para:
+
+- cache de processos e entidades CRM;
+- sessão visual;
+- outbox de alterações;
+- continuidade durante indisponibilidade temporária.
+
+O sync reconcilia gravações por processo. Registros confirmados saem do outbox; conflitos reais ficam preservados para nova tentativa sem travar o restante do lote.
+
+## Apps Script
+
+O projeto vinculado à planilha deve manter um único router:
+
+```text
+LexisSheet.gs
+  ├─ onOpen()
+  ├─ doGet()
+  └─ doPost()
+
+Code.gs
+  └─ scanner DataJud/DJEN → scannerOnOpen_()
+
+LEXIS-SYNC-AppsScript.gs
+  ├─ syncOnOpen_()
+  ├─ syncDoGet_()
+  └─ syncDoPost_()
+
+LexisApp.gs
+  └─ UI interna legada
+```
+
+Ao atualizar o bridge, publique uma **nova versão da implantação existente** do Apps Script. Não duplique `doGet`, `doPost` ou `onOpen`.
+
+## Segurança
+
+- Tokens do Apps Script ficam em Script Properties/Vercel Environment Variables.
+- O token do bridge não é enviado ao navegador.
+- `/api/sheets` aceita somente bridge HTTPS permitido.
+- Não versione chaves, tokens ou URLs privadas.
+- A autenticação e o escopo da carteira são validados pelo backend/bridge.
+- A coluna canônica de propriedade da carteira é `Processos!Assistente`; `CreatedBy` é somente auditoria/proveniência.
+
+## Desenvolvimento e testes
+
+Frontend sem framework de build:
+
+```bash
+npm test
+npx serve .
+```
+
+O pipeline valida, entre outros pontos:
+
+- sintaxe das Vercel Functions e bibliotecas;
+- regras DataJud/DJEN;
+- histórico judicial;
+- escopo de carteira;
+- prioridade de tarefas;
+- CRM;
+- deep-links/F5;
+- Central Integrada;
+- temas e contraste;
+- comportamento de navegação/scroll.
+
+## Deploy
+
+A publicação principal é feita pela Vercel a partir da branch `main`.
+
+Arquivos estáticos usam PWA/service worker; `/api/*` são Vercel Functions. O service worker não deve interceptar navegações de documentos.
+
+Após uma alteração grande de frontend, um `Ctrl+Shift+R` pode ser usado uma vez para forçar o navegador a buscar a versão mais recente do shell.
+
+## Estado atual
+
+**SheetsPredict 3.1.2**
+
+Foco da versão:
+
+- Central Integrada;
+- identidade SheetsPredict;
+- paginação de 200 registros;
+- busca nas grandes listas;
+- histórico DataJud/DJEN persistente;
+- sincronização resiliente;
+- temas com contraste validado;
+- uma única rolagem vertical de conteúdo;
+- uma única barra horizontal útil para tabelas largas;
+- correções de F5/deep-link/PWA.
