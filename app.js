@@ -5,7 +5,10 @@ const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnB
 const DB_NAME="lexispredict-secure-cache-v3";
 const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
 const CACHE_TTL_MS=5*60*1000;
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null};
+const PAGE_DEFAULT=200;
+const DJEN_GEO_BLOCK_MS=6*60*60*1000;
+const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v1";
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:""};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -13,6 +16,20 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const norm=s=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
 const digits=s=>String(s??"").replace(/\D/g,"");
 const now=()=>new Date().toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"});
+function restoreDjenBlock(){
+  try{state.djenBlockedUntil=Math.max(0,Number(localStorage.getItem(DJEN_BLOCK_KEY)||0));}catch(_){state.djenBlockedUntil=0}
+  if(state.djenBlockedUntil<=Date.now()){state.djenBlockedUntil=0;try{localStorage.removeItem(DJEN_BLOCK_KEY)}catch(_){}}
+}
+function setDjenBlock(ms){
+  state.djenBlockedUntil=Math.max(state.djenBlockedUntil,Date.now()+Math.max(60000,Number(ms)||60000));
+  try{localStorage.setItem(DJEN_BLOCK_KEY,String(state.djenBlockedUntil))}catch(_){}
+}
+function djenPaused(){return state.djenBlockedUntil>Date.now()}
+function djenPauseText(){
+  if(!djenPaused())return "";
+  const mins=Math.max(1,Math.ceil((state.djenBlockedUntil-Date.now())/60000));
+  return "DJEN pausado por "+(mins>=60?Math.ceil(mins/60)+"h":mins+" min")+"; DataJud continua.";
+}
 
 const keyOf=r=>digits(pick(r,"Protocolo","protocolo","CNJ"))||"row:"+hash(JSON.stringify(r));
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(36)}
@@ -67,15 +84,18 @@ async function idbClear(store){const db=await openDb();return new Promise((res,r
 async function saveRows(rows){await idbClear("rows");const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction("rows","readwrite"),st=tx.objectStore("rows");rows.forEach(r=>st.put({...r,_key:keyOf(r)}));tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
 function currentUser(){return state.session?.user||{}}
 function elevatedUser(){return /superadmin|supervisor|administrador|admin/i.test(String(currentUser().perfil||""))}
-function assistantSegments(v){return String(v??"").split(/[\\/|;,]+/).map(x=>norm(x)).filter(Boolean)}
+function assistantSegments(v){return String(v??"").split(/[\\/|;,]+/).map(x=>String(x||"").trim()).filter(Boolean)}
+function personKeys(v){
+  const raw=String(v??"").trim();if(!raw)return[];
+  const parts=raw.split(/\s+/).filter(Boolean);
+  return [...new Set([norm(raw),norm(parts[0]||"")].filter(x=>x.length>=3))];
+}
 function isMine(r){
   if(elevatedUser())return true;
-  const u=currentUser(),target=norm(u.nome||u.usuario||"");
-  if(!target)return false;
-  const segs=assistantSegments(pick(r,"Assistente"));
-  if(segs.includes(target))return true;
-  const first=target.split(/\\s+/)[0];
-  return !!first&&segs.includes(first);
+  const u=currentUser();
+  const userKeys=[...new Set([...personKeys(u.nome),...personKeys(u.usuario)])];
+  if(!userKeys.length)return false;
+  return assistantSegments(pick(r,"Assistente")).some(seg=>personKeys(seg).some(k=>userKeys.includes(k)));
 }
 function refreshScopes(){state.rows=(state.companyRows||[]).filter(isMine)}
 async function loadLocal(){
@@ -88,7 +108,13 @@ async function loadLocal(){
   return state.companyRows;
 }
 function cacheFresh(){return !!state.companyRows.length&&!!state.lastSyncAt&&(Date.now()-state.lastSyncAt)<CACHE_TTL_MS}
-const CRM_KEYS={Clientes:"ClienteId",Interacoes:"InteracaoId",PipelineCRM:"OportunidadeId",AgendaCRM:"EventoId",Honorarios:"id"};
+const CRM_KEYS={Clientes:"ClienteId",Interacoes:"InteracaoId",PipelineCRM:"OportunidadeId",AgendaCRM:"EventoId",TarefasCRM:"TarefaId",DocumentosCRM:"DocumentoId",Honorarios:"id"};
+let crmClientCache={company:null,source:null,rows:[],map:new Map()};
+let clientProcessCache={company:null,byId:new Map(),byName:new Map()};
+function invalidateCrmIndexes(){
+  crmClientCache={company:null,source:null,rows:[],map:new Map()};
+  clientProcessCache={company:null,byId:new Map(),byName:new Map()};
+}
 async function loadCrmCache(){
   const items=await idbAll("crm").catch(()=>[]);
   for(const item of items||[])if(item?.key&&Array.isArray(item.rows))state.crm[item.key]=item.rows;
@@ -106,6 +132,7 @@ function crmUpsertLocal(table,row){
   const key=crmKey(table,row),list=state.crm[table];
   const i=key?list.findIndex(x=>crmKey(table,x)===key):-1;
   if(i>=0)list[i]={...list[i],...row};else list.unshift(row);
+  invalidateCrmIndexes();
 }
 async function queueCrmWrite(table,row){
   const db=await openDb();
@@ -138,7 +165,7 @@ async function syncCRM({quiet=true}={}){
   state.crmLoading=true;
   try{
     await flushCrmOutbox().catch(()=>{});
-    const tables=["Clientes","Interacoes","PipelineCRM","AgendaCRM"];
+    const tables=["Clientes","Interacoes","PipelineCRM","AgendaCRM","TarefasCRM","DocumentosCRM"];
     if(elevatedUser())tables.push("Honorarios");
     for(const table of tables){
       try{
@@ -155,18 +182,36 @@ async function syncCRM({quiet=true}={}){
   }finally{state.crmLoading=false;render()}
 }
 function crmClients(){
+  const source=state.crm.Clientes||[];
+  if(crmClientCache.company===state.companyRows&&crmClientCache.source===source)return crmClientCache.rows;
   const derived=window.LexisCRM?.groupProcessesByClient?window.LexisCRM.groupProcessesByClient(state.companyRows):[];
   const pById=new Map(derived.map(x=>[String(x.ClienteId),x]));
-  if(!state.crm.Clientes?.length)return derived;
-  const out=state.crm.Clientes.map(c=>{
-    const id=String(c.ClienteId||""),p=pById.get(id)||{};
-    return {...p,...c,ClienteId:id,Nome:c.Nome||p.Nome||"",processos:p.processos||[],protocolos:p.protocolos||[],Telefone_Principal:c.Telefone_Principal||p.Telefone_Principal||"",Responsavel:c.Responsavel||p.Responsavel||""};
-  });
-  for(const d of derived)if(!out.some(x=>String(x.ClienteId)===String(d.ClienteId)))out.push(d);
-  return out.sort((a,b)=>String(a.Nome||"").localeCompare(String(b.Nome||""),"pt-BR"));
+  let out;
+  if(!source.length)out=[...derived];
+  else{
+    out=source.map(c=>{
+      const id=String(c.ClienteId||""),p=pById.get(id)||{};
+      return {...p,...c,ClienteId:id,Nome:c.Nome||p.Nome||"",processos:p.processos||[],protocolos:p.protocolos||[],Telefone_Principal:c.Telefone_Principal||p.Telefone_Principal||"",Responsavel:c.Responsavel||p.Responsavel||""};
+    });
+    const seen=new Set(out.map(x=>String(x.ClienteId||"")));
+    for(const d of derived){const id=String(d.ClienteId||"");if(!seen.has(id)){out.push(d);seen.add(id)}}
+  }
+  out.sort((a,b)=>String(a.Nome||"").localeCompare(String(b.Nome||""),"pt-BR"));
+  crmClientCache={company:state.companyRows,source,rows:out,map:new Map(out.map(c=>[String(c.ClienteId||""),c]))};
+  return out;
 }
-function clientById(id){return crmClients().find(c=>String(c.ClienteId)===String(id))||null}
+function clientById(id){crmClients();return crmClientCache.map.get(String(id))||null}
 function crmRowsForClient(table,id){return (state.crm[table]||[]).filter(x=>String(x.ClienteId||x.cliente_id||"")===String(id))}
+function clientProcessIndex(){
+  if(clientProcessCache.company===state.companyRows)return clientProcessCache;
+  const byId=new Map(),byName=new Map();
+  for(const r of state.companyRows||[]){
+    const id=String(pick(r,"ClienteId")||"").trim(),name=norm(pick(r,"Cliente"));
+    if(id){const a=byId.get(id)||[];a.push(r);byId.set(id,a)}
+    if(name){const a=byName.get(name)||[];a.push(r);byName.set(name,a)}
+  }
+  clientProcessCache={company:state.companyRows,byId,byName};return clientProcessCache;
+}
 
 function judicialWritePatch(row,scan){
   const events={datajud:[],djen:[]};
@@ -443,12 +488,27 @@ function filteredRows(source=state.rows){
   const q=norm(state.query),st=state.status,qual=state.quality;
   return (source||[]).filter(r=>(!q||norm(Object.values(r).join(" ")).includes(q))&&(!st||statusRet(r)===st)&&(!qual||quality(r)===qual));
 }
-function processTable(rows,{company=false}={}){
+function resetPage(view){if(state.pageSize[view]!=null)state.pageSize[view]=PAGE_DEFAULT}
+function pageLimit(view){return Math.max(1,Number(state.pageSize[view]||PAGE_DEFAULT))}
+function paginationHtml(view,shown,total,noun){
+  const limit=pageLimit(view),safeTotal=Math.max(0,Number(total)||0),more=shown<safeTotal;
+  return '<div class="list-pagination"><span>Mostrando <strong>'+shown+'</strong> de <strong>'+safeTotal+'</strong> '+esc(noun||"registros")+'</span><div class="pagination-actions">'+
+    (more?'<button class="btn sm" data-load-more="'+view+'">Ver +'+PAGE_DEFAULT+'</button>':'')+
+    '<label>Carregar <input type="number" min="1" max="'+Math.max(1,safeTotal)+'" step="1" value="'+Math.min(limit,Math.max(1,safeTotal||limit))+'" data-page-input="'+view+'"/></label>'+
+    '<button class="btn sm" data-page-apply="'+view+'">Aplicar</button></div></div>';
+}
+function bindPagination(view,renderFn,total){
+  const more=document.querySelector('[data-load-more="'+view+'"]');
+  if(more)more.onclick=()=>{state.pageSize[view]=Math.min(Math.max(1,total||1),pageLimit(view)+PAGE_DEFAULT);renderFn()};
+  const apply=document.querySelector('[data-page-apply="'+view+'"]'),input=document.querySelector('[data-page-input="'+view+'"]');
+  if(apply&&input)apply.onclick=()=>{const n=Math.max(1,Math.min(Math.max(1,total||1),Number(input.value)||PAGE_DEFAULT));state.pageSize[view]=n;renderFn()};
+}
+function processTable(rows,{company=false,total=rows.length,view=company?"empresa":"processos"}={}){
   const title=company?"Processos da empresa":"Carteira atribuída";
   const subtitle=company
     ?"Todos os usuários autenticados podem consultar e editar. Editar ou atender não transfere a carteira."
     :"Processos vinculados ao seu Assistente/perfil.";
-  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' registro(s) nesta visão</span></div><div class="toolbar"><input id="search" placeholder="Pesquisar cliente, CNJ, advogado, andamento…" value="'+esc(state.query)+'"/><select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
+  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' de '+total+' registro(s)</span></div><div class="toolbar"><input id="search" placeholder="Pesquisar cliente, CNJ, advogado, andamento…" value="'+esc(state.query)+'"/><select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
   '<div class="company-note">'+esc(subtitle)+'</div>'+
   '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Última movimentação</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Retorno</th><th>Assistente</th><th>Atendido por</th><th></th></tr></thead><tbody>'+
   rows.map(r=>{
@@ -456,13 +516,13 @@ function processTable(rows,{company=false}={}){
     const moveDate=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data");
     return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="actions process-actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></td></tr>';
   }).join("")+
-  '</tbody></table></div>';
+  '</tbody></table></div>'+paginationHtml(view,rows.length,total,company?"processos da empresa":"processos");
 }
-function bindProcessList(renderFn){
+function bindProcessList(renderFn,view){
   const search=$("#search"),status=$("#statusFilter"),qual=$("#qualityFilter");
-  if(search)search.oninput=e=>{state.query=e.target.value;renderFn()};
-  if(status)status.onchange=e=>{state.status=e.target.value;renderFn()};
-  if(qual)qual.onchange=e=>{state.quality=e.target.value;renderFn()};
+  if(search)search.oninput=e=>{state.query=e.target.value;resetPage(view);renderFn()};
+  if(status)status.onchange=e=>{state.status=e.target.value;resetPage(view);renderFn()};
+  if(qual)qual.onchange=e=>{state.quality=e.target.value;resetPage(view);renderFn()};
   $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
   $$("[data-suggest]").forEach(b=>b.onclick=()=>openAudit(b.dataset.suggest,true));
   $$("[data-audit]").forEach(b=>b.onclick=()=>openAudit(b.dataset.audit,false));
@@ -472,14 +532,14 @@ function bindProcessList(renderFn){
   $$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
 function renderProcessos(){
-  const rows=filteredRows(state.rows).slice(0,1200);
-  $("#content").innerHTML=processTable(rows,{company:false});
-  bindProcessList(renderProcessos);
+  const all=filteredRows(state.rows),rows=all.slice(0,pageLimit("processos"));
+  $("#content").innerHTML=processTable(rows,{company:false,total:all.length,view:"processos"});
+  bindProcessList(renderProcessos,"processos");bindPagination("processos",renderProcessos,all.length);
 }
 function renderEmpresa(){
-  const rows=filteredRows(state.companyRows).slice(0,1800);
-  $("#content").innerHTML=processTable(rows,{company:true});
-  bindProcessList(renderEmpresa);
+  const all=filteredRows(state.companyRows),rows=all.slice(0,pageLimit("empresa"));
+  $("#content").innerHTML=processTable(rows,{company:true,total:all.length,view:"empresa"});
+  bindProcessList(renderEmpresa,"empresa");bindPagination("empresa",renderEmpresa,all.length);
 }
 function plainStatus(r){
   const blob=norm([latestMove(r),pick(r,"Diagnóstico Processual"),pick(r,"Tipo de Evento","Evento_Tipo")].join(" "));
@@ -530,21 +590,21 @@ function bindTaskActions(){
   $$("[data-edit]").forEach(b=>b.onclick=()=>openProcess(b.dataset.edit));
 }
 function renderTarefas(){
-  const list=tasks().slice(0,1200);
-  const critical=list.filter(x=>x.w>=950).length,high=list.filter(x=>x.w>=800&&x.w<950).length;
+  const all=tasks(),list=all.slice(0,pageLimit("tarefas"));
+  const critical=all.filter(x=>x.w>=950).length,high=all.filter(x=>x.w>=800&&x.w<950).length,explicit=(state.crm.TarefasCRM||[]).filter(x=>!/conclu|feito|cancel/i.test(String(x.Status||"")));
   $("#content").innerHTML=
-    '<div class="task-header"><div><span class="eyebrow">FILA DE ATENDIMENTO</span><h2>Prioridade operacional</h2><p>Do pior caso e maior urgência até a rotina mais tranquila. Movimentações já salvas na planilha são reaproveitadas.</p></div><div class="queue-summary">'+badge(critical+" críticas","bad")+badge(high+" altas","warn")+badge(list.length+" clientes","gray")+'</div></div>'+
-    '<div class="kpi-grid">'+kpi("Fila total",list.length,"clientes priorizados")+kpi("Críticas",critical,"ação imediata","bad")+kpi("Altas",high,"alta prioridade","warn")+kpi("Novidades",list.filter(x=>boolish(pick(x.r,"Nova Atualização","Novo Andamento"))).length,"já registradas na planilha")+kpi("Vencidos",list.filter(x=>statusRet(x.r)==="VENCIDO").length,"retorno vencido","bad")+kpi("Rotina",list.filter(x=>x.w<600).length,"casos mais tranquilos","good")+'</div>'+
-    '<div class="task-grid">'+list.map(taskCardHtml).join("")+'</div>';
-  bindTaskActions();
+    '<div class="task-header"><div><span class="eyebrow">FILA DE ATENDIMENTO</span><h2>Prioridade operacional</h2><p>Do pior caso e maior urgência até a rotina mais tranquila. Movimentações já salvas na planilha são reaproveitadas.</p></div><div class="queue-summary">'+badge(critical+" críticas","bad")+badge(high+" altas","warn")+badge(all.length+" clientes","gray")+'</div></div>'+
+    '<div class="kpi-grid">'+kpi("Fila total",all.length,"clientes priorizados")+kpi("Tarefas CRM",explicit.length,"registradas")+kpi("Críticas",critical,"ação imediata","bad")+kpi("Altas",high,"alta prioridade","warn")+kpi("Novidades",all.filter(x=>boolish(pick(x.r,"Nova Atualização","Novo Andamento"))).length,"já registradas na planilha")+kpi("Vencidos",all.filter(x=>statusRet(x.r)==="VENCIDO").length,"retorno vencido","bad")+'</div>'+
+    (explicit.length?'<section class="card explicit-tasks"><div class="card-head"><h3>Tarefas registradas</h3></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Tarefa</th><th>Responsável</th><th>Prioridade</th><th>Vencimento</th><th>Status</th></tr></thead><tbody>'+explicit.slice(0,50).map(x=>'<tr><td>'+esc(x.Titulo||"Tarefa")+'</td><td>'+esc(x.Responsavel||"—")+'</td><td>'+esc(x.Prioridade||"—")+'</td><td>'+esc(x.Vencimento||"—")+'</td><td>'+badge(x.Status||"PENDENTE","gray")+'</td></tr>').join("")+'</tbody></table></div></section>':'')+
+    '<div class="task-grid">'+list.map(taskCardHtml).join("")+'</div>'+paginationHtml("tarefas",list.length,all.length,"clientes na fila");
+  bindTaskActions();bindPagination("tarefas",renderTarefas,all.length);
 }
 
 function clientProcesses(c){
-  const id=String(c?.ClienteId||"");
-  const byId=state.companyRows.filter(r=>String(pick(r,"ClienteId")||"")===id);
+  const idx=clientProcessIndex(),id=String(c?.ClienteId||"").trim();
+  const byId=id?(idx.byId.get(id)||[]):[];
   if(byId.length)return byId;
-  const name=norm(c?.Nome||c?.Cliente||"");
-  return state.companyRows.filter(r=>norm(pick(r,"Cliente"))===name);
+  return idx.byName.get(norm(c?.Nome||c?.Cliente||""))||[];
 }
 function clientPipeline(c){
   const rows=crmRowsForClient("PipelineCRM",c.ClienteId);
@@ -564,16 +624,18 @@ function money(v){return Number(v||0).toLocaleString("pt-BR",{style:"currency",c
 function renderClientes(){
   const clients=crmClients(),q=norm(state.query);
   if(state.clientId){renderCliente360(state.clientId);return}
-  const rows=clients.filter(c=>!q||norm([c.Nome,c.Telefone_Principal,c.Responsavel,...(c.protocolos||[])].join(" ")).includes(q)).slice(0,3000);
+  const all=clients.filter(c=>!q||norm([c.Nome,c.Telefone_Principal,c.Responsavel,...(c.protocolos||[])].join(" ")).includes(q));
+  const rows=all.slice(0,pageLimit("clientes"));
   $("#content").innerHTML=
-    '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">CRM • GOOGLE SHEETS</span><strong>Clientes</strong><span>'+rows.length+' de '+clients.length+' cliente(s)</span></div><div class="toolbar"><input id="clientSearch" placeholder="Pesquisar cliente, telefone ou CNJ…" value="'+esc(state.query)+'"/><span class="badge '+(state.crmBridgeReady?'b-good':'b-warn')+'">'+(state.crmBridgeReady?'CRM sincronizado':'CRM derivado de Processos')+'</span></div></div>'+
+    '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">CRM • GOOGLE SHEETS</span><strong>Clientes</strong><span>'+rows.length+' de '+all.length+' cliente(s)</span></div><div class="toolbar"><input id="clientSearch" placeholder="Pesquisar cliente, telefone ou CNJ…" value="'+esc(state.query)+'"/><span class="badge '+(state.crmBridgeReady?'b-good':'b-warn')+'">'+(state.crmBridgeReady?'CRM sincronizado':'CRM derivado de Processos')+'</span></div></div>'+
     '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente</th><th>Contato</th><th>Processos</th><th>Assistente</th><th>Último retorno</th><th>Próximo retorno</th><th>Pipeline</th><th></th></tr></thead><tbody>'+
     rows.map(c=>{
       const procs=clientProcesses(c),pipe=clientPipeline(c)[0]||{};
       return '<tr><td><div class="cell-main">'+esc(c.Nome||"SEM NOME")+'</div><div class="cell-sub mono">'+esc(c.ClienteId||"")+'</div></td><td><div class="cell-main">'+esc(c.Telefone_Principal||"—")+'</div><div class="cell-sub">'+esc(c.Email||"")+'</div></td><td>'+badge(procs.length,"blue")+'</td><td>'+esc(c.Responsavel||"—")+'</td><td>'+esc(c.ultimoRetorno||"—")+'</td><td>'+esc(c.proximoRetorno||"—")+'</td><td>'+badge(pipe.Etapa||"Triagem",pipe.Etapa==="Perdido"?"bad":pipe.Etapa==="Oportunidade"?"good":"gray")+'</td><td><button class="icon-action" data-client-open="'+esc(c.ClienteId)+'">Abrir 360°</button></td></tr>';
-    }).join("")+'</tbody></table></div>';
-  $("#clientSearch").oninput=e=>{state.query=e.target.value;renderClientes()};
-  $$("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;state.query="";renderClientes()});
+    }).join("")+'</tbody></table></div>'+paginationHtml("clientes",rows.length,all.length,"clientes");
+  $("#clientSearch").oninput=e=>{state.query=e.target.value;resetPage("clientes");renderClientes()};
+  $("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;state.query="";renderClientes()});
+  bindPagination("clientes",renderClientes,all.length);
 }
 function renderCliente360(id){
   const c=clientById(id);if(!c){state.clientId=null;renderClientes();return}
@@ -620,13 +682,53 @@ function renderPipeline(){
   }).join("")+'</div>';
   $$("[data-client-open]").forEach(b=>b.onclick=()=>{state.clientId=b.dataset.clientOpen;setView("clientes")});
 }
-function renderAgenda(){
-  const explicit=[...(state.crm.AgendaCRM||[])].map(x=>({...x,_source:"CRM"}));
+function localDateKey(d){
+  if(!(d instanceof Date)||Number.isNaN(d.getTime()))return"";
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function agendaEvents(){
+  const explicit=[...(state.crm.AgendaCRM||[])].map(x=>({...x,_source:"AgendaCRM"}));
   const derived=state.companyRows.filter(r=>pick(r,"Próximo Retorno")).map(r=>({
     EventoId:"ret:"+keyOf(r),ClienteId:pick(r,"ClienteId"),Protocolo:pick(r,"Protocolo"),Tipo:"Retorno",Titulo:"Retorno • "+(pick(r,"Cliente")||"Cliente"),Inicio:pick(r,"Próximo Retorno"),Responsavel:pick(r,"Assistente"),Status:statusRet(r),_source:"Processos"
   }));
-  const rows=[...explicit,...derived].sort((a,b)=>(parseDate(a.Inicio)?.getTime()||9e15)-(parseDate(b.Inicio)?.getTime()||9e15)).slice(0,1200);
-  $("#content").innerHTML='<div class="command-strip"><div><span class="eyebrow">CRM • AGENDA</span><h2>Agenda operacional</h2><p>Retornos processuais + compromissos gravados em AgendaCRM.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Quando</th><th>Tipo</th><th>Cliente / título</th><th>CNJ</th><th>Responsável</th><th>Status</th><th>Fonte</th></tr></thead><tbody>'+rows.map(x=>{const cl=clientById(x.ClienteId);return '<tr><td>'+esc(x.Inicio||"—")+'</td><td>'+esc(x.Tipo||"Evento")+'</td><td><div class="cell-main">'+esc(cl?.Nome||x.Titulo||"—")+'</div><div class="cell-sub">'+esc(x.Titulo||"")+'</div></td><td class="mono">'+esc(cnjFormatted(x.Protocolo||""))+'</td><td>'+esc(x.Responsavel||"—")+'</td><td>'+badge(x.Status||"PENDENTE",/venc/i.test(x.Status||"")?"bad":/aten|hoje/i.test(x.Status||"")?"warn":"gray")+'</td><td>'+esc(x._source)+'</td></tr>'}).join("")+'</tbody></table></div>';
+  return [...explicit,...derived].filter(x=>parseDate(x.Inicio)).sort((a,b)=>parseDate(a.Inicio)-parseDate(b.Inicio));
+}
+function agendaMonthDate(){
+  const nowD=new Date(),m=String(state.agendaMonth||"");
+  const hit=m.match(/^(\d{4})-(\d{2})$/);
+  return hit?new Date(Number(hit[1]),Number(hit[2])-1,1,12):new Date(nowD.getFullYear(),nowD.getMonth(),1,12);
+}
+function renderAgenda(){
+  const today=new Date(),todayKey=localDateKey(today);
+  if(!state.agendaMonth)state.agendaMonth=todayKey.slice(0,7);
+  if(!state.agendaDay)state.agendaDay=todayKey;
+  const month=agendaMonthDate(),year=month.getFullYear(),mon=month.getMonth();
+  const events=agendaEvents(),byDay=new Map(),clients=crmClients(),clientMap=new Map(clients.map(c=>[String(c.ClienteId||""),c]));
+  for(const ev of events){const k=localDateKey(parseDate(ev.Inicio));if(!k)continue;const a=byDay.get(k)||[];a.push(ev);byDay.set(k,a)}
+  const start=new Date(year,mon,1-month.getDay(),12),cells=[];
+  for(let i=0;i<42;i++){
+    const d=new Date(start);d.setDate(start.getDate()+i);const key=localDateKey(d),list=byDay.get(key)||[];
+    const outside=d.getMonth()!==mon,selected=key===state.agendaDay,isToday=key===todayKey;
+    cells.push('<button class="calendar-day '+(outside?"outside ":"")+(selected?"selected ":"")+(isToday?"today ":"")+'" data-agenda-day="'+key+'"><span class="calendar-number">'+d.getDate()+'</span><span class="calendar-events">'+list.slice(0,3).map(ev=>'<span class="calendar-event">'+esc(ev.Tipo||"Evento")+' · '+esc((clientMap.get(String(ev.ClienteId||""))?.Nome||ev.Titulo||"").slice(0,34))+'</span>').join("")+(list.length>3?'<span class="calendar-more">+'+(list.length-3)+' evento(s)</span>':'')+'</span></button>');
+  }
+  const selected=byDay.get(state.agendaDay)||[],monthLabel=month.toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
+  $("#content").innerHTML=
+    '<div class="command-strip agenda-head"><div><span class="eyebrow">CRM • AGENDA</span><h2>Agenda</h2><p>Calendário real de retornos processuais e compromissos do AgendaCRM.</p></div><div class="agenda-nav"><button class="btn sm" data-agenda-nav="-1">‹</button><button class="btn sm" data-agenda-today>Hoje</button><button class="btn sm" data-agenda-nav="1">›</button></div></div>'+
+    '<div class="agenda-layout"><section class="card calendar-card"><div class="calendar-title"><strong>'+esc(monthLabel)+'</strong><span>'+events.length+' compromisso(s) no índice</span></div><div class="calendar-weekdays">'+["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"].map(x=>'<span>'+x+'</span>').join("")+'</div><div class="calendar-grid">'+cells.join("")+'</div></section>'+
+    '<aside class="card agenda-day-panel"><div class="card-head"><div><span class="eyebrow">DIA SELECIONADO</span><h3>'+esc(new Date(state.agendaDay+"T12:00:00").toLocaleDateString("pt-BR",{weekday:"long",day:"2-digit",month:"long"}))+'</h3></div>'+badge(selected.length+" evento(s)","blue")+'</div><div class="agenda-day-list">'+
+    (selected.length?selected.map(ev=>{const cl=clientMap.get(String(ev.ClienteId||""));return '<article class="agenda-event-card"><div><strong>'+esc(ev.Titulo||ev.Tipo||"Compromisso")+'</strong><small>'+esc(String(ev.Inicio||"").replace("T"," ").slice(0,16))+' · '+esc(ev.Responsavel||"—")+'</small><p>'+esc(cl?.Nome||cnjFormatted(ev.Protocolo||"")||ev._source||"")+'</p></div>'+badge(ev.Status||"PENDENTE",/venc/i.test(ev.Status||"")?"bad":/aten|hoje/i.test(ev.Status||"")?"warn":"gray")+'</article>'}).join(""):'<div class="empty">Nenhum compromisso neste dia.</div>')+
+    '</div><div class="agenda-compose"><h4>Novo compromisso</h4><input id="agendaTitle" placeholder="Título do compromisso"/><div class="grid-2"><input id="agendaTime" type="time" value="09:00"/><select id="agendaType"><option>Reunião</option><option>Retorno</option><option>Audiência</option><option>Prazo</option><option>Ligação</option><option>Outro</option></select></div><input id="agendaProtocol" placeholder="CNJ (opcional)"/><input id="agendaResp" placeholder="Responsável" value="'+esc(currentUser().nome||currentUser().usuario||"")+'"/><button class="btn primary" id="agendaSaveBtn">Salvar compromisso</button></div></aside></div>';
+  $("[data-agenda-day]").forEach(b=>b.onclick=()=>{state.agendaDay=b.dataset.agendaDay;state.agendaMonth=state.agendaDay.slice(0,7);renderAgenda()});
+  $("[data-agenda-nav]").forEach(b=>b.onclick=()=>{const d=agendaMonthDate();d.setMonth(d.getMonth()+Number(b.dataset.agendaNav));state.agendaMonth=localDateKey(d).slice(0,7);renderAgenda()});
+  $("[data-agenda-today]").onclick=()=>{state.agendaMonth=todayKey.slice(0,7);state.agendaDay=todayKey;renderAgenda()};
+  $("#agendaSaveBtn").onclick=saveAgendaEvent;
+}
+async function saveAgendaEvent(){
+  const title=String($("#agendaTitle")?.value||"").trim();if(!title){showBanner("Informe o título do compromisso.","bad");return}
+  const day=state.agendaDay||localDateKey(new Date()),time=String($("#agendaTime")?.value||"09:00"),proto=String($("#agendaProtocol")?.value||"").trim();
+  const linked=proto?state.companyRows.find(r=>digits(pick(r,"Protocolo"))===digits(proto)):null,ts=new Date().toISOString();
+  const row={EventoId:window.LexisCRM?.stableId?.("evt",day,time,title)||("evt_"+Date.now()),ClienteId:linked?pick(linked,"ClienteId"):"",Protocolo:proto,Tipo:$("#agendaType")?.value||"Evento",Titulo:title,Inicio:day+"T"+time+":00",Fim:"",Responsavel:String($("#agendaResp")?.value||"").trim(),Status:"PENDENTE",LembreteMin:"30",Observacao:"",CriadoEm:ts,AtualizadoEm:ts};
+  await crmWrite("AgendaCRM",row);showBanner("Compromisso salvo na AgendaCRM.","good");renderAgenda();
 }
 function renderFinanceiro(){
   if(!elevatedUser()){
@@ -686,7 +788,7 @@ function renderScanner(){
   const withDataJud=state.rows.filter(r=>pick(r,"DataJud • Último Movimento")).length;
   const activeExec=state.rows.filter(r=>String(pick(r,"_ExecStatus")).toUpperCase()==="ATIVO").length;
   $("#content").innerHTML=
-  '<div class="scanner-hero"><div><span class="eyebrow">SCANNER OMNICANAL</span><h2>DataJud + DJEN</h2><p>Valida fase processual, cumprimento real, lado favorecido e oportunidade comercial.</p></div><div class="scanner-health"><span>'+valid.length+' CNJs</span><span>'+withDataJud+' DataJud</span><span>'+withDjen+' DJEN</span><span>'+activeExec+' cumprimento ativo</span></div></div>'+
+  '<div class="scanner-hero"><div><span class="eyebrow">SCANNER OMNICANAL</span><h2>DataJud + DJEN</h2><p>Valida fase processual, cumprimento real, lado favorecido e oportunidade comercial.</p>'+(djenPaused()?'<div class="offline-note">'+esc(djenPauseText())+'</div>':'')+'</div><div class="scanner-health"><span>'+valid.length+' CNJs</span><span>'+withDataJud+' DataJud</span><span>'+withDjen+' DJEN</span><span>'+activeExec+' cumprimento ativo</span></div></div>'+
   '<div class="scanner-grid">'+
     '<div class="card scanner-main"><div class="card-head"><div><span class="eyebrow">AUDITORIA INDIVIDUAL</span><h3>Consulta unificada</h3></div><span class="live-pill">REDE OFICIAL</span></div><div class="card-body">'+
       '<div class="scan-box"><input id="scanCnj" placeholder="0000000-00.0000.0.00.0000"/><button class="btn primary" id="scanOneBtn">Auditar processo</button></div>'+
@@ -706,6 +808,7 @@ function renderScanResult(x){
   if(!x)return "";
   if(x.retry&&(!x.datajud&&!x.djen))return '<div class="banner bad">'+esc(x.error||"Consulta temporariamente pausada")+'</div>';
   const data=x.datajud||null,djen=x.djen||null,intel=x.intelligence||{},com=intel.commercial||{},parts=[];
+  if(x.djenPaused&&x.djenPauseMessage)parts.push('<div class="offline-note">'+esc(x.djenPauseMessage)+'</div>');
   if(com&&Object.keys(com).length){
     const side=com.side?.favorecido||x.patch?._Favorecido||"INDEFINIDO",exec=com.execution?.status||x.patch?._ExecStatus||"INDEFINIDO";
     parts.push('<div class="decision-card"><div><span class="eyebrow">DECISÃO DE TRIAGEM</span><h3>'+esc(com.decision||"REVISAR")+'</h3><p>'+esc(com.product||"Sem oferta automática")+'</p></div><div class="decision-meta"><span>'+esc("Favorecido: "+side)+'</span><span>'+esc("Cumprimento: "+exec)+'</span><span>'+esc("Confiança: "+(com.confidence??"—"))+'</span></div><small>'+esc(com.reason||"Revisão humana necessária.")+'</small></div>');
@@ -749,15 +852,12 @@ async function advancedJudicialSearch(){
 }
 async function scanOne(cnj,quiet=false){
   const d=digits(cnj);if(d.length!==20){if(!quiet)showBanner("CNJ inválido. Use 20 dígitos.","bad");return null}
-  if(state.djenBlockedUntil>Date.now()){
-    const wait=Math.max(1,Math.ceil((state.djenBlockedUntil-Date.now())/1000));
-    const j={ok:false,error:"DJEN em pausa por limite oficial. Tente novamente em "+wait+"s.",retry:true,retryAfterMs:wait*1000};
-    state.lastScan=j;if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);return j;
-  }
+  const djenWasPaused=djenPaused();
   const row=state.companyRows.find(x=>digits(pick(x,"Protocolo"))===d)||null;
   try{
-    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",cliente:row?pick(row,"Cliente"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",lastDjenId:row?pick(row,"_DJENId"):"",lastDjenDate:row?pick(row,"_DJENDate","DJEN • Data"):"",mode:"both"}),cache:"no-store"});
+    const r=await fetch("/api/judicial-scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cnj:cnjFormatted(d),tribunal:row?pick(row,"Tribunal"):"",cliente:row?pick(row,"Cliente"):"",ultimoRetorno:row?pick(row,"Último Retorno"):"",lastDjenId:row?pick(row,"_DJENId"):"",lastDjenDate:row?pick(row,"_DJENDate","DJEN • Data"):"",mode:djenWasPaused?"datajud":"both"}),cache:"no-store"});
     const j=await r.json();state.lastScan=j;
+    if(djenWasPaused){j.djenPaused=true;j.djenPauseMessage=djenPauseText()}
     if(j.patch&&row){
       Object.assign(row,j.patch);
       refreshScopes();
@@ -767,9 +867,12 @@ async function scanOne(cnj,quiet=false){
         await flushOutbox();
       }catch(e){j.sheetError=e.message||String(e)}
     }
-    if(r.status===429||j?.djen?.isRateLimited){
+    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403){
+      setDjenBlock(DJEN_GEO_BLOCK_MS);j.djenPaused=true;j.djenPauseMessage="DJEN HTTP 403: origem bloqueada. Pausa de 6h; DataJud continua.";
+      if(!quiet)showBanner(j.djenPauseMessage,"bad");
+    }else if(r.status===429||j?.djen?.isRateLimited){
       const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);
-      state.djenBlockedUntil=Date.now()+ms;j.retry=true;j.retryAfterMs=ms;
+      setDjenBlock(ms);j.retry=true;j.retryAfterMs=ms;j.djenPaused=true;j.djenPauseMessage="DJEN em pausa por limite oficial; DataJud continua.";
     }
     if(!quiet&&state.view==="scanner")$("#scanResult").innerHTML=renderScanResult(j);
     if(j.sheetError&&!quiet)showBanner("Consulta concluída, mas a planilha recusou o salvamento: "+j.sheetError,"bad");
@@ -793,8 +896,9 @@ async function scanQueue(){
     const cnj=pick(row,"Protocolo");logQueue("DataJud + DJEN • "+cnjFormatted(cnj));
     const j=await scanOne(cnj,true);done++;const p=$("#scanProgress");if(p)p.style.width=Math.round(done/list.length*100)+"%";
     if(j?.sheetError){logQueue("Salvamento pendente • "+j.sheetError);showBanner(j.sheetError,"bad");break;}
-    if(j?.retry){const ms=Math.max(60000,Number(j.retryAfterMs)||60000);logQueue("DJEN 429 • pausa de "+Math.ceil(ms/1000)+"s");await sleep(ms)}
-    else await sleep(6000);
+    if(j?.djen?.isGeoBlocked||Number(j?.djen?.status)===403)logQueue("DJEN HTTP 403 • pausa de 6h; DataJud continua");
+    else if(j?.retry)logQueue("DJEN em pausa • DataJud continua");
+    await sleep(j?.djenPaused?1500:6000);
     if(done%10===0)logQueue("Checkpoint • "+done+" processos");
   }
   state.scanning=false;state.scanStop=false;logQueue("Fila finalizada/pausada.");renderScanner();
@@ -809,7 +913,7 @@ function todayBrazil(){
 function updateLocalRow(row){
   const idx=state.companyRows.findIndex(x=>keyOf(x)===keyOf(row));
   if(idx>=0)state.companyRows[idx]=row;else state.companyRows.unshift(row);
-  refreshScopes();
+  invalidateCrmIndexes();refreshScopes();
 }
 async function markContacted(key){
   const row=findRow(key);if(!row)return;
@@ -1082,7 +1186,7 @@ async function saveProcess(){
 
 function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.companyRows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="lexispredict-offline-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
-async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
+async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;invalidateCrmIndexes();refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
   const savedSidebar=localStorage.getItem("lexis_sidebar_collapsed")==="1";
   document.body.classList.toggle("sidebar-collapsed",savedSidebar);
@@ -1108,7 +1212,7 @@ function setupEvents(){
   $("#historyAttendanceBtn").onclick=()=>{const key=state.historyKey;$("#historyDialog").close();if(key)openAttendance(key)};
   $("#logoutBtn").onclick=async()=>{
     stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}
-    saveSession(null);state.rows=[];state.companyRows=[];state.crm={Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],Honorarios:[]};state.lastSync=null;state.lastSyncAt=0;state.clientId=null;
+    saveSession(null);state.rows=[];state.companyRows=[];state.crm={Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]};invalidateCrmIndexes();state.lastSync=null;state.lastSyncAt=0;state.clientId=null;
     await Promise.all([idbClear("rows").catch(()=>{}),idbClear("meta").catch(()=>{}),idbClear("outbox").catch(()=>{}),idbClear("crm").catch(()=>{}),idbClear("crmOutbox").catch(()=>{})]);
     setLogged(false);updateSyncUi();
   };
@@ -1150,6 +1254,7 @@ function applyUser(){const u=state.session?.user||{};$("#userName").textContent=
 
 async function boot(){
   setupEvents();
+  restoreDjenBlock();
   state.view=pathView();
   const cachedSession=restoreSession();
   if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
