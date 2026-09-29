@@ -483,6 +483,7 @@ function taskLabel(r){
 function titleFor(v){return {
   dashboard:["COMMAND CENTER","Dashboard"],
   hub:["CENTRAL","Central Integrada"],
+  studio:["AI FABRIC","Predict Studio"],
   processos:["CARTEIRA","Processos"],
   empresa:["EMPRESA","Processos da empresa"],
   clientes:["CRM","Clientes"],
@@ -495,7 +496,7 @@ function titleFor(v){return {
   scanner:["REDE JUDICIAL","DataJud + DJEN"],
   settings:["PREFERÊNCIAS","Configurações"]
 }[v]||["SHEETSPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",hub:"/central",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner",settings:"/configuracoes"};
+const viewPaths={dashboard:"/",hub:"/central",studio:"/studio",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner",settings:"/configuracoes"};
 function pathView(){
   const rawHash=String(location.hash||"").replace(/^#/,"").replace(/\/+$/,"");
   if(rawHash){
@@ -521,6 +522,7 @@ function render(){
   const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navClientes").textContent=crmClients().length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
   if(state.view==="dashboard")renderDashboard();
   else if(state.view==="hub")renderHub();
+  else if(state.view==="studio")renderPredictStudio();
   else if(state.view==="processos")renderProcessos();
   else if(state.view==="empresa")renderEmpresa();
   else if(state.view==="clientes")renderClientes();
@@ -534,6 +536,19 @@ function render(){
   else if(state.view==="settings")renderSettings();
   else setView("dashboard",false);
   scheduleGlobalXScroll();
+}
+function renderPredictStudio(){
+  const root=$("#content");
+  if(!root)return;
+  if(!window.PredictStudio){
+    root.innerHTML='<div class="banner bad">Predict Studio não carregou. Atualize o PWA e tente novamente.</div>';
+    return;
+  }
+  window.PredictStudio.render(root,{
+    showBanner,
+    user:currentUser,
+    context:()=>hubContext(state.hub?.selectedCnj||"")
+  });
 }
 async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
