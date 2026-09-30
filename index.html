@@ -80,15 +80,21 @@
       <header class="topbar">
         <div class="topbar-heading">
           <button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Abrir navegação" aria-controls="sidebar" aria-expanded="false">☰</button>
-          <div>
+          <div class="topbar-title-mobile">
             <span class="eyebrow" id="viewEyebrow">CARTEIRA JURÍDICA</span>
             <h1 id="viewTitle">Visão geral</h1>
           </div>
         </div>
+        <label class="top-search" for="globalSearch">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
+          <input id="globalSearch" type="search" autocomplete="off" placeholder="Pesquisar processos, clientes, CNJ, tribunais..."/>
+        </label>
         <div class="top-actions">
-          <div class="sync-indicator"><span class="dot" id="syncDot"></span><span id="syncText">Local</span></div>
-          <button class="btn" id="syncBtn">Sincronizar</button>
-          <button class="btn primary" id="newProcessBtn">Novo cadastro</button>
+          <button class="sync-indicator top-sync" id="syncIndicatorBtn" type="button" title="Sincronizar agora"><span class="dot" id="syncDot"></span><span><strong id="syncLabel">Sincronizado</strong><small id="syncText">Local</small></span></button>
+          <button class="top-icon-btn" id="topNotifications" type="button" aria-label="Abrir tarefas prioritárias" title="Tarefas prioritárias">♧<span id="topNotifCount" class="top-notif-count hidden">0</span></button>
+          <button class="top-user" id="topUser" type="button" title="Usuário autenticado"><span class="top-user-avatar" id="topUserInitials">SP</span><span class="top-user-copy"><strong id="topUserName">Usuário</strong><small id="topUserRole">autenticado</small></span><span>⌄</span></button>
+          <button class="btn top-legacy-action" id="syncBtn">Sincronizar</button>
+          <button class="btn primary top-legacy-action" id="newProcessBtn">Novo cadastro</button>
         </div>
       </header>
 
