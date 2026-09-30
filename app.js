@@ -451,15 +451,16 @@ async function checkForAppUpdate({initial=false}={}){
     await sleep(1400);hideUpdateOverlay();
     return false;
   }
+  if(initial&&state.swRegistration?.waiting){
+    if(!seen)localStorage.setItem(RELEASE_SEEN_KEY,seen||"versao-anterior");
+    void applyWaitingUpdate(remote);
+    return true;
+  }
   if(!seen){
     localStorage.setItem(RELEASE_SEEN_KEY,remote);
     return false;
   }
   if(remote!==seen){
-    void applyWaitingUpdate(remote);
-    return true;
-  }
-  if(initial&&state.swRegistration?.waiting){
     void applyWaitingUpdate(remote);
     return true;
   }
