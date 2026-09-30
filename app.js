@@ -715,12 +715,24 @@ function hubSourceStatus(id){
   const h=state.hub.status||{},all=[...(h.services||[]),...(h.builtins||[])];
   return all.find(x=>x.id===id)||null;
 }
+function hubSourceMeta(id){
+  const map={
+    predictlm:{icon:"✦",tone:"violet",feature:"Inteligência jurídica",open:"ai"},
+    lexispredict:{icon:"▣",tone:"red",feature:"Base e regras processuais",open:"integrations"},
+    grey:{icon:"◎",tone:"blue",feature:"Análise e extração privada",open:"integrations"},
+    waauto:{icon:"◉",tone:"green",feature:"Automação WhatsApp",open:"whatsapp"},
+    synccrm:{icon:"▦",tone:"green",feature:"Workspace jurídico",open:"sheets"},
+    leadcheckin:{icon:"⌕",tone:"blue",feature:"Descoberta pública",open:"leads"},
+    leadcheck:{icon:"%",tone:"orange",feature:"Bacen e revisional",open:"revisional"},
+    offline:{icon:"↻",tone:"gray",feature:"Cache e continuidade",open:"integrations"}
+  };return map[id]||{icon:"◇",tone:"gray",feature:"Integração",open:"integrations"};
+}
 function hubSourceCard(src){
-  const st=hubSourceStatus(src.id),ok=!!st?.ok,configured=st?st.configured!==false:false;
-  const label=!st?"verificando":ok?"ativo":configured?"indisponível":src.id==="predictlm"?"requer API":"opcional";
+  const st=hubSourceStatus(src.id),ok=!!st?.ok,configured=st?st.configured!==false:false,meta=hubSourceMeta(src.id);
+  const label=!st?"Verificando":ok?"Online":configured?"Indisponível":"Não configurado";
   const cls=ok?"good":configured?"warn":"gray";
-  const detail=st?.status||(!configured?(src.id==="predictlm"?"credencial privada necessária":"integração não habilitada"):"estado do serviço");
-  return '<article class="hub-source-card"><div class="hub-source-head"><strong>'+esc(src.name)+'</strong>'+badge(label,cls)+'</div><p>'+esc(src.feature||src.role||"")+'</p><small>'+esc(detail)+'</small></article>';
+  const detail=st?.status||(!configured?"Configuração privada pendente":"Estado do serviço");
+  return '<article class="hub-source-card reference-service-card"><div class="reference-service-title"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><div><strong>'+esc(src.name)+'</strong><small>'+esc(src.feature||meta.feature)+'</small></div></div><div>'+badge(label,cls)+'</div><p>'+esc(detail)+'</p><button class="btn sm" data-hub-open="'+esc(meta.open)+'">'+(ok?"Abrir":"Configurar")+'</button></article>';
 }
 function hubTabs(){
   const tabs=[["overview","Visão geral"],["ai","IA"],["whatsapp","WhatsApp"],["leads","Leads"],["revisional","Revisional"],["sheets","Planilha"],["integrations","Integrações"]];
@@ -733,23 +745,32 @@ function hubAudit(){
   return window.SheetsHub?.audit?window.SheetsHub.audit(state.companyRows):null;
 }
 function hubOverviewHtml(){
-  const p=hubPortfolio(),a=hubAudit(),sources=window.SheetsHub?.sources||[];
-  return '<div class="hub-kpis">'+
-    kpi("Processos",p.total||0,(p.ativos||0)+" ativos")+
-    kpi("Vencidos",p.vencidos||0,(p.atencao||0)+" em atenção",(p.vencidos||0)?"bad":"good")+
-    kpi("DataJud",p.datajud||0,"com movimento")+
-    kpi("DJEN",p.djen||0,"com publicação oficial")+
-    kpi("Saúde planilha",a?a.health+"%":"—",a?(a.duplicates+" duplicidade(s)"):"auditoria local")+
-    kpi("Offline",navigator.onLine?"Pronto":"Ativo","IndexedDB + outbox",navigator.onLine?"good":"warn")+
-  '</div>'+
-  '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">FUSÃO</span><h3>8 motores, um SheetsPredict</h3></div></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div></section>'+
-  '<section class="card"><div class="card-head"><div><span class="eyebrow">ATALHOS</span><h3>Operação integrada</h3></div></div><div class="hub-actions">'+
-    '<button class="hub-action" data-hub-open="ai"><strong>Chat AI</strong><span>PredictLM / IA própria → fallback local</span></button>'+
-    '<button class="hub-action" data-hub-open="whatsapp"><strong>WhatsApp</strong><span>Estado e envio via WA.Auto</span></button>'+
-    '<button class="hub-action" data-hub-open="leads"><strong>Leads públicos</strong><span>Scanner LEADCHECKIN + CRM</span></button>'+
-    '<button class="hub-action" data-hub-open="revisional"><strong>Revisional</strong><span>Bacen SGS + simulação Leadcheck</span></button>'+
-    '<button class="hub-action" data-hub-open="sheets"><strong>Planilha inteligente</strong><span>Mapeamento e auditoria SyncCRM</span></button>'+
-  '</div></section></div>';
+  const sources=window.SheetsHub?.sources||[],wanted=["predictlm","lexispredict","grey","waauto","synccrm"];
+  const cards=wanted.map(id=>sources.find(x=>x.id===id)).filter(Boolean);
+  const h=state.hub.status||{},services=[...(h.services||[]),...(h.builtins||[])];
+  const serviceBy=id=>services.find(x=>x.id===id)||null;
+  const rows=[
+    {time:state.lastSync||"—",service:"Google Sheets",event:"Sincronização",details:state.companyRows.length+" registros em cache",ok:!!state.lastSync},
+    {time:"agora",service:"PredictLM",event:"Motor principal",details:serviceBy("predictlm")?.status||"aguardando status",ok:!!serviceBy("predictlm")?.ok},
+    {time:"agora",service:"LexisPredict",event:"Motor jurídico",details:serviceBy("lexispredict")?.status||"aguardando status",ok:!!serviceBy("lexispredict")?.ok},
+    {time:"agora",service:"WA.Auto",event:"Mensageria",details:serviceBy("waauto")?.status||"aguardando status",ok:!!serviceBy("waauto")?.ok},
+    {time:"agora",service:"GREY",event:"Motor privado",details:serviceBy("grey")?.status||"aguardando status",ok:!!serviceBy("grey")?.ok}
+  ];
+  const fallbackCards=wanted.map(id=>({id,name:id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY",feature:hubSourceMeta(id).feature}));
+  const useCards=cards.length?cards:fallbackCards;
+  return '<div class="reference-hub-services">'+useCards.map(hubSourceCard).join("")+'</div>'+
+  '<div class="reference-hub-lower"><section class="card reference-card"><div class="reference-card-head"><div><h3>Fila de eventos e logs</h3><small>Estado operacional das integrações</small></div><button class="link-btn" data-hub-open="integrations">Ver todos os logs →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Horário</th><th>Serviço</th><th>Evento</th><th>Detalhes</th><th>Status</th></tr></thead><tbody>'+
+    rows.map(x=>'<tr><td>'+esc(x.time)+'</td><td><strong>'+esc(x.service)+'</strong></td><td>'+esc(x.event)+'</td><td>'+esc(x.details)+'</td><td>'+badge(x.ok?"Sucesso":"Atenção",x.ok?"good":"warn")+'</td></tr>').join("")+
+  '</tbody></table></div></section>'+
+  '<aside class="reference-hub-side"><section class="card reference-card"><div class="reference-card-head"><h3>Ações rápidas</h3></div><div class="reference-quick-grid">'+
+    '<button data-hub-open="sheets"><b>↻</b><span><strong>Sincronizar agora</strong><small>Forçar atualização de dados</small></span></button>'+
+    '<button data-hub-open="integrations"><b>▣</b><span><strong>Testar integrações</strong><small>Verificar conexões e permissões</small></span></button>'+
+    '<button data-hub-open="ai"><b>✦</b><span><strong>Chat AI</strong><small>PredictLM + Lexis jurídico</small></span></button>'+
+    '<button data-hub-open="whatsapp"><b>◉</b><span><strong>WA.Auto</strong><small>Mensagens e monitor jurídico</small></span></button>'+
+  '</div></section>'+
+  '<section class="card reference-card"><div class="reference-card-head"><h3>Status dos serviços</h3><span>'+services.filter(x=>x.ok).length+' online</span></div><div class="reference-status-list">'+
+    wanted.map(id=>{const st=serviceBy(id),meta=hubSourceMeta(id),name=id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY";return '<div><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><strong>'+name+'</strong><em class="'+(st?.ok?"online":"offline")+'">'+(st?.ok?"Online":st?.configured===false?"Não configurado":"Atenção")+'</em></div>'}).join("")+
+  '</div></section></aside></div>';
 }
 function hubAiHtml(){
   const msgs=state.hub.ai||[];
@@ -802,7 +823,7 @@ function hubIntegrationsHtml(){
 }
 function renderHub(){
   const content=$("#content");if(!content)return;
-  content.innerHTML='<div class="hub-shell"><div class="lexis-page-header"><div><span class="eyebrow">SHEETSPREDICT CENTRAL</span><h2>Central Integrada</h2><p>IA, WhatsApp, leads, revisional, planilha e operação jurídica no mesmo aplicativo.</p></div><div class="command-actions"><button class="btn" data-goto="processos">Carteira</button><button class="btn" data-goto="tarefas">Fila</button><button class="btn primary" data-goto="scanner">Tribunal</button></div></div>'+hubTabs()+'<div class="hub-body">'+
+  content.innerHTML='<div class="hub-shell reference-page"><div class="reference-page-head"><div><h2>Central Integrada</h2><p>Gerencie integrações, filas e automações da sua operação</p></div>'+(state.hub.tab!=="overview"?'<button class="btn" data-hub-tab="overview">← Visão geral</button>':'')+'</div>'+(state.hub.tab==="overview"?"":hubTabs())+'<div class="hub-body">'+
     (state.hub.tab==="ai"?hubAiHtml():state.hub.tab==="whatsapp"?hubWaHtml():state.hub.tab==="leads"?hubLeadsHtml():state.hub.tab==="revisional"?hubRevisionalHtml():state.hub.tab==="sheets"?hubSheetsHtml():state.hub.tab==="integrations"?hubIntegrationsHtml():hubOverviewHtml())+
   '</div></div>';
   bindGotos();
