@@ -746,7 +746,8 @@ function hubAudit(){
 }
 function hubOverviewHtml(){
   const sources=window.SheetsHub?.sources||[],wanted=["predictlm","lexispredict","grey","waauto","synccrm"];
-  const cards=wanted.map(id=>sources.find(x=>x.id===id)).filter(Boolean);
+  const fallbackFor=id=>({id,name:id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY",feature:hubSourceMeta(id).feature});
+  const useCards=wanted.map(id=>sources.find(x=>x.id===id)||fallbackFor(id));
   const h=state.hub.status||{},services=[...(h.services||[]),...(h.builtins||[])];
   const serviceBy=id=>services.find(x=>x.id===id)||null;
   const rows=[
@@ -756,8 +757,6 @@ function hubOverviewHtml(){
     {time:"agora",service:"WA.Auto",event:"Mensageria",details:serviceBy("waauto")?.status||"aguardando status",ok:!!serviceBy("waauto")?.ok},
     {time:"agora",service:"GREY",event:"Motor privado",details:serviceBy("grey")?.status||"aguardando status",ok:!!serviceBy("grey")?.ok}
   ];
-  const fallbackCards=wanted.map(id=>({id,name:id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY",feature:hubSourceMeta(id).feature}));
-  const useCards=cards.length?cards:fallbackCards;
   return '<div class="reference-hub-services">'+useCards.map(hubSourceCard).join("")+'</div>'+
   '<div class="reference-hub-lower"><section class="card reference-card"><div class="reference-card-head"><div><h3>Fila de eventos e logs</h3><small>Estado operacional das integrações</small></div><button class="link-btn" data-hub-open="integrations">Ver todos os logs →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Horário</th><th>Serviço</th><th>Evento</th><th>Detalhes</th><th>Status</th></tr></thead><tbody>'+
     rows.map(x=>'<tr><td>'+esc(x.time)+'</td><td><strong>'+esc(x.service)+'</strong></td><td>'+esc(x.event)+'</td><td>'+esc(x.details)+'</td><td>'+badge(x.ok?"Sucesso":"Atenção",x.ok?"good":"warn")+'</td></tr>').join("")+
