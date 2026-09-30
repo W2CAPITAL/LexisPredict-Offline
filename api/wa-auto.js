@@ -31,8 +31,17 @@ async function request(base,path,{method="GET",body,timeoutMs=16000,csrf=""}={})
     const text=await r.text();let data={};
     try{data=text?JSON.parse(text):{}}catch{data={raw:text.slice(0,1500)}}
     if(!r.ok){
-      const err=new Error(String(data?.error||("WA.Auto HTTP "+r.status)).slice(0,900));
-      err.status=r.status;throw err;
+      const raw=String(data?.raw||"");
+      const suspended=/service has been suspended|suspended by its owner|service suspended/i.test(raw);
+      const err=new Error(String(
+        suspended
+          ?"WA.Auto está suspenso na hospedagem Render. O restante do SheetsPredict continua disponível, mas ações de WhatsApp exigem um runtime persistente ativo."
+          :(data?.error||("WA.Auto HTTP "+r.status))
+      ).slice(0,900));
+      err.status=r.status;
+      err.code=suspended?"WA_AUTO_HOST_SUSPENDED":"WA_AUTO_UPSTREAM_ERROR";
+      err.suspended=suspended;
+      throw err;
     }
     return data;
   }finally{clearTimeout(timer)}
@@ -155,6 +164,9 @@ module.exports=async(req,res)=>{
       return res.status(200).json({
         ok:true,configured:true,available:false,degraded:true,
         upstreamStatus:upstreamStatus||null,
+        code:e?.code||"WA_AUTO_UNAVAILABLE",
+        suspended:e?.suspended===true,
+        reason:e?.suspended===true?"render_suspended":"upstream_unavailable",
         error:e?.message||String(e),
         connection:{status:"unavailable"},
         campaigns:[],events:[],monitors:[],suppressions:[],
@@ -162,6 +174,13 @@ module.exports=async(req,res)=>{
         legal:{available:false}
       });
     }
-    return res.status(upstreamStatus||503).json({ok:false,configured:true,available:false,error:e?.message||String(e),upstreamStatus:upstreamStatus||null});
+    return res.status(upstreamStatus||503).json({
+      ok:false,configured:true,available:false,
+      code:e?.code||"WA_AUTO_UNAVAILABLE",
+      suspended:e?.suspended===true,
+      reason:e?.suspended===true?"render_suspended":"upstream_unavailable",
+      error:e?.message||String(e),
+      upstreamStatus:upstreamStatus||null
+    });
   }
 };
