@@ -83,6 +83,7 @@ async function jsonFetch(url,opts={},ms=10000){
   return {ok:r.ok,status:r.status,data};
 }
 function predictKey(){return String(process.env.PREDICTLM_API_KEY||"").trim()}
+function lexisKey(){return String(process.env.LEXISPREDICT_API_KEY||"").trim()}
 function customAi(){
   const key=String(process.env.SHEETSPREDICT_AI_API_KEY||"").trim();
   const model=String(process.env.SHEETSPREDICT_AI_MODEL||"").trim();
@@ -170,12 +171,12 @@ async function serviceStatus(id,name,base,path,token,header){
   }catch(e){return {id,name,configured:true,ok:false,status:"indisponível",error:e?.message||String(e)}}
 }
 async function status(){
-  const predictBase=configuredUrl("PREDICTLM_URL"),predict=predictBase&&predictKey()?predictBase:null,wa=configuredUrl("WA_AUTO_URL"),grey=configuredUrl("GREY_URL"),lexis=configuredUrl("LEXISPREDICT_URL"),lead=configuredUrl("LEADCHECKIN_URL");
+  const predictBase=configuredUrl("PREDICTLM_URL"),predict=predictBase&&predictKey()?predictBase:null,wa=configuredUrl("WA_AUTO_URL"),grey=configuredUrl("GREY_URL"),lexisBase=configuredUrl("LEXISPREDICT_URL"),lexis=lexisBase&&lexisKey()?lexisBase:null,lead=configuredUrl("LEADCHECKIN_URL");
   const remote=await Promise.all([
     serviceStatus("predictlm","PredictLM",predict,"/api/capabilities?surface=chat",predictKey(),"Authorization"),
     serviceStatus("waauto","WA.Auto",wa,"/api/health",null),
     serviceStatus("grey","GREY",grey,"/health",process.env.GREY_API_KEY,"x-brain-key"),
-    serviceStatus("lexispredict","LexisPredict",lexis,"/api/health",process.env.LEXISPREDICT_TOKEN,"Authorization")
+    serviceStatus("lexispredict","LexisPredict",lexis,"/api/integration/sheetspredict",lexisKey(),"Authorization")
   ]);
   return {ok:true,repositories:REPOSITORIES,services:remote,builtins:[
     {id:"synccrm",name:"SyncCRM Intelligence",ok:true,status:"embutido",configured:true},
@@ -229,6 +230,8 @@ async function aiChat(body){
       const text=r.data?.text||r.data?.content;if(r.ok&&text)return {ok:true,engine:"GREY",provider:"GREY",content:String(text)};
     }catch{}
   }
+  const lexisFallback=await lexisChatFallback(prompt,context,messages);
+  if(lexisFallback)return lexisFallback;
   let parsed={};try{parsed=JSON.parse(context||"{}")}catch{}
   const metrics=parsed.metrics||{};
   const facts=[];
@@ -238,6 +241,41 @@ async function aiChat(body){
   if(parsed.process?.cnj)facts.push("Processo selecionado: "+parsed.process.cnj+" — "+(parsed.process.cliente||"cliente não informado")+".");
   return {ok:true,engine:"SheetsPredict Local",provider:"local",content:"Nenhum motor remoto foi habilitado neste deploy. Posso manter o diagnóstico operacional local sem inventar análise de IA. "+facts.join(" "),limited:true};
 }
+async function lexisService(body){
+  const base=configuredUrl("LEXISPREDICT_URL"),key=lexisKey();
+  if(!base||!key)return {ok:false,configured:false,error:"LexisPredict não habilitado neste deploy."};
+  const action=String(body.lexisAction||body.mode||"capabilities").toLowerCase();
+  const allowed=new Set(["capabilities","datajud","chat"]);
+  if(!allowed.has(action))throw new Error("Ação LexisPredict não permitida.");
+  const payload={action};
+  if(action==="datajud"){
+    payload.mode=compact(body.searchMode||"cnj",20).toLowerCase();
+    payload.query=compact(body.query||body.cnj,240);
+    payload.onlyBA=!!body.onlyBA;
+    payload.size=Math.max(1,Math.min(25,Number(body.size)||12));
+  }else if(action==="chat"){
+    payload.prompt=compact(body.prompt,18000);
+    payload.history=Array.isArray(body.messages)?body.messages.slice(-10):[];
+    payload.tribunalContext=compact(body.context,12000);
+  }
+  const r=await jsonFetch(urlAt(base,"/api/integration/sheetspredict"),{
+    method:"POST",
+    headers:{"Content-Type":"application/json",...authHeaders(key,"Authorization")},
+    body:JSON.stringify(payload)
+  },action==="datajud"?65000:35000);
+  if(!r.ok)throw new Error(r.data?.error||"LexisPredict indisponível.");
+  return {ok:true,configured:true,...r.data};
+}
+async function lexisChatFallback(prompt,context,messages){
+  try{
+    const r=await lexisService({lexisAction:"chat",prompt,context,messages});
+    const data=r.result||{};
+    const text=data.resposta||data.content||data.answer||data.text;
+    if(text)return {ok:true,engine:"LexisPredict",provider:"LexisPredict",content:String(text)};
+  }catch{}
+  return null;
+}
+
 async function waState(){
   const wa=configuredUrl("WA_AUTO_URL");if(!wa)return {ok:false,configured:false,error:"WA_AUTO_URL não configurada."};
   const [health,state]=await Promise.all([jsonFetch(urlAt(wa,"/api/health"),{},7000),jsonFetch(urlAt(wa,"/api/state"),{},7000)]);
@@ -275,6 +313,7 @@ module.exports=async(req,res)=>{
     else if(action==="ai_chat")result=await aiChat(body);
     else if(action==="wa_state")result=await waState();
     else if(action==="wa_send")result=await waSend(body);
+    else if(action==="lexispredict")result=await lexisService(body);
     else if(action==="lead_scan")result=await scanPublicPage(body.url);
     else if(action==="lead_discover")result=await leadDiscover(body);
     else if(action==="bacen")result=await bacen(String(body.contractDate||""));
