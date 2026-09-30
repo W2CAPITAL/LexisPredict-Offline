@@ -1,5 +1,14 @@
 # Publicar a atualização do Apps Script do SheetsPredict
 
+> **ATUALIZAÇÃO DO APPS SCRIPT NECESSÁRIA — versão 8.1**
+>
+> No seu projeto atual, substitua **somente o conteúdo de `LEXIS-SYNC-AppsScript.gs`** pelo conteúdo completo de `installer-script.txt`.
+> Não cole o installer em `Code.gs`, `LexisApp.gs`, `LexisSheet.gs` ou `LexisIndex.html`.
+>
+> Arquivo: https://github.com/W2CAPITAL/SheetsPredict/blob/main/installer-script.txt
+>
+> RAW para copiar: https://raw.githubusercontent.com/W2CAPITAL/SheetsPredict/main/installer-script.txt
+
 O SheetsPredict usa um Web App do Google Apps Script como bridge privado entre a Vercel e a planilha. Atualizar o arquivo de código não atualiza automaticamente a implantação `/exec`.
 
 ## Atualizar sem trocar a URL
@@ -27,6 +36,16 @@ A versão atual do `installer-script.txt` também instala dois gatilhos na aba *
 O lote DJEN passa a priorizar registros pendentes. Quando o SheetsPredict estiver aberto e autenticado, a sincronização da carteira identifica CNJs novos e executa automaticamente a consulta **DataJud + DJEN**, gravando tanto os campos visíveis quanto os campos legados e as abas de histórico.
 
 Para criar/confirmar esses gatilhos, após colar a nova versão do script execute uma vez **Léxis → Garantir abas e cabeçalhos** ou a função `ensureSheetsUI`.
+
+## O que mudou na versão 8.1
+
+- `list_compact`: a carteira deixa de enviar milhares de objetos com os mesmos nomes de colunas repetidos;
+- `readRowsCompact_`: a aba **Processos** é lida em páginas de até 600–800 linhas;
+- `list`, `get` e `upsert_batch` passam a exigir sessão válida no próprio Apps Script;
+- o navegador abre imediatamente usando o cache e carrega a planilha em páginas em segundo plano;
+- a sessão autenticada passa a ser assinada no backend da Vercel, eliminando uma consulta extra ao Apps Script em praticamente toda chamada.
+
+Essas alterações atacam diretamente o erro **“Tempo esgotado ao acessar o Google Apps Script”**.
 
 ## Como validar
 
