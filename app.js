@@ -633,44 +633,76 @@ function renderSettings(){
   });
   $("#resetThemeBtn").onclick=()=>{applyTheme("default");showBanner("Tema padrão restaurado.","good");renderSettings()};
 }
+function dashboardMovementSeries(rows,days=14){
+  const out=[];const today=new Date();today.setHours(12,0,0,0);
+  for(let i=days-1;i>=0;i--){
+    const d=new Date(today);d.setDate(today.getDate()-i);
+    out.push({key:[d.getFullYear(),d.getMonth(),d.getDate()].join("-"),label:String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0"),pub:0,pet:0,baixa:0,outros:0});
+  }
+  const map=new Map(out.map(x=>[x.key,x]));
+  for(const r of rows||[]){
+    const raw=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data","Última Sincronização"),d=parseDate(raw);if(!d)continue;
+    const k=[d.getFullYear(),d.getMonth(),d.getDate()].join("-"),slot=map.get(k);if(!slot)continue;
+    const blob=norm([latestMove(r),pick(r,"DJEN • Última Publicação"),pick(r,"Tipo de Evento","Evento_Tipo")].join(" "));
+    if(/publica|intimac|djen/.test(blob))slot.pub++;
+    else if(/petic|manifest|recurso|contest/.test(blob))slot.pet++;
+    else if(/baixa|arquiv|transito/.test(blob))slot.baixa++;
+    else slot.outros++;
+  }
+  return out;
+}
+function dashboardChartHtml(rows){
+  const series=dashboardMovementSeries(rows,14),max=Math.max(1,...series.map(x=>x.pub+x.pet+x.baixa+x.outros));
+  return '<div class="ref-chart-legend"><span><i class="blue"></i>Publicações</span><span><i class="green"></i>Petições</span><span><i class="gray"></i>Baixas</span><span><i class="sky"></i>Outros</span></div>'+
+    '<div class="ref-bars">'+series.map((x,i)=>{
+      const total=x.pub+x.pet+x.baixa+x.outros,scale=total?Math.max(10,Math.round(total/max*100)):3;
+      const sum=Math.max(1,total);
+      const h=v=>Math.max(0,Math.round(scale*v/sum));
+      return '<div class="ref-bar-col" title="'+esc(x.label+' · '+total+' movimentação(ões)')+'"><div class="ref-bar-stack"><i class="outros" style="height:'+h(x.outros)+'%"></i><i class="baixa" style="height:'+h(x.baixa)+'%"></i><i class="pet" style="height:'+h(x.pet)+'%"></i><i class="pub" style="height:'+h(x.pub)+'%"></i></div><small>'+(i%3===0?esc(x.label):'')+'</small></div>';
+    }).join("")+'</div>';
+}
+function dashboardSituationHtml(rows){
+  const total=Math.max(1,rows.length),closed=rows.filter(isClosed).length,venc=rows.filter(r=>!isClosed(r)&&statusRet(r)==="VENCIDO").length,attention=rows.filter(r=>!isClosed(r)&&statusRet(r)==="ATENÇÃO").length,active=Math.max(0,rows.length-closed-venc-attention);
+  const pct=n=>Math.round(n/total*1000)/10;
+  const a=pct(active),v=pct(venc),t=pct(attention),c=pct(closed);
+  const stops=[a,a+v,a+v+t,100];
+  return '<div class="ref-donut-wrap"><div class="ref-donut" style="background:conic-gradient(#19b97b 0 '+stops[0]+'%,#ef5b5b '+stops[0]+'% '+stops[1]+'%,#f3a536 '+stops[1]+'% '+stops[2]+'%,#9fb2c8 '+stops[2]+'% 100%)"><div><strong>'+esc(rows.length)+'</strong><span>processos</span></div></div>'+
+    '<div class="ref-donut-legend"><span><i class="green"></i><b>'+active+'</b> Em andamento <em>'+a+'%</em></span><span><i class="red"></i><b>'+venc+'</b> Vencidos <em>'+v+'%</em></span><span><i class="orange"></i><b>'+attention+'</b> Atenção <em>'+t+'%</em></span><span><i class="gray"></i><b>'+closed+'</b> Baixados/arquivados <em>'+c+'%</em></span></div></div>';
+}
+function dashboardTribunalHtml(rows){
+  const counts=new Map();
+  for(const r of rows||[]){const t=String(pick(r,"Tribunal")||"Não informado").trim()||"Não informado";counts.set(t,(counts.get(t)||0)+1)}
+  const list=[...counts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,5),max=Math.max(1,...list.map(x=>x[1]));
+  return '<div class="ref-ranking">'+list.map(([name,n])=>'<div><span>'+esc(name)+'</span><i><b style="width:'+Math.round(n/max*100)+'%"></b></i><strong>'+n+'</strong></div>').join("")+'</div>';
+}
+function dashboardRecentRows(rows){
+  return [...(rows||[])].sort((a,b)=>{
+    const ad=parseDate(pick(a,"DataJud • Data","DJEN • Data","Última Sincronização"))?.getTime()||0,bd=parseDate(pick(b,"DataJud • Data","DJEN • Data","Última Sincronização"))?.getTime()||0;
+    return bd-ad;
+  }).slice(0,6);
+}
 function renderDashboard(){
-  const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
-  const critical=tasks().slice(0,10);
-  const potential=state.rows.filter(r=>commercialStatus(r).includes("POTENCIAL")).length;
-  const noSell=state.rows.filter(r=>commercialStatus(r).includes("NÃO VENDER")).length;
-  const clientFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="CLIENTE").length;
-  const bankFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="BANCO").length;
-  const atendidosSemana=state.rows.filter(r=>pick(r,"AtendidoPor")&&isRecentDate(pick(r,"Último Retorno"),7)).length;
-  const tribunalSemana=state.rows.filter(r=>isRecentDate(pick(r,"Última Sincronização"),7)&&(pick(r,"DataJud • Último Movimento")||pick(r,"DJEN • Última Publicação"))).length;
-  const vencidos=state.rows.filter(r=>statusRet(r)==="VENCIDO").length;
+  const rows=state.rows,m=metrics(rows),recent30=rows.filter(r=>isRecentDate(pick(r,"DataJud • Data","DJEN • Data","Última Sincronização"),30)).length;
+  const próximos=rows.filter(r=>{const d=daysTo(pick(r,"Próximo Retorno"));return d!==null&&d>=0&&d<=30}).length;
+  const vencidos=rows.filter(r=>statusRet(r)==="VENCIDO").length,recent=dashboardRecentRows(rows);
   $("#content").innerHTML=
-  '<div class="lexis-page-shell"><div class="lexis-page-header"><div><span class="eyebrow">COMMAND CENTER</span><h2>Dashboard</h2><p>Visão da carteira · Google Sheets + DataJud + DJEN</p></div><div class="command-actions"><button class="btn" data-goto="hub">Central Integrada</button><button class="btn" data-goto="report">Dossiê operacional</button><button class="btn" data-goto="processos">Meus processos</button><button class="btn primary" data-goto="scanner">DataJud + DJEN</button></div></div>'+
-  '<div class="lexis-tabbar"><button class="active">Visão da carteira</button><button data-goto="empresa">Processos da empresa</button><button data-goto="tarefas">Fila</button><button data-goto="report">Report</button></div>'+
-  '<div class="kpi-grid dashboard-kpis">'+
-    kpi("Processos",m.total,m.active+" ativos")+
-    kpi("Vencidos",vencidos,m.attention+" em atenção","bad")+
-    kpi("Atendidos sem.",atendidosSemana,"últimos 7 dias","good")+
-    kpi("Tribunal sem.",tribunalSemana,"DataJud/DJEN")+
-    kpi("Novidades",m.newer,"após último retorno",m.newer?"warn":"good")+
-    kpi("Potencial",potential,"triagem comercial",potential?"good":"")+
-  '</div>'+
-  '<div class="dashboard-layout"><div class="card"><div class="card-head"><div><span class="eyebrow">PRIORIDADE</span><h3>Fila crítica da carteira</h3></div><button class="btn sm" data-goto="tarefas">Ver fila completa</button></div><div class="table-wrap flat dashboard-table"><table class="table compact"><thead><tr><th>Prioridade</th><th>Cliente</th><th>CNJ</th><th>Motivo</th><th>Retorno</th><th>Ações</th></tr></thead><tbody>'+
-  critical.map(x=>{const key=keyOf(x.r);return '<tr><td>'+badge(priority(x.w),x.w>=950?"bad":x.w>=800?"warn":"blue")+'</td><td><div class="cell-main">'+esc(pick(x.r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(x.r,"Assistente"))+'</div></td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(taskLabel(x.r))+'</td><td>'+badge(statusRet(x.r),statusRet(x.r)==="VENCIDO"?"bad":statusRet(x.r)==="ATENÇÃO"?"warn":"gray")+'</td><td class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico</button><button class="icon-action" data-attendance="'+esc(key)+'">Atendimento</button></td></tr>'}).join("")+
-  '</tbody></table></div></div>'+
-  '<div class="stack"><div class="card"><div class="card-head"><div><span class="eyebrow">REDE JUDICIAL</span><h3>Cobertura</h3></div></div><div class="card-body metric-list">'+
-    metricRow("DataJud",djPct+"%",m.dj+" processos com movimento")+
-    metricRow("DJEN",djenPct+"%",m.djen+" processos com publicação")+
-    metricRow("Procedência",procPct+"%",classified+" resultados classificados")+
-    metricRow("Cliente favorecido",clientFav,bankFav+" banco favorecido")+
-  '</div></div>'+
-  '<div class="card"><div class="card-head"><div><span class="eyebrow">COMERCIAL</span><h3>Esteira</h3></div></div><div class="card-body metric-list">'+
-    metricRow("Potencial",potential,"crédito/direito a revisar")+
-    metricRow("Não vender",noSell,"resultado adverso ou fase encerrada")+
-    metricRow("Revisar",state.rows.length-potential-noSell,"sem gatilho conclusivo")+
-  '</div></div></div></div></div>';
-  bindGotos();
-  $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
-  $$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
+  '<div class="reference-page dashboard-reference">'+
+    '<div class="reference-page-head"><div><h2>Dashboard</h2><p>Visão geral da sua operação jurídica</p></div><div class="reference-head-actions"><select aria-label="Período"><option>Últimos 30 dias</option></select><button class="btn primary" data-new-record>＋ Novo cadastro</button></div></div>'+
+    '<div class="reference-kpis">'+
+      '<article class="reference-kpi"><div><strong>'+m.total.toLocaleString("pt-BR")+'</strong><span>Processos monitorados</span></div><b class="ref-icon blue">▣</b><small>'+m.active+' ativos</small></article>'+
+      '<article class="reference-kpi"><div><strong>'+recent30.toLocaleString("pt-BR")+'</strong><span>Movimentações (30 dias)</span></div><b class="ref-icon blue">↗</b><small>DataJud + DJEN registrados</small></article>'+
+      '<article class="reference-kpi"><div><strong>'+próximos.toLocaleString("pt-BR")+'</strong><span>Prazos próximos</span></div><b class="ref-icon orange">▣</b><small>próximos 30 dias</small></article>'+
+      '<article class="reference-kpi"><div><strong>'+vencidos.toLocaleString("pt-BR")+'</strong><span>Prazos vencidos</span></div><b class="ref-icon red">!</b><small>exigem revisão</small></article>'+
+    '</div>'+
+    (vencidos?'<div class="reference-alert"><b>!</b><div><strong>'+vencidos+' prazo(s) vencido(s) precisam de atenção.</strong><span>Revise a fila prioritária e registre o próximo retorno.</span></div><button class="btn sm" data-goto="tarefas">Ver prazos vencidos</button></div>':'')+
+    '<div class="reference-grid-main"><section class="card reference-card"><div class="reference-card-head"><h3>Movimentações de processos</h3><span>Últimos 14 dias</span></div>'+dashboardChartHtml(rows)+'</section>'+
+    '<section class="card reference-card"><div class="reference-card-head"><h3>Carteira por situação</h3></div>'+dashboardSituationHtml(rows)+'</section></div>'+
+    '<div class="reference-grid-bottom"><section class="card reference-card"><div class="reference-card-head"><h3>Processos recentes</h3><button class="link-btn" data-goto="processos">Ver todos →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Processo</th><th>Cliente</th><th>Última movimentação</th><th>Situação</th></tr></thead><tbody>'+
+      recent.map(r=>'<tr><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Cliente")||"—")+'</td><td><div class="cell-main clamp2">'+esc(String(latestMove(r)||"Sem movimentação").slice(0,110))+'</div><div class="cell-sub">'+esc(pick(r,"DataJud • Data","DJEN • Data","Última Sincronização")||"")+'</div></td><td>'+badge(isClosed(r)?"BAIXADO":statusRet(r)==="VENCIDO"?"VENCIDO":"EM ANDAMENTO",isClosed(r)?"blue":statusRet(r)==="VENCIDO"?"bad":"good")+'</td></tr>').join("")+
+    '</tbody></table></div></section>'+
+    '<section class="card reference-card"><div class="reference-card-head"><h3>Tribunais mais ativos</h3><span>Carteira atual</span></div>'+dashboardTribunalHtml(rows)+'</section></div>'+
+  '</div>';
+  bindGotos();$$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
 
 async function hubApi(payload){
