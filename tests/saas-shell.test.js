@@ -20,7 +20,7 @@ assert.match(css,/SheetsPredict mobile usability v5/);
 assert.match(css,/body\.mobile-nav-open \.sidebar/);
 assert.match(css,/\.mobile-menu-btn/);
 assert.match(css,/\.table-wrap,\.wa-table-scroll[\s\S]*overflow-x:auto!important/);
-for(const selector of [".workspace-card",".nav-section-label",".kpi:hover",".record-toolbar",".dialog-card",".pipeline-col",".global-x-scroll"])assert.ok(css.includes(selector),"polish SaaS ausente: "+selector);
+for(const selector of [".workspace-card",".nav-section-label",".kpi:hover",".record-toolbar",".dialog-card",".pipeline-col",".global-x-scroll",".btn-spinner",".operation-pending"])assert.ok(css.includes(selector),"polish SaaS ausente: "+selector);
 for(const token of ["--saas-sidebar","--saas-topbar","--saas-radius","--saas-shadow"])assert.ok(css.includes(token),"token SaaS ausente: "+token);
 for(const selector of [".reference-page-head",".reference-kpis",".reference-hub-services",".ps-workspace",".top-search"])assert.ok(css.includes(selector),"camada visual de referência ausente: "+selector);
 

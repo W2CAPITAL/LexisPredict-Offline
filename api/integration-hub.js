@@ -182,14 +182,23 @@ async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requi
   try{
     const r=await jsonFetch(urlAt(base,path),{headers:{Accept:"application/json",...authHeaders(token,header)}},8000);
     const httpHealth=healthLabel(Number(r.status)||0);
-    const payloadUnhealthy=r.ok&&(r.data?.ok===false||r.data?.healthy===false||/^(error|failed|offline|unhealthy)$/i.test(String(r.data?.status||"")));
+    const remoteConfigured=r.data?.configured;
+    const remoteAuthorized=r.data?.authorized;
+    const payloadUnhealthy=r.ok&&(r.data?.ok===false||r.data?.healthy===false||r.data?.available===false||/^(error|failed|offline|unhealthy)$/i.test(String(r.data?.status||"")));
     const message=compact(r.data?.error||r.data?.message||r.data?.detail||"",220);
-    const ok=httpHealth.ok&&!payloadUnhealthy;
+    const remoteMissing=remoteConfigured===false;
+    const authMismatch=requiresToken&&remoteConfigured!==false&&remoteAuthorized===false;
+    const ok=httpHealth.ok&&!payloadUnhealthy&&!remoteMissing&&!authMismatch;
+    let status=ok?"online":httpHealth.status,reason=ok?"healthy":httpHealth.reason,detail=message||undefined;
+    if(remoteMissing){status="serviço online; chave ausente no destino";reason="remote_missing_key";detail=detail||"O deployment remoto está ativo, mas ainda não configurou a chave da integração."}
+    else if(authMismatch){status="credencial não reconhecida pelo destino";reason="remote_key_mismatch";detail=detail||"A chave do SheetsPredict não corresponde à chave configurada no serviço remoto."}
+    else if(payloadUnhealthy){status=message||"serviço respondeu não saudável";reason="unhealthy_payload"}
     return {
-      id,name,configured:true,ok,status:ok?"online":payloadUnhealthy?(message||"serviço respondeu não saudável"):httpHealth.status,
-      reason:ok?"healthy":payloadUnhealthy?"unhealthy_payload":httpHealth.reason,
+      id,name,configured:!remoteMissing,reachable:r.ok||r.status>0,ok,status,reason,
       httpStatus:r.status,latencyMs:Date.now()-started,checkedAt,
-      detail:message||undefined,credentialSent:requiresToken?!!token:false
+      detail,credentialSent:requiresToken?!!token:false,
+      remoteConfigured:remoteConfigured===undefined?undefined:!!remoteConfigured,
+      remoteAuthorized:remoteAuthorized===undefined?undefined:!!remoteAuthorized
     };
   }catch(e){
     const message=e?.name==="AbortError"?"tempo esgotado":compact(e?.message||String(e),220);
@@ -199,7 +208,7 @@ async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requi
 async function status(){
   const predict=configuredUrl("PREDICTLM_URL"),wa=configuredUrl("WA_AUTO_URL"),grey=configuredUrl("GREY_URL"),lexis=configuredUrl("LEXISPREDICT_URL"),lead=configuredUrl("LEADCHECKIN_URL");
   const remote=await Promise.all([
-    serviceStatus({id:"predictlm",name:"PredictLM",base:predict,path:"/api/capabilities?surface=chat",token:predictKey(),header:"Authorization",urlEnv:"PREDICTLM_URL",keyEnv:"PREDICTLM_API_KEY"}),
+    serviceStatus({id:"predictlm",name:"PredictLM",base:predict,path:"/api/integration/sheetspredict",token:predictKey(),header:"Authorization",urlEnv:"PREDICTLM_URL",keyEnv:"PREDICTLM_API_KEY"}),
     serviceStatus({id:"waauto",name:"WA.Auto",base:wa,path:"/api/health",token:null,urlEnv:"WA_AUTO_URL",requiresToken:false}),
     serviceStatus({id:"grey",name:"GREY",base:grey,path:"/health",token:process.env.GREY_API_KEY,header:"x-brain-key",urlEnv:"GREY_URL",keyEnv:"GREY_API_KEY"}),
     serviceStatus({id:"lexispredict",name:"LexisPredict",base:lexis,path:"/api/integration/sheetspredict",token:lexisKey(),header:"Authorization",urlEnv:"LEXISPREDICT_URL",keyEnv:"LEXISPREDICT_API_KEY"})

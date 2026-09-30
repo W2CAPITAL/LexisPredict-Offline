@@ -16,6 +16,47 @@ function setSessionCookie(res,value){
 function clearSessionCookie(res){
   res.setHeader("Set-Cookie","lexis_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
 }
+const READ_ACTIONS=new Set(["auto","list","get","crm_list","judicial_history","ping","users","list_users"]);
+const TRANSIENT_STATUSES=new Set([408,425,429,500,502,503,504]);
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function fetchBridge(url,body,action){
+  const safeRead=READ_ACTIONS.has(action);
+  const attempts=safeRead?3:1;
+  let lastError=null,lastStatus=0,lastText="";
+  for(let attempt=0;attempt<attempts;attempt++){
+    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),18000);
+    try{
+      const up=await fetch(url,{
+        method:"POST",
+        headers:{"Content-Type":"text/plain;charset=utf-8"},
+        body:JSON.stringify(body),
+        redirect:"follow",
+        signal:ctrl.signal
+      });
+      const txt=await up.text();lastStatus=up.status;lastText=txt;
+      let data=null,parseError=false;
+      try{data=JSON.parse(txt)}catch{parseError=true}
+      const retryable=safeRead&&(parseError||TRANSIENT_STATUSES.has(up.status));
+      if(retryable&&attempt<attempts-1){await wait(350*Math.pow(2,attempt));continue}
+      return {up,data,txt,parseError};
+    }catch(e){
+      lastError=e;
+      if(safeRead&&attempt<attempts-1){await wait(350*Math.pow(2,attempt));continue}
+    }finally{clearTimeout(timer)}
+  }
+  if(lastError)throw lastError;
+  return {up:{ok:false,status:lastStatus||503},data:null,txt:lastText,parseError:true};
+}
+function transientRead(res,action,message,status){
+  res.setHeader("Cache-Control","no-store");
+  res.setHeader("X-Sheets-Degraded","1");
+  return res.status(200).json({
+    ok:false,transient:true,degraded:true,action,
+    upstreamStatus:Number(status)||null,
+    retryAfterMs:4000,
+    error:message||"A planilha está temporariamente indisponível. O cache local foi preservado."
+  });
+}
 module.exports=async(req,res)=>{
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"Método não permitido"});
   if(!requireSameOrigin(req,res))return;
@@ -41,16 +82,15 @@ module.exports=async(req,res)=>{
     }
     if(action!=="login"&&action!=="auth"&&action!=="ping"&&sess)payload.sess=sess;
 
-    const up=await fetch(url,{
-      method:"POST",
-      headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body:JSON.stringify({...payload,token:fixedToken}),
-      redirect:"follow"
-    });
-    const txt=await up.text();
-    let data;
-    try{data=JSON.parse(txt)}
-    catch{return res.status(502).json({ok:false,error:"Apps Script retornou conteúdo não JSON",detail:txt.slice(0,300)})}
+    const bridged=await fetchBridge(url,{...payload,token:fixedToken},action);
+    const up=bridged.up,txt=bridged.txt,data=bridged.data;
+    if(bridged.parseError){
+      if(READ_ACTIONS.has(action))return transientRead(res,action,"Google Apps Script está trocando de versão ou respondeu temporariamente fora do formato esperado.",up.status);
+      return res.status(503).json({ok:false,transient:true,error:"Apps Script temporariamente indisponível durante a gravação. A alteração deve permanecer na fila local.",detail:String(txt||"").slice(0,300)});
+    }
+    if(READ_ACTIONS.has(action)&&TRANSIENT_STATUSES.has(Number(up.status))){
+      return transientRead(res,action,data?.error||("Google Apps Script respondeu HTTP "+up.status+" durante a atualização."),up.status);
+    }
 
     res.setHeader("Cache-Control","no-store");
 
@@ -110,6 +150,10 @@ module.exports=async(req,res)=>{
 
     return res.status(up.ok?200:up.status).json(data);
   }catch(e){
-    return res.status(400).json({ok:false,error:e?.message||String(e)});
+    const body=typeof req.body==="string"?(()=>{try{return JSON.parse(req.body||"{}")}catch{return{}}})():(req.body||{});
+    const action=String(body?.payload?.action||"").trim().toLowerCase();
+    const msg=e?.name==="AbortError"?"Tempo esgotado ao acessar o Google Apps Script.":(e?.message||String(e));
+    if(READ_ACTIONS.has(action))return transientRead(res,action,msg,503);
+    return res.status(503).json({ok:false,transient:true,error:msg});
   }
 };
