@@ -185,13 +185,16 @@ async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requi
     const remoteConfigured=r.data?.configured;
     const remoteAuthorized=r.data?.authorized;
     const payloadUnhealthy=r.ok&&(r.data?.ok===false||r.data?.healthy===false||r.data?.available===false||/^(error|failed|offline|unhealthy)$/i.test(String(r.data?.status||"")));
-    const message=compact(r.data?.error||r.data?.message||r.data?.detail||"",220);
+    const message=compact(r.data?.error||r.data?.message||r.data?.detail||r.data?.raw||"",220);
     const remoteMissing=remoteConfigured===false;
     const authMismatch=requiresToken&&remoteConfigured!==false&&remoteAuthorized===false;
     const ok=httpHealth.ok&&!payloadUnhealthy&&!remoteMissing&&!authMismatch;
     let status=ok?"online":httpHealth.status,reason=ok?"healthy":httpHealth.reason,detail=message||undefined;
     if(remoteMissing){status="serviço online; chave ausente no destino";reason="remote_missing_key";detail=detail||("O SheetsPredict enviou a credencial, mas o projeto remoto ainda não expôs uma chave compatível. Configure "+(keyEnv||"a chave de integração")+" também no projeto de destino e faça um novo deployment; definir a variável somente no SheetsPredict não autentica o serviço remoto.")}
     else if(authMismatch){status="credencial não reconhecida pelo destino";reason="remote_key_mismatch";detail=detail||"A chave do SheetsPredict não corresponde à chave configurada no serviço remoto."}
+    else if(/service has been suspended|suspended by its owner|service suspended/i.test(message)){
+      status="host suspenso no Render";reason="host_suspended";detail="O serviço WA.Auto está suspenso na hospedagem. O código não consegue reativar um serviço bloqueado por billing; use outro runtime persistente ou regularize o workspace do Render.";
+    }
     else if(payloadUnhealthy){status=message||"serviço respondeu não saudável";reason="unhealthy_payload"}
     return {
       id,name,configured:!remoteMissing,reachable:r.ok||r.status>0,ok,status,reason,
