@@ -174,6 +174,7 @@ async function flushCrmOutbox(){
   await idbClear("crmOutbox");return {ok:true,written};
 }
 async function crmWrite(table,row,{quiet=false}={}){
+  if(state.updateLock)return {ok:false,blocked:true,error:"Atualização em andamento."};
   crmUpsertLocal(table,row);await saveCrmCache(table);
   if(!navigator.onLine){await queueCrmWrite(table,row);if(!quiet)showBanner("CRM salvo offline; será enviado quando a conexão voltar.","good");return {ok:true,queued:true}}
   try{
@@ -415,8 +416,16 @@ async function applyWaitingUpdate(target){
     await waitForSyncIdle();
     updateOverlay({title:"Protegendo seus dados",detail:"Confirmando edições pendentes e finalizando a sincronização antes da atualização.",meta:"Nenhuma nova edição pode ser feita agora.",progress:38});
     if(state.session&&navigator.onLine){
-      await flushOutbox({force:true});
-      await flushCrmOutbox();
+      // Duas passagens fecham a pequena janela de uma edição iniciada imediatamente
+      // antes de o bloqueio visual entrar em vigor.
+      for(let pass=0;pass<2;pass++){
+        await flushOutbox({force:true});
+        await flushCrmOutbox();
+        await updateSleep(220);
+      }
+      const pendingWrites=await outboxCount().catch(()=>0);
+      const pendingCrm=(await idbAll("crmOutbox").catch(()=>[])).length;
+      if(pendingWrites||pendingCrm)throw new Error("Ainda existem "+(pendingWrites+pendingCrm)+" alteração(ões) pendente(s) de confirmação.");
     }
     updateOverlay({title:"Atualizando SheetsPredict",detail:"Dados pendentes confirmados. Aplicando a nova versão do aplicativo.",meta:"O aplicativo será recarregado automaticamente.",progress:72});
     writeUpdateState({status:"reloading",target:state.updateTarget,startedAt:Date.now()});
@@ -424,7 +433,15 @@ async function applyWaitingUpdate(target){
     if(!reg&&"serviceWorker"in navigator)reg=await navigator.serviceWorker.getRegistration();
     if(reg){
       await reg.update().catch(()=>{});
-      const waiting=reg.waiting||null;
+      let waiting=reg.waiting||null;
+      if(!waiting&&reg.installing){
+        waiting=await new Promise(resolve=>{
+          const worker=reg.installing,timer=setTimeout(()=>resolve(reg.waiting||null),8000);
+          worker.addEventListener("statechange",()=>{
+            if(worker.state==="installed"){clearTimeout(timer);resolve(reg.waiting||worker)}
+          });
+        });
+      }
       if(waiting){
         waiting.postMessage({type:"SKIP_WAITING"});
         setTimeout(()=>{if(state.updateLock)location.reload()},7000);
@@ -863,7 +880,7 @@ function hubSourceCard(src){
   const label=!st?"Verificando":ok?"Online":st?.reason==="unauthorized"?"Credencial recusada":configured?"Indisponível":"Configuração incompleta";
   const cls=ok?"good":configured?"warn":"gray";
   const detail=hubStatusDetail(st);
-  return '<article class="hub-source-card reference-service-card"><div class="reference-service-title"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><div><strong>'+esc(src.name)+'</strong><small>'+esc(src.feature||meta.feature)+'</small></div></div><div>'+badge(label,cls)+'</div><p title="'+esc(detail)+'">'+esc(detail)+'</p><button class="btn sm" data-hub-open="'+esc(meta.open)+'">'+(ok?"Abrir":"Diagnosticar")+'</button></article>';
+  return '<article class="hub-source-card reference-service-card"><div class="reference-service-title"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><div><strong>'+esc(src.name)+'</strong><small>'+esc(src.feature||meta.feature)+'</small></div></div><div>'+badge(label,cls)+'</div><p title="'+esc(detail)+'">'+esc(detail)+'</p><button class="btn sm" data-hub-open="'+esc(ok?meta.open:"integrations")+'">'+(ok?"Abrir":"Diagnosticar")+'</button></article>';
 }
 function hubTabs(){
   const tabs=[["overview","Visão geral"],["ai","IA"],["whatsapp","WhatsApp"],["leads","Leads"],["revisional","Revisional"],["sheets","Planilha"],["integrations","Integrações"]];
@@ -1651,6 +1668,7 @@ function openAttendance(key){
   $("#attendanceDialog").showModal();
 }
 async function saveAttendance(){
+  if(state.updateLock){showBanner("Atualização em andamento. Atendimentos estão temporariamente bloqueados.","bad");return}
   const key=$("#attendanceKey").value,row=findRow(key);if(!row)return;
   const btn=$("#saveAttendanceBtn");btn.disabled=true;btn.textContent="Salvando…";
   const actor=currentUser().nome||currentUser().usuario||"Usuário";
@@ -1963,7 +1981,7 @@ async function saveProcess(){
 
 function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.companyRows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="sheetspredict-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
 function csvSplit(line,sep){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==="\""){if(q&&line[i+1]==="\""){cur+="\"";i++}else q=!q}else if(c===sep&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out}
-async function importCsv(ev){const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;invalidateCrmIndexes();refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
+async function importCsv(ev){if(state.updateLock){showBanner("Atualização em andamento. Importações estão temporariamente bloqueadas.","bad");return}const f=ev.target.files?.[0];if(!f)return;const text=await f.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)return;const sep=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const headers=csvSplit(lines[0],sep).map(x=>x.trim());const rows=lines.slice(1).map(l=>{const a=csvSplit(l,sep),r={};headers.forEach((h,i)=>r[h]=a[i]??"");return r});state.companyRows=rows;invalidateCrmIndexes();refreshScopes();await saveRows(rows);showBanner(rows.length+" processos importados para o cache local.","good");render()}
 function setupEvents(){
   ensureGlobalXScroll();
   const content=$("#content");
