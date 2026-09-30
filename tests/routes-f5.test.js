@@ -37,4 +37,8 @@ assert.match(installer,/function readRowsCompact_/,"installer deve ler apenas a 
 assert.match(sheetsApi,/APPS_SCRIPT_OUTDATED/,"bridge deve identificar Apps Script desatualizado sem fallback pesado");
 assert.match(app,/syncJitter/,"sincronização multiusuário deve ter jitter");
 assert.match(installer,/faltam menos de 2 horas/,"sessão do Apps Script não deve ser regravada a cada página");
+
+assert.doesNotMatch(app,/const blocked=await initUpdateGuard\(\);\s*if\(blocked\)return/,"guard de atualização não pode abortar o boot");
+assert.match(app,/await initUpdateGuard\(\);/,"guard deve ser inicializado sem encerrar o boot");
+assert.match(app,/if\(state\.updateLock\)return;\s*startAutoSync\(\)/,"cache deve renderizar antes do bloqueio de atualização");
 console.log("routes-f5: ok");
