@@ -1,12 +1,14 @@
-const CACHE="sheetspredict-v34";
+const CACHE="sheetspredict-v35";
 const SHELL=["/index.html","/styles.css","/app.js","/lib/crm-model.js","/lib/task-priority.js","/lib/suggest-response.js","/lib/sheets-hub.js","/lib/predict-studio.js","/lib/wa-auto.js","/lib/predict-runtime.js","/lib/predict-studio-catalog.js","/manifest.webmanifest"];
 
 self.addEventListener("install",event=>{
-  event.waitUntil(
-    caches.open(CACHE)
-      .then(cache=>cache.addAll(SHELL))
-      .then(()=>self.skipWaiting())
-  );
+  // A versão nova fica aguardando até a página bloquear login/edições,
+  // confirmar pendências e autorizar a troca.
+  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)));
+});
+
+self.addEventListener("message",event=>{
+  if(event.data?.type==="SKIP_WAITING")self.skipWaiting();
 });
 
 self.addEventListener("activate",event=>{
