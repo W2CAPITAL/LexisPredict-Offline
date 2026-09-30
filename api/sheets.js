@@ -1,3 +1,4 @@
+const {validateSession,requireSameOrigin}=require("../lib/bridge-auth");
 const {scopeRows,isElevated}=require("../lib/sheet-scope");
 function safeUrl(raw){
   let u;try{u=new URL(String(raw||""))}catch{throw new Error("LEXIS_APPS_SCRIPT_URL inválida ou ausente na Vercel.")}
@@ -10,13 +11,14 @@ function cookies(req){
   const out={};String(req.headers.cookie||"").split(";").forEach(p=>{const i=p.indexOf("=");if(i>0)out[p.slice(0,i).trim()]=decodeURIComponent(p.slice(i+1).trim())});return out;
 }
 function setSessionCookie(res,value){
-  res.setHeader("Set-Cookie","lexis_session="+encodeURIComponent(value)+"; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800");
+  res.setHeader("Set-Cookie","lexis_session="+encodeURIComponent(value)+"; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800");
 }
 function clearSessionCookie(res){
-  res.setHeader("Set-Cookie","lexis_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+  res.setHeader("Set-Cookie","lexis_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
 }
 module.exports=async(req,res)=>{
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"Método não permitido"});
+  if(!requireSameOrigin(req,res))return;
   try{
     const body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});
     const payload={...(body.payload||{})};
@@ -33,6 +35,10 @@ module.exports=async(req,res)=>{
     if(!fixedToken)return res.status(500).json({ok:false,error:"LEXIS_SHEETS_TOKEN não está configurado na Vercel."});
 
     const sess=cookies(req).lexis_session||"";
+    if(!["login","auth","ping","logout"].includes(action)){
+      const check=await validateSession(req);
+      if(!check.ok)return res.status(check.status||401).json({ok:false,error:check.error||"Não autenticado"});
+    }
     if(action!=="login"&&action!=="auth"&&action!=="ping"&&sess)payload.sess=sess;
 
     const up=await fetch(url,{
