@@ -23,7 +23,7 @@ assert.match(app,/scheduleSheetRecovery/,"cliente deve reconectar automaticament
 const bridgeAuth=fs.readFileSync(path.join(__dirname,"..","lib","bridge-auth.js"),"utf8");
 assert.match(bridgeAuth,/transient:true/,"timeout de validação deve ser transitório e não 401");
 assert.match(bridgeAuth,/status:401,reason:"expired_session"/,"401 deve ficar reservado para sessão realmente expirada");
-assert.match(sheetsApi,/check\.transient\|\|Number\(check\.status\)>=500/,"api/sheets deve preservar sessão em falha transitória");
+assert.match(sheetsApi,/auth\.transient\|\|Number\(auth\.status\)>=500/,"api/sheets deve preservar sessão em falha transitória");
 
 
 const bridgeAuth2=fs.readFileSync(path.join(__dirname,"..","lib","bridge-auth.js"),"utf8");
