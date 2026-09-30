@@ -34,6 +34,8 @@ assert.match(api,/lexisService/);
 assert.match(api,/lexisChatFallback/);
 assert.match(api,/SHEETSPREDICT_AI_API_KEY/);
 assert.match(api,/SHEETSPREDICT_AI_BASE_URL/);
+assert.match(api,/predict-learning-pack/);
+assert.match(api,/learning\.context/);
 assert.match(api,/resolvedPublicUrl/);
 assert.match(api,/dns\.lookup/);
 
