@@ -792,7 +792,7 @@ function titleFor(v){return {
   scanner:["REDE JUDICIAL","DataJud + DJEN"],
   settings:["PREFERÊNCIAS","Configurações"]
 }[v]||["SHEETSPREDICT","Dashboard"]}
-const viewPaths={dashboard:"/",hub:"/central",studio:"/studio",waauto:"/wa-auto",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",scanner:"/scanner",settings:"/configuracoes"};
+const viewPaths={dashboard:"/",hub:"/central",studio:"/studio",waauto:"/wa-auto",processos:"/cases",empresa:"/processos",clientes:"/clientes",pipeline:"/pipeline",agenda:"/agenda",financeiro:"/financeiro",tarefas:"/tarefas",analise:"/analise",report:"/report",documentos:"/documentos",scanner:"/scanner",settings:"/configuracoes"};
 function pathView(){
   const rawHash=String(location.hash||"").replace(/^#/,"").replace(/\/+$/,"");
   if(rawHash){
@@ -866,6 +866,18 @@ function renderWAAuto(){
   window.WAAutoModule.render(root,{
     rows:()=>state.companyRows,
     clients:()=>crmClients(),
+    showBanner
+  });
+}
+function renderLegalDocuments(){
+  const root=$("#content");
+  if(!root)return;
+  if(!window.SheetsLegalDocuments){
+    root.innerHTML='<div class="banner bad">Central de Peças Jurídicas não carregou. Atualize o PWA e tente novamente.</div>';
+    return;
+  }
+  window.SheetsLegalDocuments.render(root,{
+    rows:()=>state.companyRows.length?state.companyRows:state.rows,
     showBanner
   });
 }
