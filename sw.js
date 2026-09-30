@@ -1,4 +1,4 @@
-const CACHE="sheetspredict-v50";
+const CACHE="sheetspredict-v51";
 const SHELL=["/index.html","/styles.css","/app.js","/lib/crm-model.js","/lib/task-priority.js","/lib/suggest-response.js","/lib/sheets-hub.js","/lib/predict-studio.js","/lib/wa-auto.js","/lib/predict-runtime.js","/lib/predict-studio-catalog.js","/lib/legal-document-generator.js","/manifest.webmanifest"];
 
 self.addEventListener("install",event=>{
