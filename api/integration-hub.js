@@ -55,6 +55,16 @@ async function jsonFetch(url,opts={},ms=10000){
   return {ok:r.ok,status:r.status,data};
 }
 function predictKey(){return String(process.env.PREDICTLM_API_KEY||process.env.PREDICTLM_ACCESS_TOKEN||"").trim()}
+function customAi(){
+  const key=String(process.env.SHEETSPREDICT_AI_API_KEY||"").trim();
+  const model=String(process.env.SHEETSPREDICT_AI_MODEL||"").trim();
+  const raw=String(process.env.SHEETSPREDICT_AI_BASE_URL||"").trim();
+  if(!key||!model||!raw)return null;
+  let base;try{base=new URL(raw)}catch{return null}
+  if(base.protocol!=="https:"||privateHost(base.hostname))return null;
+  base.pathname=base.pathname.replace(/\/$/,"");base.search="";base.hash="";
+  return {base,key,model,name:String(process.env.SHEETSPREDICT_AI_NAME||"IA própria").trim().slice(0,80)||"IA própria"};
+}
 function authHeaders(token,header="Authorization"){
   if(!token)return {};
   return header==="Authorization"?{Authorization:"Bearer "+token}:{[header]:token};
@@ -160,6 +170,25 @@ async function aiChat(body){
     try{
       const r=await jsonFetch(urlAt(predict,"/api/chat"),{method:"POST",headers:{"Content-Type":"application/json",...authHeaders(predictKey(),"Authorization")},body:JSON.stringify({prompt,messages,language:"pt-BR",deep:!!body.deep,answerAnchor:context,sessionId:compact(body.sessionId,120)})},35000);
       if(r.ok&&r.data?.content)return {ok:true,engine:"PredictLM",provider:"PredictLM",content:String(r.data.content)};
+    }catch{}
+  }
+  const own=customAi();
+  if(own){
+    try{
+      const history=messages.filter(x=>x&&(x.role==="user"||x.role==="assistant")&&x.content).map(x=>({role:x.role,content:compact(x.content,6000)}));
+      const r=await jsonFetch(urlAt(own.base,"/chat/completions"),{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:"Bearer "+own.key,"X-Title":"SheetsPredict"},
+        body:JSON.stringify({
+          model:own.model,
+          messages:[{role:"system",content:contextSystem(context)},...history,{role:"user",content:prompt}],
+          temperature:body.deep?.22:.35,
+          max_tokens:body.deep?2200:1400,
+          stream:false
+        })
+      },35000);
+      const text=r.data?.choices?.[0]?.message?.content||r.data?.response;
+      if(r.ok&&text)return {ok:true,engine:own.name,provider:own.name,content:String(text)};
     }catch{}
   }
   const grey=configuredUrl("GREY_URL");
