@@ -486,7 +486,10 @@ function withTimeout(promise,ms,label){
     new Promise((_,reject)=>setTimeout(()=>reject(Object.assign(new Error(label||"Operação excedeu o tempo limite."),{timeout:true})),ms))
   ]);
 }
-function releaseUpdateLock(message){
+function releaseUpdateLock(message,{deferCurrent=true}={}){
+  if(deferCurrent&&state.updateTarget){
+    try{localStorage.setItem(RELEASE_SEEN_KEY,String(state.updateTarget))}catch(_){}
+  }
   writeUpdateState(null);
   hideUpdateOverlay();
   if(state.session){
@@ -545,16 +548,13 @@ async function applyWaitingUpdate(target){
     const pendingWrites=await outboxCount().catch(()=>0);
     const pendingCrm=(await idbAll("crmOutbox").catch(()=>[])).length;
     if(pendingWrites||pendingCrm){
-      updateOverlay({title:"Protegendo seus dados",detail:"Existem "+(pendingWrites+pendingCrm)+" alteração(ões) local(is). Tentando confirmá-las antes da atualização.",meta:"Se a planilha não responder, a atualização será adiada e o app será liberado.",progress:38,continueApp:true});
+      // Não usa a atualização do app para forçar sincronização de dados. Se há
+      // pendências, adia esta versão e libera o usuário; a outbox continua intacta.
+      updateOverlay({title:"Atualização adiada",detail:"Existem "+(pendingWrites+pendingCrm)+" alteração(ões) local(is) ainda não confirmada(s).",meta:"Seus dados foram preservados. O app será liberado e continuará tentando sincronizar normalmente.",progress:38,continueApp:true,eyebrow:"ATUALIZAÇÃO PAUSADA"});
       configureUpdateContinue("Atualização adiada. Suas alterações locais continuam preservadas.");
-      if(!navigator.onLine)throw new Error("Sem conexão para confirmar alterações pendentes.");
-      await withTimeout((async()=>{
-        if(pendingWrites)await flushOutbox({force:true});
-        if(pendingCrm)await flushCrmOutbox();
-      })(),9000,"A sincronização pendente não respondeu a tempo.");
-      const leftWrites=await outboxCount().catch(()=>0);
-      const leftCrm=(await idbAll("crmOutbox").catch(()=>[])).length;
-      if(leftWrites||leftCrm)throw new Error("Ainda existem "+(leftWrites+leftCrm)+" alteração(ões) pendente(s).");
+      clearTimeout(watchdog);
+      setTimeout(()=>{if(state.updateLock)releaseUpdateLock("Atualização adiada porque existem alterações pendentes.")},900);
+      return;
     }
 
     updateOverlay({title:"Atualizando SheetsPredict",detail:"Nenhuma alteração pendente bloqueia a atualização. Ativando a nova versão.",meta:"O aplicativo será recarregado automaticamente.",progress:72,continueApp:false});
@@ -602,14 +602,15 @@ async function checkForAppUpdate({initial=false}={}){
     await updateSleep(1400);hideUpdateOverlay();
     return false;
   }
-  if(initial&&state.swRegistration?.waiting){
-    if(!seen)localStorage.setItem(RELEASE_SEEN_KEY,seen||"versao-anterior");
-    void applyWaitingUpdate(remote);
-    return true;
-  }
   if(!seen){
     localStorage.setItem(RELEASE_SEEN_KEY,remote);
     return false;
+  }
+  // Uma versão que o usuário já adiou/viu não pode bloquear o app de novo,
+  // mesmo que o Service Worker ainda esteja em waiting.
+  if(initial&&state.swRegistration?.waiting&&remote!==seen){
+    void applyWaitingUpdate(remote);
+    return true;
   }
   if(remote!==seen){
     void applyWaitingUpdate(remote);
