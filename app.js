@@ -362,6 +362,13 @@ async function syncFromCloud(opts={}){
     }
     render();
     void syncCRM({quiet:true}).then(()=>{if(window.WAAutoModule?.backgroundSync)void window.WAAutoModule.backgroundSync(state.companyRows,crmClients());}).catch(()=>{});
+  } catch(e) {
+    if(e?.transient){
+      if(!opts.quiet)showBanner("Google Sheets está temporariamente ocupado. A carteira local continua disponível e a reconexão será automática.","bad");
+      scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
+      return {ok:false,degraded:true,transient:true,error:e.message||String(e)};
+    }
+    throw e;
   } finally {
     state.syncing=false;
   }
