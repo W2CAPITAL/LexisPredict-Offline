@@ -90,8 +90,14 @@ module.exports=async(req,res)=>{
     let bridged=await fetchBridge(url,bridgePayload,action);
     let up=bridged.up,txt=bridged.txt,data=bridged.data;
     if(action==="list"&&data&&data.ok===false&&/acao desconhecida:\s*list_compact/i.test(String(data.error||""))){
-      bridged=await fetchBridge(url,{...payload,action:"list",token:fixedToken},action);
-      up=bridged.up;txt=bridged.txt;data=bridged.data;
+      res.setHeader("Cache-Control","no-store");
+      return res.status(200).json({
+        ok:false,
+        upgradeRequired:true,
+        code:"APPS_SCRIPT_OUTDATED",
+        requiredVersion:"8.1",
+        error:"Google Apps Script desatualizado. Publique o installer 8.1 em LEXIS-SYNC-AppsScript.gs antes de sincronizar a carteira."
+      });
     }
     if(bridged.parseError){
       if(READ_ACTIONS.has(action))return transientRead(res,action,"Google Apps Script está trocando de versão ou respondeu temporariamente fora do formato esperado.",up.status);
