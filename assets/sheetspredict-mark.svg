@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="SheetsPredict">
+  <defs>
+    <linearGradient id="p" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0F766E"/><stop offset=".55" stop-color="#065F55"/><stop offset="1" stop-color="#032F35"/></linearGradient>
+    <linearGradient id="e" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#5EEAD4"/><stop offset="1" stop-color="#10B981"/></linearGradient>
+  </defs>
+  <rect x="22" y="50" width="174" height="174" rx="34" fill="#083B3B" opacity=".5"/>
+  <rect x="38" y="32" width="174" height="174" rx="34" fill="#075A53" opacity=".78"/>
+  <rect x="56" y="18" width="178" height="178" rx="38" fill="url(#p)" stroke="url(#e)" stroke-width="4"/>
+  <g opacity=".62" stroke="#8FF7EA" stroke-width="3">
+    <path d="M78 62H212M78 97H212M78 132H212M78 167H212"/>
+    <path d="M111 49V181M148 49V181M185 49V181"/>
+  </g>
+  <path d="M78 166C99 153 113 141 128 128C146 112 158 99 171 84C185 68 195 55 214 38" fill="none" stroke="#E7FFF9" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#F8FFFD" stroke="#CFFDF4" stroke-width="2">
+    <circle cx="79" cy="166" r="8"/><circle cx="128" cy="128" r="10"/><circle cx="171" cy="84" r="11"/><circle cx="214" cy="38" r="13"/>
+  </g>
+</svg>
