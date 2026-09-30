@@ -1680,12 +1680,36 @@ function scanLatestDjen(scan){
   const item=scan?.intelligence?.djen?.latest||scan?.djen?.items?.[0]||scan?.comunicacoes?.[0]||null;
   return item?String(item.texto||item.conteudo||item.inteiroTeor||item.tipoComunicacao||""):"";
 }
+async function loadAuditAiSuggestion(force=false){
+  const key=state.auditKey,row=findRow(key);
+  if(!row||!state.auditSuggest||state.auditAiBusy)return;
+  if(state.auditAiSuggestion&&!force)return;
+  state.auditAiBusy=true;renderAuditDialog();
+  const payload={
+    "Protocolo":pick(row,"Protocolo"),"Cliente":pick(row,"Cliente"),"Último Retorno":pick(row,"Último Retorno"),
+    "DataJud • Último Movimento":pick(row,"DataJud • Último Movimento","Último Andamento","Andamento"),
+    "DataJud • Data":pick(row,"DataJud • Data","Data da Movimentação","Data_Movimentacao"),
+    "DJEN • Última Publicação":officialDjen(row),"DJEN • Data":pick(row,"DJEN • Data","_DJENDate"),
+    "Tipo de Evento":pick(row,"Tipo de Evento","Evento_Tipo"),"Diagnóstico Processual":pick(row,"Diagnóstico Processual"),
+    "Cumprimento":pick(row,"Cumprimento"),"Procedente":pick(row,"Procedente"),
+    "Nova Atualização":pick(row,"Nova Atualização","Novo Andamento"),"Encerrado no Tribunal":pick(row,"Encerrado no Tribunal","DatajudEncerrado")
+  };
+  try{
+    const j=await hubApi({action:"suggest_response",row:payload,scan:state.auditScan||{}});
+    if(key!==state.auditKey)return;
+    if(j?.ok&&j?.content)state.auditAiSuggestion={titulo:"Resposta híbrida",texto:String(j.content),provider:j.provider||"IA",engine:j.engine||"",hybrid:!!j.hybrid,candidates:j.candidates||[]};
+  }catch(e){
+    if(key===state.auditKey)state.auditAiSuggestion={error:e.message||String(e)};
+  }finally{
+    if(key===state.auditKey){state.auditAiBusy=false;renderAuditDialog()}
+  }
+}
 function renderAuditDialog(){
   const row=findRow(state.auditKey);if(!row)return;
   const cached=auditCached(row),scan=state.auditScan||null;
   const networkMove=scanLatestMovement(scan),networkDjen=scanLatestDjen(scan);
   const move=networkMove||cached.move,djen=networkDjen||cached.djen;
-  const suggestions=state.auditSuggest&&window.LexisSuggest?.suggestResponses?window.LexisSuggest.suggestResponses({row,scan}):[];
+  const suggestions=state.auditSuggest&&window.LexisSuggest?.suggestResponses?window.LexisSuggest.suggestResponses({row,scan}):[],aiSuggestion=state.auditAiSuggestion;
   $("#auditTitle").textContent=(state.auditSuggest?"Sugerir resposta • ":"Audit 3D • ")+(pick(row,"Cliente")||"Processo");
   $("#auditContent").innerHTML=
     '<div class="audit-hero"><div><span class="eyebrow">CACHE-FIRST • GOOGLE SHEETS</span><h4>'+esc(pick(row,"Cliente")||"SEM NOME")+'</h4><p>'+esc(cnjFormatted(pick(row,"Protocolo")))+' · '+esc(pick(row,"Tribunal")||"")+' · Assistente '+esc(cached.owner)+'</p></div><div>'+badge(statusRet(row),statusRet(row)==="VENCIDO"?"bad":statusRet(row)==="ATENÇÃO"||statusRet(row)==="É HOJE"?"warn":"good")+'</div></div>'+
@@ -1693,25 +1717,33 @@ function renderAuditDialog(){
     '<section class="audit-panel"><h4>Publicação DJEN oficial</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.djenDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkDjen?"DJEN atualizado agora":cached.djen?"Planilha / DJEN oficial":"Ainda não persistido")+'</strong></div><div class="audit-source">'+esc(djen||"Nenhuma publicação DJEN oficial registrada na planilha.")+(cached.djenLegacy&&!djen?'<br><br><small>Resumo legado existente: '+esc(cached.djenLegacy)+'</small>':'')+'</div></section></div>'+
     '<div class="audit-grid"><section class="audit-panel"><h4>Operação</h4><div class="audit-kv"><span>Assistente</span><strong>'+esc(cached.owner)+'</strong></div><div class="audit-kv"><span>Atendido por</span><strong>'+esc(cached.attended)+'</strong></div><div class="audit-kv"><span>Último retorno</span><strong>'+esc(cached.lastReturn)+'</strong></div><div class="audit-kv"><span>Próximo retorno</span><strong>'+esc(cached.nextReturn)+'</strong></div></section>'+
     '<section class="audit-panel"><h4>Leitura simples</h4><div class="audit-source"><strong>'+esc(plainStatus(row))+'</strong><br><br>'+esc(String(move).slice(0,900))+'</div></section></div>'+
-    (state.auditSuggest?'<section class="audit-panel"><h4>Sugestões de resposta</h4><div class="suggestions">'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar resposta</button></div></div>').join("")+'</div></section>':'')+
+    (state.auditSuggest?'<section class="audit-panel ai-suggestion-panel"><div class="ai-suggestion-title"><div><span class="eyebrow">PREDICTLM + LEXISPREDICT</span><h4>Sugerir resposta</h4></div>'+(state.auditAiBusy?badge("Gerando…","blue"):aiSuggestion?.texto?badge(aiSuggestion.provider||"IA","good"):badge("Fallback local","gray"))+'</div>'+
+      (state.auditAiBusy?'<div class="ai-suggestion-loading"><span></span><div><strong>Comparando motores</strong><p>PredictLM permanece principal; o Motor de Despacho Lexis entra como especialista jurídico.</p></div></div>':
+      aiSuggestion?.texto?'<div class="suggestion featured"><div class="suggestion-engine"><strong>'+esc(aiSuggestion.titulo||"Resposta recomendada")+'</strong><small>'+esc([aiSuggestion.provider,aiSuggestion.engine].filter(Boolean).join(" · "))+'</small></div><p>'+esc(aiSuggestion.texto)+'</p><div class="audit-actions"><button class="btn primary sm" data-copy-ai-suggestion>Copiar resposta recomendada</button><button class="btn sm" data-retry-ai-suggestion>Gerar novamente</button></div></div>':
+      aiSuggestion?.error?'<div class="banner warn">IA híbrida indisponível agora: '+esc(aiSuggestion.error)+'. As alternativas locais continuam abaixo.</div>':'<div class="ai-suggestion-loading"><span></span><div><strong>Preparando resposta</strong><p>Usando evidências do processo sem inventar fatos.</p></div></div>')+
+      (suggestions.length?'<div class="suggestions local-suggestions"><h5>Alternativas locais</h5>'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar alternativa</button></div></div>').join("")+'</div>':'')+
+    '</section>':'')+
     (scan?.error?'<div class="banner bad">'+esc(scan.error)+'</div>':'')+
     '<div class="audit-actions"><button class="btn" id="auditHistoryBtn">Histórico inteiro do tribunal</button><button class="btn" id="auditEditBtn">Editar cadastro</button><button class="btn" id="auditContactBtn">Registrar atendimento</button><button class="btn" id="auditSuggestBtn">Sugerir resposta</button><button class="btn primary" id="auditRefreshBtn">Atualizar DataJud + DJEN</button></div>';
   $("#auditHistoryBtn").onclick=()=>openHistory(state.auditKey);
   $("#auditEditBtn").onclick=()=>{ $("#auditDialog").close();openProcess(state.auditKey) };
   $("#auditContactBtn").onclick=()=>openAttendance(state.auditKey);
-  $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;renderAuditDialog()};
+  $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;state.auditAiSuggestion=null;renderAuditDialog();void loadAuditAiSuggestion(true)};
   $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
-  $$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
-    const s=suggestions[Number(b.dataset.copySuggestion)];if(!s)return;
-    try{await navigator.clipboard.writeText(s.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
+  const aiCopy=$("[data-copy-ai-suggestion]");if(aiCopy)aiCopy.onclick=async()=>{const text=state.auditAiSuggestion?.texto||"";if(!text)return;try{await navigator.clipboard.writeText(text);showBanner("Resposta recomendada copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}};
+  const aiRetry=$("[data-retry-ai-suggestion]");if(aiRetry)aiRetry.onclick=()=>{state.auditAiSuggestion=null;void loadAuditAiSuggestion(true)};
+  $("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
+    const suggestion=suggestions[Number(b.dataset.copySuggestion)];if(!suggestion)return;
+    try{await navigator.clipboard.writeText(suggestion.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
 }
 function openAudit(key,suggest=false){
   const row=findRow(key);if(!row)return;
-  state.auditKey=key;state.auditScan=null;state.auditSuggest=!!suggest;
+  state.auditKey=key;state.auditScan=null;state.auditSuggest=!!suggest;state.auditAiSuggestion=null;state.auditAiBusy=false;
   $("#auditDialog").showModal();renderAuditDialog();
   const needsOfficial=!latestMove(row)||!officialDjen(row);
   if(needsOfficial&&navigator.onLine)void refreshAudit(suggest);
+  else if(suggest)void loadAuditAiSuggestion();
 }
 async function refreshAudit(keepSuggest=false){
   const row=findRow(state.auditKey);if(!row)return;
@@ -1738,7 +1770,9 @@ async function refreshAudit(keepSuggest=false){
       const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);setDjenBlock(ms);
     }
   }catch(e){state.auditScan={...(state.auditScan||{}),ok:false,error:e.message||String(e)};showBanner(e.message||String(e),"bad")}
+  if(keepSuggest){state.auditAiSuggestion=null;state.auditAiBusy=false}
   renderAuditDialog();render();
+  if(keepSuggest)void loadAuditAiSuggestion(true);
 }
 function openProcess(key){
   const isNew=!key,u=currentUser(),linkedClient=isNew&&state.clientId?clientById(state.clientId):null;
