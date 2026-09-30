@@ -9,6 +9,9 @@ assert.match(html,/class="workspace-card"/,"sidebar deve expor contexto do works
 assert.match(html,/id="mobileMenuBtn"/,"mobile deve ter botão de navegação");
 assert.match(html,/id="mobileNavBackdrop"/,"mobile deve ter backdrop do drawer");
 assert.match(html,/sheetspredict-mark\.svg/,"shell deve usar o logo real");
+assert.match(html,/id="globalSearch"/,"topbar deve expor pesquisa global");
+assert.match(html,/id="syncIndicatorBtn"/,"topbar deve expor status de sincronização acionável");
+assert.match(html,/id="topUser"/,"topbar deve expor usuário autenticado");
 for(const group of ["Visão","Operação","Gestão","Sistema"])assert.ok(html.includes('class="nav-section-label">'+group),"grupo de navegação ausente: "+group);
 for(const route of ["dashboard","hub","studio","waauto","processos","empresa","clientes","pipeline","agenda","financeiro","tarefas","analise","report","scanner","settings"])assert.ok(html.includes('data-view="'+route+'"'),"rota visual ausente: "+route);
 
@@ -19,6 +22,7 @@ assert.match(css,/\.mobile-menu-btn/);
 assert.match(css,/\.table-wrap,\.wa-table-scroll[\s\S]*overflow-x:auto!important/);
 for(const selector of [".workspace-card",".nav-section-label",".kpi:hover",".record-toolbar",".dialog-card",".pipeline-col",".global-x-scroll"])assert.ok(css.includes(selector),"polish SaaS ausente: "+selector);
 for(const token of ["--saas-sidebar","--saas-topbar","--saas-radius","--saas-shadow"])assert.ok(css.includes(token),"token SaaS ausente: "+token);
+for(const selector of [".reference-page-head",".reference-kpis",".reference-hub-services",".ps-workspace",".top-search"])assert.ok(css.includes(selector),"camada visual de referência ausente: "+selector);
 
 assert.match(css,/background:var\(--surface\)/,"componentes precisam respeitar temas");
 assert.match(css,/color:var\(--ink\)/,"texto precisa respeitar temas");

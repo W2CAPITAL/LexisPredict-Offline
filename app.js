@@ -10,7 +10,7 @@ const DJEN_GEO_BLOCK_MS=10*60*1000;
 const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
 const THEME_KEY="sheetspredict_theme_v1";
 const THEMES=[
-  {id:"default",name:"SheetsPredict",desc:"Azul jurídico claro",mode:"Claro",accent:"#1677d2",bg:"#f4f6f9",surface:"#ffffff",nav:"#0b1220",meta:"#0b1220"},
+  {id:"default",name:"SheetsPredict",desc:"Azul jurídico claro",mode:"Claro",accent:"#0876e8",bg:"#f5f8fb",surface:"#ffffff",nav:"#08182b",meta:"#08182b"},
   {id:"clean",name:"Clean",desc:"Branco, cinza e azul discreto",mode:"Claro",accent:"#2563eb",bg:"#f8fafc",surface:"#ffffff",nav:"#111827",meta:"#111827"},
   {id:"dark",name:"Dark",desc:"Escuro neutro para uso prolongado",mode:"Escuro",accent:"#3b82f6",bg:"#0d1117",surface:"#161b22",nav:"#090d13",meta:"#090d13"},
   {id:"midnight",name:"Midnight",desc:"Azul-marinho profundo",mode:"Escuro",accent:"#38bdf8",bg:"#07111f",surface:"#0d1b2a",nav:"#050b14",meta:"#050b14"},
@@ -30,7 +30,7 @@ function applyTheme(id,{persist=true}={}){
   if(persist)try{localStorage.setItem(THEME_KEY,theme.id)}catch(_){}
   return theme;
 }
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -589,7 +589,16 @@ function renderWAAuto(){
     showBanner
   });
 }
-async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
+async function updateSyncUi(){
+  const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session,pending=count+crmCount;
+  $("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";
+  $("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");
+  const text=(state.lastSync?state.lastSync:"Aguardando autenticação")+(pending?" • "+pending+" pendente(s)":"");
+  $("#syncText").textContent=text;
+  const label=$("#syncLabel");if(label)label.textContent=authenticated&&online?(pending?"Pendente":"Sincronizado"):(online?"Autenticação":"Offline");
+  const notice=$("#topNotifCount"),n=tasks().filter(x=>x.w>=800||statusRet(x.r)==="VENCIDO").length;
+  if(notice){notice.textContent=String(Math.min(n,99));notice.classList.toggle("hidden",!n)}
+}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function isRecentDate(v,days=7){
   const d=parseDate(v);if(!d)return false;
@@ -624,44 +633,76 @@ function renderSettings(){
   });
   $("#resetThemeBtn").onclick=()=>{applyTheme("default");showBanner("Tema padrão restaurado.","good");renderSettings()};
 }
+function dashboardMovementSeries(rows,days=14){
+  const out=[];const today=new Date();today.setHours(12,0,0,0);
+  for(let i=days-1;i>=0;i--){
+    const d=new Date(today);d.setDate(today.getDate()-i);
+    out.push({key:[d.getFullYear(),d.getMonth(),d.getDate()].join("-"),label:String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0"),pub:0,pet:0,baixa:0,outros:0});
+  }
+  const map=new Map(out.map(x=>[x.key,x]));
+  for(const r of rows||[]){
+    const raw=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data","Última Sincronização"),d=parseDate(raw);if(!d)continue;
+    const k=[d.getFullYear(),d.getMonth(),d.getDate()].join("-"),slot=map.get(k);if(!slot)continue;
+    const blob=norm([latestMove(r),pick(r,"DJEN • Última Publicação"),pick(r,"Tipo de Evento","Evento_Tipo")].join(" "));
+    if(/publica|intimac|djen/.test(blob))slot.pub++;
+    else if(/petic|manifest|recurso|contest/.test(blob))slot.pet++;
+    else if(/baixa|arquiv|transito/.test(blob))slot.baixa++;
+    else slot.outros++;
+  }
+  return out;
+}
+function dashboardChartHtml(rows){
+  const series=dashboardMovementSeries(rows,14),max=Math.max(1,...series.map(x=>x.pub+x.pet+x.baixa+x.outros));
+  return '<div class="ref-chart-legend"><span><i class="blue"></i>Publicações</span><span><i class="green"></i>Petições</span><span><i class="gray"></i>Baixas</span><span><i class="sky"></i>Outros</span></div>'+
+    '<div class="ref-bars">'+series.map((x,i)=>{
+      const total=x.pub+x.pet+x.baixa+x.outros,scale=total?Math.max(10,Math.round(total/max*100)):3;
+      const sum=Math.max(1,total);
+      const h=v=>Math.max(0,Math.round(scale*v/sum));
+      return '<div class="ref-bar-col" title="'+esc(x.label+' · '+total+' movimentação(ões)')+'"><div class="ref-bar-stack"><i class="outros" style="height:'+h(x.outros)+'%"></i><i class="baixa" style="height:'+h(x.baixa)+'%"></i><i class="pet" style="height:'+h(x.pet)+'%"></i><i class="pub" style="height:'+h(x.pub)+'%"></i></div><small>'+(i%3===0?esc(x.label):'')+'</small></div>';
+    }).join("")+'</div>';
+}
+function dashboardSituationHtml(rows){
+  const total=Math.max(1,rows.length),closed=rows.filter(isClosed).length,venc=rows.filter(r=>!isClosed(r)&&statusRet(r)==="VENCIDO").length,attention=rows.filter(r=>!isClosed(r)&&statusRet(r)==="ATENÇÃO").length,active=Math.max(0,rows.length-closed-venc-attention);
+  const pct=n=>Math.round(n/total*1000)/10;
+  const a=pct(active),v=pct(venc),t=pct(attention),c=pct(closed);
+  const stops=[a,a+v,a+v+t,100];
+  return '<div class="ref-donut-wrap"><div class="ref-donut" style="background:conic-gradient(#19b97b 0 '+stops[0]+'%,#ef5b5b '+stops[0]+'% '+stops[1]+'%,#f3a536 '+stops[1]+'% '+stops[2]+'%,#9fb2c8 '+stops[2]+'% 100%)"><div><strong>'+esc(rows.length)+'</strong><span>processos</span></div></div>'+
+    '<div class="ref-donut-legend"><span><i class="green"></i><b>'+active+'</b> Em andamento <em>'+a+'%</em></span><span><i class="red"></i><b>'+venc+'</b> Vencidos <em>'+v+'%</em></span><span><i class="orange"></i><b>'+attention+'</b> Atenção <em>'+t+'%</em></span><span><i class="gray"></i><b>'+closed+'</b> Baixados/arquivados <em>'+c+'%</em></span></div></div>';
+}
+function dashboardTribunalHtml(rows){
+  const counts=new Map();
+  for(const r of rows||[]){const t=String(pick(r,"Tribunal")||"Não informado").trim()||"Não informado";counts.set(t,(counts.get(t)||0)+1)}
+  const list=[...counts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,5),max=Math.max(1,...list.map(x=>x[1]));
+  return '<div class="ref-ranking">'+list.map(([name,n])=>'<div><span>'+esc(name)+'</span><i><b style="width:'+Math.round(n/max*100)+'%"></b></i><strong>'+n+'</strong></div>').join("")+'</div>';
+}
+function dashboardRecentRows(rows){
+  return [...(rows||[])].sort((a,b)=>{
+    const ad=parseDate(pick(a,"DataJud • Data","DJEN • Data","Última Sincronização"))?.getTime()||0,bd=parseDate(pick(b,"DataJud • Data","DJEN • Data","Última Sincronização"))?.getTime()||0;
+    return bd-ad;
+  }).slice(0,6);
+}
 function renderDashboard(){
-  const m=metrics(),classified=m.proc+m.improc,procPct=classified?Math.round(m.proc/classified*1000)/10:0,djenPct=m.total?Math.round(m.djen/m.total*1000)/10:0,djPct=m.total?Math.round(m.dj/m.total*1000)/10:0;
-  const critical=tasks().slice(0,10);
-  const potential=state.rows.filter(r=>commercialStatus(r).includes("POTENCIAL")).length;
-  const noSell=state.rows.filter(r=>commercialStatus(r).includes("NÃO VENDER")).length;
-  const clientFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="CLIENTE").length;
-  const bankFav=state.rows.filter(r=>String(pick(r,"_Favorecido")).toUpperCase()==="BANCO").length;
-  const atendidosSemana=state.rows.filter(r=>pick(r,"AtendidoPor")&&isRecentDate(pick(r,"Último Retorno"),7)).length;
-  const tribunalSemana=state.rows.filter(r=>isRecentDate(pick(r,"Última Sincronização"),7)&&(pick(r,"DataJud • Último Movimento")||pick(r,"DJEN • Última Publicação"))).length;
-  const vencidos=state.rows.filter(r=>statusRet(r)==="VENCIDO").length;
+  const rows=state.rows,m=metrics(rows),recent30=rows.filter(r=>isRecentDate(pick(r,"DataJud • Data","DJEN • Data","Última Sincronização"),30)).length;
+  const próximos=rows.filter(r=>{const d=daysTo(pick(r,"Próximo Retorno"));return d!==null&&d>=0&&d<=30}).length;
+  const vencidos=rows.filter(r=>statusRet(r)==="VENCIDO").length,recent=dashboardRecentRows(rows);
   $("#content").innerHTML=
-  '<div class="lexis-page-shell"><div class="lexis-page-header"><div><span class="eyebrow">COMMAND CENTER</span><h2>Dashboard</h2><p>Visão da carteira · Google Sheets + DataJud + DJEN</p></div><div class="command-actions"><button class="btn" data-goto="hub">Central Integrada</button><button class="btn" data-goto="report">Dossiê operacional</button><button class="btn" data-goto="processos">Meus processos</button><button class="btn primary" data-goto="scanner">DataJud + DJEN</button></div></div>'+
-  '<div class="lexis-tabbar"><button class="active">Visão da carteira</button><button data-goto="empresa">Processos da empresa</button><button data-goto="tarefas">Fila</button><button data-goto="report">Report</button></div>'+
-  '<div class="kpi-grid dashboard-kpis">'+
-    kpi("Processos",m.total,m.active+" ativos")+
-    kpi("Vencidos",vencidos,m.attention+" em atenção","bad")+
-    kpi("Atendidos sem.",atendidosSemana,"últimos 7 dias","good")+
-    kpi("Tribunal sem.",tribunalSemana,"DataJud/DJEN")+
-    kpi("Novidades",m.newer,"após último retorno",m.newer?"warn":"good")+
-    kpi("Potencial",potential,"triagem comercial",potential?"good":"")+
-  '</div>'+
-  '<div class="dashboard-layout"><div class="card"><div class="card-head"><div><span class="eyebrow">PRIORIDADE</span><h3>Fila crítica da carteira</h3></div><button class="btn sm" data-goto="tarefas">Ver fila completa</button></div><div class="table-wrap flat dashboard-table"><table class="table compact"><thead><tr><th>Prioridade</th><th>Cliente</th><th>CNJ</th><th>Motivo</th><th>Retorno</th><th>Ações</th></tr></thead><tbody>'+
-  critical.map(x=>{const key=keyOf(x.r);return '<tr><td>'+badge(priority(x.w),x.w>=950?"bad":x.w>=800?"warn":"blue")+'</td><td><div class="cell-main">'+esc(pick(x.r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(x.r,"Assistente"))+'</div></td><td class="mono">'+esc(cnjFormatted(pick(x.r,"Protocolo")))+'</td><td>'+esc(taskLabel(x.r))+'</td><td>'+badge(statusRet(x.r),statusRet(x.r)==="VENCIDO"?"bad":statusRet(x.r)==="ATENÇÃO"?"warn":"gray")+'</td><td class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico</button><button class="icon-action" data-attendance="'+esc(key)+'">Atendimento</button></td></tr>'}).join("")+
-  '</tbody></table></div></div>'+
-  '<div class="stack"><div class="card"><div class="card-head"><div><span class="eyebrow">REDE JUDICIAL</span><h3>Cobertura</h3></div></div><div class="card-body metric-list">'+
-    metricRow("DataJud",djPct+"%",m.dj+" processos com movimento")+
-    metricRow("DJEN",djenPct+"%",m.djen+" processos com publicação")+
-    metricRow("Procedência",procPct+"%",classified+" resultados classificados")+
-    metricRow("Cliente favorecido",clientFav,bankFav+" banco favorecido")+
-  '</div></div>'+
-  '<div class="card"><div class="card-head"><div><span class="eyebrow">COMERCIAL</span><h3>Esteira</h3></div></div><div class="card-body metric-list">'+
-    metricRow("Potencial",potential,"crédito/direito a revisar")+
-    metricRow("Não vender",noSell,"resultado adverso ou fase encerrada")+
-    metricRow("Revisar",state.rows.length-potential-noSell,"sem gatilho conclusivo")+
-  '</div></div></div></div></div>';
-  bindGotos();
-  $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
-  $$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
+  '<div class="reference-page dashboard-reference">'+
+    '<div class="reference-page-head"><div><h2>Dashboard</h2><p>Visão geral da sua operação jurídica</p></div><div class="reference-head-actions"><select aria-label="Período"><option>Últimos 30 dias</option></select><button class="btn primary" data-new-record>＋ Novo cadastro</button></div></div>'+
+    '<div class="reference-kpis">'+
+      '<article class="reference-kpi"><div><strong>'+m.total.toLocaleString("pt-BR")+'</strong><span>Processos monitorados</span></div><b class="ref-icon blue">▣</b><small>'+m.active+' ativos</small></article>'+
+      '<article class="reference-kpi"><div><strong>'+recent30.toLocaleString("pt-BR")+'</strong><span>Movimentações (30 dias)</span></div><b class="ref-icon blue">↗</b><small>DataJud + DJEN registrados</small></article>'+
+      '<article class="reference-kpi"><div><strong>'+próximos.toLocaleString("pt-BR")+'</strong><span>Prazos próximos</span></div><b class="ref-icon orange">▣</b><small>próximos 30 dias</small></article>'+
+      '<article class="reference-kpi"><div><strong>'+vencidos.toLocaleString("pt-BR")+'</strong><span>Prazos vencidos</span></div><b class="ref-icon red">!</b><small>exigem revisão</small></article>'+
+    '</div>'+
+    (vencidos?'<div class="reference-alert"><b>!</b><div><strong>'+vencidos+' prazo(s) vencido(s) precisam de atenção.</strong><span>Revise a fila prioritária e registre o próximo retorno.</span></div><button class="btn sm" data-goto="tarefas">Ver prazos vencidos</button></div>':'')+
+    '<div class="reference-grid-main"><section class="card reference-card"><div class="reference-card-head"><h3>Movimentações de processos</h3><span>Últimos 14 dias</span></div>'+dashboardChartHtml(rows)+'</section>'+
+    '<section class="card reference-card"><div class="reference-card-head"><h3>Carteira por situação</h3></div>'+dashboardSituationHtml(rows)+'</section></div>'+
+    '<div class="reference-grid-bottom"><section class="card reference-card"><div class="reference-card-head"><h3>Processos recentes</h3><button class="link-btn" data-goto="processos">Ver todos →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Processo</th><th>Cliente</th><th>Última movimentação</th><th>Situação</th></tr></thead><tbody>'+
+      recent.map(r=>'<tr><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Cliente")||"—")+'</td><td><div class="cell-main clamp2">'+esc(String(latestMove(r)||"Sem movimentação").slice(0,110))+'</div><div class="cell-sub">'+esc(pick(r,"DataJud • Data","DJEN • Data","Última Sincronização")||"")+'</div></td><td>'+badge(isClosed(r)?"BAIXADO":statusRet(r)==="VENCIDO"?"VENCIDO":"EM ANDAMENTO",isClosed(r)?"blue":statusRet(r)==="VENCIDO"?"bad":"good")+'</td></tr>').join("")+
+    '</tbody></table></div></section>'+
+    '<section class="card reference-card"><div class="reference-card-head"><h3>Tribunais mais ativos</h3><span>Carteira atual</span></div>'+dashboardTribunalHtml(rows)+'</section></div>'+
+  '</div>';
+  bindGotos();$$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
 
 async function hubApi(payload){
@@ -674,12 +715,24 @@ function hubSourceStatus(id){
   const h=state.hub.status||{},all=[...(h.services||[]),...(h.builtins||[])];
   return all.find(x=>x.id===id)||null;
 }
+function hubSourceMeta(id){
+  const map={
+    predictlm:{icon:"✦",tone:"violet",feature:"Inteligência jurídica",open:"ai"},
+    lexispredict:{icon:"▣",tone:"red",feature:"Base e regras processuais",open:"integrations"},
+    grey:{icon:"◎",tone:"blue",feature:"Análise e extração privada",open:"integrations"},
+    waauto:{icon:"◉",tone:"green",feature:"Automação WhatsApp",open:"whatsapp"},
+    synccrm:{icon:"▦",tone:"green",feature:"Workspace jurídico",open:"sheets"},
+    leadcheckin:{icon:"⌕",tone:"blue",feature:"Descoberta pública",open:"leads"},
+    leadcheck:{icon:"%",tone:"orange",feature:"Bacen e revisional",open:"revisional"},
+    offline:{icon:"↻",tone:"gray",feature:"Cache e continuidade",open:"integrations"}
+  };return map[id]||{icon:"◇",tone:"gray",feature:"Integração",open:"integrations"};
+}
 function hubSourceCard(src){
-  const st=hubSourceStatus(src.id),ok=!!st?.ok,configured=st?st.configured!==false:false;
-  const label=!st?"verificando":ok?"ativo":configured?"indisponível":src.id==="predictlm"?"requer API":"opcional";
+  const st=hubSourceStatus(src.id),ok=!!st?.ok,configured=st?st.configured!==false:false,meta=hubSourceMeta(src.id);
+  const label=!st?"Verificando":ok?"Online":configured?"Indisponível":"Não configurado";
   const cls=ok?"good":configured?"warn":"gray";
-  const detail=st?.status||(!configured?(src.id==="predictlm"?"credencial privada necessária":"integração não habilitada"):"estado do serviço");
-  return '<article class="hub-source-card"><div class="hub-source-head"><strong>'+esc(src.name)+'</strong>'+badge(label,cls)+'</div><p>'+esc(src.feature||src.role||"")+'</p><small>'+esc(detail)+'</small></article>';
+  const detail=st?.status||(!configured?"Configuração privada pendente":"Estado do serviço");
+  return '<article class="hub-source-card reference-service-card"><div class="reference-service-title"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><div><strong>'+esc(src.name)+'</strong><small>'+esc(src.feature||meta.feature)+'</small></div></div><div>'+badge(label,cls)+'</div><p>'+esc(detail)+'</p><button class="btn sm" data-hub-open="'+esc(meta.open)+'">'+(ok?"Abrir":"Configurar")+'</button></article>';
 }
 function hubTabs(){
   const tabs=[["overview","Visão geral"],["ai","IA"],["whatsapp","WhatsApp"],["leads","Leads"],["revisional","Revisional"],["sheets","Planilha"],["integrations","Integrações"]];
@@ -692,23 +745,31 @@ function hubAudit(){
   return window.SheetsHub?.audit?window.SheetsHub.audit(state.companyRows):null;
 }
 function hubOverviewHtml(){
-  const p=hubPortfolio(),a=hubAudit(),sources=window.SheetsHub?.sources||[];
-  return '<div class="hub-kpis">'+
-    kpi("Processos",p.total||0,(p.ativos||0)+" ativos")+
-    kpi("Vencidos",p.vencidos||0,(p.atencao||0)+" em atenção",(p.vencidos||0)?"bad":"good")+
-    kpi("DataJud",p.datajud||0,"com movimento")+
-    kpi("DJEN",p.djen||0,"com publicação oficial")+
-    kpi("Saúde planilha",a?a.health+"%":"—",a?(a.duplicates+" duplicidade(s)"):"auditoria local")+
-    kpi("Offline",navigator.onLine?"Pronto":"Ativo","IndexedDB + outbox",navigator.onLine?"good":"warn")+
-  '</div>'+
-  '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">FUSÃO</span><h3>8 motores, um SheetsPredict</h3></div></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div></section>'+
-  '<section class="card"><div class="card-head"><div><span class="eyebrow">ATALHOS</span><h3>Operação integrada</h3></div></div><div class="hub-actions">'+
-    '<button class="hub-action" data-hub-open="ai"><strong>Chat AI</strong><span>PredictLM / IA própria → fallback local</span></button>'+
-    '<button class="hub-action" data-hub-open="whatsapp"><strong>WhatsApp</strong><span>Estado e envio via WA.Auto</span></button>'+
-    '<button class="hub-action" data-hub-open="leads"><strong>Leads públicos</strong><span>Scanner LEADCHECKIN + CRM</span></button>'+
-    '<button class="hub-action" data-hub-open="revisional"><strong>Revisional</strong><span>Bacen SGS + simulação Leadcheck</span></button>'+
-    '<button class="hub-action" data-hub-open="sheets"><strong>Planilha inteligente</strong><span>Mapeamento e auditoria SyncCRM</span></button>'+
-  '</div></section></div>';
+  const sources=window.SheetsHub?.sources||[],wanted=["predictlm","lexispredict","grey","waauto","synccrm"];
+  const fallbackFor=id=>({id,name:id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY",feature:hubSourceMeta(id).feature});
+  const useCards=wanted.map(id=>sources.find(x=>x.id===id)||fallbackFor(id));
+  const h=state.hub.status||{},services=[...(h.services||[]),...(h.builtins||[])];
+  const serviceBy=id=>services.find(x=>x.id===id)||null;
+  const rows=[
+    {time:state.lastSync||"—",service:"Google Sheets",event:"Sincronização",details:state.companyRows.length+" registros em cache",ok:!!state.lastSync},
+    {time:"agora",service:"PredictLM",event:"Motor principal",details:serviceBy("predictlm")?.status||"aguardando status",ok:!!serviceBy("predictlm")?.ok},
+    {time:"agora",service:"LexisPredict",event:"Motor jurídico",details:serviceBy("lexispredict")?.status||"aguardando status",ok:!!serviceBy("lexispredict")?.ok},
+    {time:"agora",service:"WA.Auto",event:"Mensageria",details:serviceBy("waauto")?.status||"aguardando status",ok:!!serviceBy("waauto")?.ok},
+    {time:"agora",service:"GREY",event:"Motor privado",details:serviceBy("grey")?.status||"aguardando status",ok:!!serviceBy("grey")?.ok}
+  ];
+  return '<div class="reference-hub-services">'+useCards.map(hubSourceCard).join("")+'</div>'+
+  '<div class="reference-hub-lower"><section class="card reference-card"><div class="reference-card-head"><div><h3>Fila de eventos e logs</h3><small>Estado operacional das integrações</small></div><button class="link-btn" data-hub-open="integrations">Ver todos os logs →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Horário</th><th>Serviço</th><th>Evento</th><th>Detalhes</th><th>Status</th></tr></thead><tbody>'+
+    rows.map(x=>'<tr><td>'+esc(x.time)+'</td><td><strong>'+esc(x.service)+'</strong></td><td>'+esc(x.event)+'</td><td>'+esc(x.details)+'</td><td>'+badge(x.ok?"Sucesso":"Atenção",x.ok?"good":"warn")+'</td></tr>').join("")+
+  '</tbody></table></div></section>'+
+  '<aside class="reference-hub-side"><section class="card reference-card"><div class="reference-card-head"><h3>Ações rápidas</h3></div><div class="reference-quick-grid">'+
+    '<button data-hub-open="sheets"><b>↻</b><span><strong>Sincronizar agora</strong><small>Forçar atualização de dados</small></span></button>'+
+    '<button data-hub-open="integrations"><b>▣</b><span><strong>Testar integrações</strong><small>Verificar conexões e permissões</small></span></button>'+
+    '<button data-hub-open="ai"><b>✦</b><span><strong>Chat AI</strong><small>PredictLM + Lexis jurídico</small></span></button>'+
+    '<button data-hub-open="whatsapp"><b>◉</b><span><strong>WA.Auto</strong><small>Mensagens e monitor jurídico</small></span></button>'+
+  '</div></section>'+
+  '<section class="card reference-card"><div class="reference-card-head"><h3>Status dos serviços</h3><span>'+services.filter(x=>x.ok).length+' online</span></div><div class="reference-status-list">'+
+    wanted.map(id=>{const st=serviceBy(id),meta=hubSourceMeta(id),name=id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY";return '<div><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><strong>'+name+'</strong><em class="'+(st?.ok?"online":"offline")+'">'+(st?.ok?"Online":st?.configured===false?"Não configurado":"Atenção")+'</em></div>'}).join("")+
+  '</div></section></aside></div>';
 }
 function hubAiHtml(){
   const msgs=state.hub.ai||[];
@@ -761,7 +822,7 @@ function hubIntegrationsHtml(){
 }
 function renderHub(){
   const content=$("#content");if(!content)return;
-  content.innerHTML='<div class="hub-shell"><div class="lexis-page-header"><div><span class="eyebrow">SHEETSPREDICT CENTRAL</span><h2>Central Integrada</h2><p>IA, WhatsApp, leads, revisional, planilha e operação jurídica no mesmo aplicativo.</p></div><div class="command-actions"><button class="btn" data-goto="processos">Carteira</button><button class="btn" data-goto="tarefas">Fila</button><button class="btn primary" data-goto="scanner">Tribunal</button></div></div>'+hubTabs()+'<div class="hub-body">'+
+  content.innerHTML='<div class="hub-shell reference-page"><div class="reference-page-head"><div><h2>Central Integrada</h2><p>Gerencie integrações, filas e automações da sua operação</p></div>'+(state.hub.tab!=="overview"?'<button class="btn" data-hub-tab="overview">← Visão geral</button>':'')+'</div>'+(state.hub.tab==="overview"?"":hubTabs())+'<div class="hub-body">'+
     (state.hub.tab==="ai"?hubAiHtml():state.hub.tab==="whatsapp"?hubWaHtml():state.hub.tab==="leads"?hubLeadsHtml():state.hub.tab==="revisional"?hubRevisionalHtml():state.hub.tab==="sheets"?hubSheetsHtml():state.hub.tab==="integrations"?hubIntegrationsHtml():hubOverviewHtml())+
   '</div></div>';
   bindGotos();
@@ -1618,12 +1679,36 @@ function scanLatestDjen(scan){
   const item=scan?.intelligence?.djen?.latest||scan?.djen?.items?.[0]||scan?.comunicacoes?.[0]||null;
   return item?String(item.texto||item.conteudo||item.inteiroTeor||item.tipoComunicacao||""):"";
 }
+async function loadAuditAiSuggestion(force=false){
+  const key=state.auditKey,row=findRow(key);
+  if(!row||!state.auditSuggest||state.auditAiBusy)return;
+  if(state.auditAiSuggestion&&!force)return;
+  state.auditAiBusy=true;renderAuditDialog();
+  const payload={
+    "Protocolo":pick(row,"Protocolo"),"Cliente":pick(row,"Cliente"),"Último Retorno":pick(row,"Último Retorno"),
+    "DataJud • Último Movimento":pick(row,"DataJud • Último Movimento","Último Andamento","Andamento"),
+    "DataJud • Data":pick(row,"DataJud • Data","Data da Movimentação","Data_Movimentacao"),
+    "DJEN • Última Publicação":officialDjen(row),"DJEN • Data":pick(row,"DJEN • Data","_DJENDate"),
+    "Tipo de Evento":pick(row,"Tipo de Evento","Evento_Tipo"),"Diagnóstico Processual":pick(row,"Diagnóstico Processual"),
+    "Cumprimento":pick(row,"Cumprimento"),"Procedente":pick(row,"Procedente"),
+    "Nova Atualização":pick(row,"Nova Atualização","Novo Andamento"),"Encerrado no Tribunal":pick(row,"Encerrado no Tribunal","DatajudEncerrado")
+  };
+  try{
+    const j=await hubApi({action:"suggest_response",row:payload,scan:state.auditScan||{}});
+    if(key!==state.auditKey)return;
+    if(j?.ok&&j?.content)state.auditAiSuggestion={titulo:"Resposta híbrida",texto:String(j.content),provider:j.provider||"IA",engine:j.engine||"",hybrid:!!j.hybrid,candidates:j.candidates||[]};
+  }catch(e){
+    if(key===state.auditKey)state.auditAiSuggestion={error:e.message||String(e)};
+  }finally{
+    if(key===state.auditKey){state.auditAiBusy=false;renderAuditDialog()}
+  }
+}
 function renderAuditDialog(){
   const row=findRow(state.auditKey);if(!row)return;
   const cached=auditCached(row),scan=state.auditScan||null;
   const networkMove=scanLatestMovement(scan),networkDjen=scanLatestDjen(scan);
   const move=networkMove||cached.move,djen=networkDjen||cached.djen;
-  const suggestions=state.auditSuggest&&window.LexisSuggest?.suggestResponses?window.LexisSuggest.suggestResponses({row,scan}):[];
+  const suggestions=state.auditSuggest&&window.LexisSuggest?.suggestResponses?window.LexisSuggest.suggestResponses({row,scan}):[],aiSuggestion=state.auditAiSuggestion;
   $("#auditTitle").textContent=(state.auditSuggest?"Sugerir resposta • ":"Audit 3D • ")+(pick(row,"Cliente")||"Processo");
   $("#auditContent").innerHTML=
     '<div class="audit-hero"><div><span class="eyebrow">CACHE-FIRST • GOOGLE SHEETS</span><h4>'+esc(pick(row,"Cliente")||"SEM NOME")+'</h4><p>'+esc(cnjFormatted(pick(row,"Protocolo")))+' · '+esc(pick(row,"Tribunal")||"")+' · Assistente '+esc(cached.owner)+'</p></div><div>'+badge(statusRet(row),statusRet(row)==="VENCIDO"?"bad":statusRet(row)==="ATENÇÃO"||statusRet(row)==="É HOJE"?"warn":"good")+'</div></div>'+
@@ -1631,25 +1716,33 @@ function renderAuditDialog(){
     '<section class="audit-panel"><h4>Publicação DJEN oficial</h4><div class="audit-kv"><span>Data</span><strong>'+esc(cached.djenDate||"—")+'</strong></div><div class="audit-kv"><span>Fonte</span><strong>'+(networkDjen?"DJEN atualizado agora":cached.djen?"Planilha / DJEN oficial":"Ainda não persistido")+'</strong></div><div class="audit-source">'+esc(djen||"Nenhuma publicação DJEN oficial registrada na planilha.")+(cached.djenLegacy&&!djen?'<br><br><small>Resumo legado existente: '+esc(cached.djenLegacy)+'</small>':'')+'</div></section></div>'+
     '<div class="audit-grid"><section class="audit-panel"><h4>Operação</h4><div class="audit-kv"><span>Assistente</span><strong>'+esc(cached.owner)+'</strong></div><div class="audit-kv"><span>Atendido por</span><strong>'+esc(cached.attended)+'</strong></div><div class="audit-kv"><span>Último retorno</span><strong>'+esc(cached.lastReturn)+'</strong></div><div class="audit-kv"><span>Próximo retorno</span><strong>'+esc(cached.nextReturn)+'</strong></div></section>'+
     '<section class="audit-panel"><h4>Leitura simples</h4><div class="audit-source"><strong>'+esc(plainStatus(row))+'</strong><br><br>'+esc(String(move).slice(0,900))+'</div></section></div>'+
-    (state.auditSuggest?'<section class="audit-panel"><h4>Sugestões de resposta</h4><div class="suggestions">'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar resposta</button></div></div>').join("")+'</div></section>':'')+
+    (state.auditSuggest?'<section class="audit-panel ai-suggestion-panel"><div class="ai-suggestion-title"><div><span class="eyebrow">PREDICTLM + LEXISPREDICT</span><h4>Sugerir resposta</h4></div>'+(state.auditAiBusy?badge("Gerando…","blue"):aiSuggestion?.texto?badge(aiSuggestion.provider||"IA","good"):badge("Fallback local","gray"))+'</div>'+
+      (state.auditAiBusy?'<div class="ai-suggestion-loading"><span></span><div><strong>Comparando motores</strong><p>PredictLM permanece principal; o Motor de Despacho Lexis entra como especialista jurídico.</p></div></div>':
+      aiSuggestion?.texto?'<div class="suggestion featured"><div class="suggestion-engine"><strong>'+esc(aiSuggestion.titulo||"Resposta recomendada")+'</strong><small>'+esc([aiSuggestion.provider,aiSuggestion.engine].filter(Boolean).join(" · "))+'</small></div><p>'+esc(aiSuggestion.texto)+'</p><div class="audit-actions"><button class="btn primary sm" data-copy-ai-suggestion>Copiar resposta recomendada</button><button class="btn sm" data-retry-ai-suggestion>Gerar novamente</button></div></div>':
+      aiSuggestion?.error?'<div class="banner warn">IA híbrida indisponível agora: '+esc(aiSuggestion.error)+'. As alternativas locais continuam abaixo.</div>':'<div class="ai-suggestion-loading"><span></span><div><strong>Preparando resposta</strong><p>Usando evidências do processo sem inventar fatos.</p></div></div>')+
+      (suggestions.length?'<div class="suggestions local-suggestions"><h5>Alternativas locais</h5>'+suggestions.map((s,i)=>'<div class="suggestion"><h5>'+esc(s.titulo)+'</h5><p>'+esc(s.texto)+'</p><div class="audit-actions"><button class="btn sm" data-copy-suggestion="'+i+'">Copiar alternativa</button></div></div>').join("")+'</div>':'')+
+    '</section>':'')+
     (scan?.error?'<div class="banner bad">'+esc(scan.error)+'</div>':'')+
     '<div class="audit-actions"><button class="btn" id="auditHistoryBtn">Histórico inteiro do tribunal</button><button class="btn" id="auditEditBtn">Editar cadastro</button><button class="btn" id="auditContactBtn">Registrar atendimento</button><button class="btn" id="auditSuggestBtn">Sugerir resposta</button><button class="btn primary" id="auditRefreshBtn">Atualizar DataJud + DJEN</button></div>';
   $("#auditHistoryBtn").onclick=()=>openHistory(state.auditKey);
   $("#auditEditBtn").onclick=()=>{ $("#auditDialog").close();openProcess(state.auditKey) };
   $("#auditContactBtn").onclick=()=>openAttendance(state.auditKey);
-  $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;renderAuditDialog()};
+  $("#auditSuggestBtn").onclick=()=>{state.auditSuggest=true;state.auditAiSuggestion=null;renderAuditDialog();void loadAuditAiSuggestion(true)};
   $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
+  const aiCopy=$("[data-copy-ai-suggestion]");if(aiCopy)aiCopy.onclick=async()=>{const text=state.auditAiSuggestion?.texto||"";if(!text)return;try{await navigator.clipboard.writeText(text);showBanner("Resposta recomendada copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}};
+  const aiRetry=$("[data-retry-ai-suggestion]");if(aiRetry)aiRetry.onclick=()=>{state.auditAiSuggestion=null;void loadAuditAiSuggestion(true)};
   $$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
-    const s=suggestions[Number(b.dataset.copySuggestion)];if(!s)return;
-    try{await navigator.clipboard.writeText(s.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
+    const suggestion=suggestions[Number(b.dataset.copySuggestion)];if(!suggestion)return;
+    try{await navigator.clipboard.writeText(suggestion.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
 }
 function openAudit(key,suggest=false){
   const row=findRow(key);if(!row)return;
-  state.auditKey=key;state.auditScan=null;state.auditSuggest=!!suggest;
+  state.auditKey=key;state.auditScan=null;state.auditSuggest=!!suggest;state.auditAiSuggestion=null;state.auditAiBusy=false;
   $("#auditDialog").showModal();renderAuditDialog();
   const needsOfficial=!latestMove(row)||!officialDjen(row);
   if(needsOfficial&&navigator.onLine)void refreshAudit(suggest);
+  else if(suggest)void loadAuditAiSuggestion();
 }
 async function refreshAudit(keepSuggest=false){
   const row=findRow(state.auditKey);if(!row)return;
@@ -1676,7 +1769,9 @@ async function refreshAudit(keepSuggest=false){
       const ms=Math.max(60000,Number(j?.djen?.retryAfterMs||j.retryAfterMs)||60000);setDjenBlock(ms);
     }
   }catch(e){state.auditScan={...(state.auditScan||{}),ok:false,error:e.message||String(e)};showBanner(e.message||String(e),"bad")}
+  if(keepSuggest){state.auditAiSuggestion=null;state.auditAiBusy=false}
   renderAuditDialog();render();
+  if(keepSuggest)void loadAuditAiSuggestion(true);
 }
 function openProcess(key){
   const isNew=!key,u=currentUser(),linkedClient=isNew&&state.clientId?clientById(state.clientId):null;
@@ -1774,6 +1869,12 @@ function setupEvents(){
   document.addEventListener("keydown",e=>{if(e.key==="Escape")setMobileNav(false)});
   window.addEventListener("resize",()=>{if(window.innerWidth>700)setMobileNav(false)});
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
+  const syncIndicator=$("#syncIndicatorBtn");if(syncIndicator)syncIndicator.onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
+  const globalSearch=$("#globalSearch");if(globalSearch){
+    globalSearch.onkeydown=e=>{if(e.key!=="Enter")return;state.query=e.currentTarget.value.trim();resetPage("processos");setView("processos")};
+  }
+  const notifications=$("#topNotifications");if(notifications)notifications.onclick=()=>setView("tarefas");
+  const topUser=$("#topUser");if(topUser)topUser.onclick=()=>setView("settings");
   $("#newProcessBtn").onclick=()=>openProcess("");
   $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
   $("#closeAttendanceBtn").onclick=()=>$("#attendanceDialog").close();
@@ -1822,7 +1923,13 @@ function setupEvents(){
   });
   window.addEventListener("popstate",()=>{setMobileNav(false);setView(pathView(),false)});
 }
-function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
+function applyUser(){
+  const u=state.session?.user||{},name=u.nome||u.usuario||"Usuário",role=u.perfil||"autenticado";
+  $("#userName").textContent=name;$("#userRole").textContent=role;
+  const topName=$("#topUserName"),topRole=$("#topUserRole"),avatar=$("#topUserInitials");
+  if(topName)topName.textContent=name;if(topRole)topRole.textContent=role;
+  if(avatar){const parts=String(name).trim().split(/\s+/).filter(Boolean);avatar.textContent=((parts[0]?.[0]||"S")+(parts.length>1?(parts.at(-1)?.[0]||""):"")).toUpperCase()}
+}
 
 async function boot(){
   applyTheme(savedTheme(),{persist:false});
