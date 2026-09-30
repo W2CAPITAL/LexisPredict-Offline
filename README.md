@@ -175,22 +175,11 @@ Visão geral | IA | WhatsApp | Leads | Revisional | Planilha | Integrações
 
 Funcionalidades embutidas, como auditoria da planilha, Bacen/revisional, scanner público e núcleo offline, continuam funcionando sem os serviços remotos.
 
-Variáveis opcionais:
+Configuração de integrações:
 
-```dotenv
-PREDICTLM_URL=
-PREDICTLM_ACCESS_TOKEN=
+O repositório mantém apenas nomes de configuração e exemplos vazios em [`.env.example`](.env.example). Credenciais, endereços privados e dados reais de implantação pertencem ao ambiente do servidor e não ao código-fonte.
 
-WA_AUTO_URL=
-
-GREY_URL=
-GREY_API_KEY=
-
-LEADCHECKIN_URL=
-
-LEXISPREDICT_URL=
-LEXISPREDICT_TOKEN=
-```
+Para IA, o caminho recomendado é PredictLM com chave de API dedicada. Forks também podem usar uma API própria compatível com o contrato OpenAI sem expor a chave ao navegador.
 
 O envio avulso continua exigindo ação explícita. A automação processual só envia depois que o usuário habilita o interruptor no módulo WA.Auto e continua sujeita às regras de fila/opt-out do WA.Auto.
 
@@ -272,22 +261,13 @@ A sincronização completa também roda em segundo plano depois da atualização
 - uma campanha comum ativa continua tendo precedência sobre alertas jurídicos;
 - o primeiro scan não dispara histórico antigo.
 
-## Chatbot AshnaAI
+## IA no SheetsPredict
 
-O SheetsPredict 4.2 aceita **AshnaAI** como backend OpenAI-compatible para **Chat, Work e Tutor**. A integração é server-side: a chave não é enviada ao navegador.
+O Chat AI integrado usa um proxy server-side. O runtime preferencial é o PredictLM autenticado por uma chave de API dedicada ao consumidor. A credencial fica apenas no ambiente do servidor.
 
-```dotenv
-ASHNA_API_KEY=
-ASHNA_BASE_URL=https://api.ashna.ai/v1/api
-ASHNA_MODEL=glm-5.3-flash
-ASHNA_AGENT_ID=
-```
+Como o SheetsPredict é open source, um deploy próprio também pode apontar para uma API OpenAI-compatible usando o contrato BYO-AI documentado em [`.env.example`](.env.example). AshnaAI continua disponível como adapter opcional de Chat/Work/Tutor quando configurado.
 
-Com `PREDICTLM_URL` configurada, o SheetsPredict tenta o runtime completo do PredictLM primeiro e pode usar AshnaAI como fallback de Chat/Work/Tutor. Sem PredictLM, AshnaAI pode sustentar essas três superfícies diretamente.
-
-`ASHNA_AGENT_ID` permite apontar para um agente criado no painel Ashna; quando ausente, o adapter usa `ASHNA_MODEL`.
-
-Legal, Build, Research, Imagine e Report continuam exigindo o runtime completo do PredictLM, porque dependem de ferramentas e contratos que um endpoint de chat isolado não fornece.
+Recursos que dependem do runtime completo — como Legal, Build, Research, Imagine e Report — continuam usando o PredictLM quando essa integração está habilitada.
 
 ## Predict Studio
 
@@ -306,7 +286,7 @@ A rota `/studio` traz a camada de execução do PredictLM para dentro do SheetsP
 | **Imagine** | `/api/media/generate` com reference/identity grounding |
 | **Report** | `/api/report-dossier/generate` com FORGE + AEGIS + PARALLAX + Chair/Council |
 
-O proxy `/api/predict-studio` possui uma allowlist fixa de rotas. O navegador não pode fornecer uma URL/path arbitrária de upstream. `PREDICTLM_ACCESS_TOKEN`, quando usado, permanece no backend da Vercel.
+O proxy `/api/predict-studio` mantém o runtime remoto atrás da camada server-side do SheetsPredict. A integração com PredictLM usa a credencial de API mantida no ambiente do servidor; o navegador não recebe essa credencial.
 
 ### Skill Federation
 
@@ -450,12 +430,9 @@ Ao atualizar o bridge, publique uma **nova versão da implantação existente** 
 
 ## Segurança
 
-- Tokens do Apps Script ficam em Script Properties/Vercel Environment Variables.
-- O token do bridge não é enviado ao navegador.
-- `/api/sheets` aceita somente bridge HTTPS permitido.
-- Não versione chaves, tokens ou URLs privadas.
-- A autenticação e o escopo da carteira são validados pelo backend/bridge.
-- A coluna canônica de propriedade da carteira é `Processos!Assistente`; `CreatedBy` é somente auditoria/proveniência.
+O SheetsPredict separa navegador, bridge de planilha e integrações remotas. Sessões e credenciais de serviços externos são tratadas no servidor; o repositório público não deve conter tokens, endereços privados de implantação, dados reais de clientes ou notas detalhadas de vulnerabilidades.
+
+Relatos de segurança devem ser enviados de forma privada ao mantenedor. O README público mantém apenas princípios de implantação e integração; detalhes operacionais ficam fora do repositório.
 
 ## Desenvolvimento e testes
 
@@ -511,3 +488,7 @@ Foco da versão:
 - uma única barra horizontal útil para tabelas largas;
 - correções de F5/deep-link/PWA;
 - isolamento da camada de IA para preservar o núcleo operacional em falhas de provider.
+
+## Licença
+
+SheetsPredict é open source sob a licença [MIT](LICENSE). Integrações, APIs, datasets e componentes de terceiros permanecem sujeitos aos respectivos termos.
