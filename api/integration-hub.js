@@ -190,7 +190,7 @@ async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requi
     const authMismatch=requiresToken&&remoteConfigured!==false&&remoteAuthorized===false;
     const ok=httpHealth.ok&&!payloadUnhealthy&&!remoteMissing&&!authMismatch;
     let status=ok?"online":httpHealth.status,reason=ok?"healthy":httpHealth.reason,detail=message||undefined;
-    if(remoteMissing){status="serviço online; chave ausente no destino";reason="remote_missing_key";detail=detail||"O deployment remoto está ativo, mas ainda não configurou a chave da integração."}
+    if(remoteMissing){status="serviço online; chave ausente no destino";reason="remote_missing_key";detail=detail||("O SheetsPredict enviou a credencial, mas o projeto remoto ainda não expôs uma chave compatível. Configure "+(keyEnv||"a chave de integração")+" também no projeto de destino e faça um novo deployment; definir a variável somente no SheetsPredict não autentica o serviço remoto.")}
     else if(authMismatch){status="credencial não reconhecida pelo destino";reason="remote_key_mismatch";detail=detail||"A chave do SheetsPredict não corresponde à chave configurada no serviço remoto."}
     else if(payloadUnhealthy){status=message||"serviço respondeu não saudável";reason="unhealthy_payload"}
     return {
