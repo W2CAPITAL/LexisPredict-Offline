@@ -64,6 +64,9 @@ function djen(items=[]){return {success:true,items};}
   const blocked={success:false,status:403,isGeoBlocked:true,error:"DJEN HTTP 403: origem bloqueada.",items:[]};
   const patch=buildSheetPatch({datajud:data,djen:blocked,ultimoRetorno:"2026-09-20",lastDjenId:"antigo",lastDjenDate:"2026-09-28",cliente:"Cliente Teste"});
   assert.equal(patch["DataJud • Último Movimento"],"Conclusos para decisão");
+  assert.equal(patch["Último Andamento"],"Conclusos para decisão","campo legado deve acompanhar o canônico");
+  assert.equal(patch["Andamento"],"Conclusos para decisão","alias legado deve ser mantido");
+  assert.ok(patch["Próxima Sincronização"],"scanner deve agendar a próxima verificação");
   assert.equal(Object.prototype.hasOwnProperty.call(patch,"DJEN • Última Publicação"),false,"403 não pode mandar campo DJEN vazio para sobrescrever cache");
   assert.equal(Object.prototype.hasOwnProperty.call(patch,"DJEN • Data"),false,"403 não pode apagar data DJEN já salva");
   assert.equal(patch.Automação,"PARCIAL");
