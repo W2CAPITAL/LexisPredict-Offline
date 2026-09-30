@@ -75,8 +75,12 @@ module.exports=async(req,res)=>{
   if(length>MAX_BODY)return res.status(413).json({ok:false,error:"Payload grande demais."});
   let body={};try{body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{})}catch{return res.status(400).json({ok:false,error:"JSON inválido."})}
   const base=baseUrl();
-  if(!base)return res.status(503).json({ok:false,configured:false,error:"WA_AUTO_URL não configurada."});
   const action=String(body.action||"status").toLowerCase();
+  if(!base){
+    const payload={ok:false,configured:false,code:"WA_AUTO_NOT_CONFIGURED",error:"WA_AUTO_URL não configurada."};
+    if(action==="status"||action==="state")return res.status(200).json(payload);
+    return res.status(503).json(payload);
+  }
   try{
     if(action==="status"){
       const [boot,sheet,legal,suppressions]=await Promise.all([
