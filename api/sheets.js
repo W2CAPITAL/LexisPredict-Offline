@@ -7,7 +7,7 @@ function safeUrl(raw){
   if(u.hostname==="script.google.com"&&!/\/macros\/s\/.+\/exec\/?$/.test(u.pathname))throw new Error("LEXIS_APPS_SCRIPT_URL deve terminar em /exec.");
   return u.toString();
 }
-const READ_ACTIONS=new Set(["auto","list","get","crm_list","judicial_history","ping","users","list_users"]);
+const READ_ACTIONS=new Set(["session","auto","list","get","crm_list","judicial_history","ping","users","list_users"]);
 const TRANSIENT_STATUSES=new Set([408,425,429,500,502,503,504]);
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fetchBridge(url,body,action){
