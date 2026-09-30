@@ -164,22 +164,44 @@ async function bacen(contractDate){
     return {monthlyRate:mr,annualRate:ar,impliedAnnual:implied==null?null:Number(implied.toFixed(4)),ratesConsistent:ar!=null&&implied!=null&&Math.abs(implied-ar)/Math.max(Math.abs(implied),0.01)<=0.15,period:monthLabel(ym),observedAt:mp.data,seriesName:BACEN_LABEL,history:monthly.map(p=>({month:parseYm(p.data),monthlyRate:Number(p.valor)})).filter(p=>Number.isFinite(p.monthlyRate)).slice(-12),source:"bacen"};
   }catch{return {...BACEN_FALLBACK,period:monthLabel(contractDate)}}
 }
-async function serviceStatus(id,name,base,path,token,header){
-  if(!base)return {id,name,configured:false,ok:false,status:"acesso não habilitado"};
+function healthLabel(code){
+  if(code>=200&&code<300)return {ok:true,status:"online",reason:"healthy"};
+  if(code===401)return {ok:false,status:"credencial recusada",reason:"unauthorized"};
+  if(code===403)return {ok:false,status:"acesso bloqueado",reason:"forbidden"};
+  if(code===404)return {ok:false,status:"endpoint não encontrado",reason:"not_found"};
+  if(code===408||code===504)return {ok:false,status:"tempo esgotado",reason:"timeout"};
+  if(code===429)return {ok:false,status:"limite temporário",reason:"rate_limited"};
+  if(code>=500)return {ok:false,status:"serviço respondeu erro "+code,reason:"server_error"};
+  return {ok:false,status:"HTTP "+code,reason:"http_error"};
+}
+async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requiresToken=true}){
+  const checkedAt=new Date().toISOString();
+  if(!base)return {id,name,configured:false,ok:false,status:(urlEnv||"URL")+" ausente ou inválida",reason:"missing_url",missing:[urlEnv].filter(Boolean),checkedAt};
+  if(requiresToken&&!String(token||"").trim())return {id,name,configured:false,ok:false,status:(keyEnv||"chave")+" ausente",reason:"missing_key",missing:[keyEnv].filter(Boolean),checkedAt};
+  const started=Date.now();
   try{
-    const r=await jsonFetch(urlAt(base,path),{headers:{Accept:"application/json",...authHeaders(token,header)}},6000);
-    return {id,name,configured:true,ok:r.ok,status:r.ok?"online":"indisponível"};
-  }catch(e){return {id,name,configured:true,ok:false,status:"indisponível",error:e?.message||String(e)}}
+    const r=await jsonFetch(urlAt(base,path),{headers:{Accept:"application/json",...authHeaders(token,header)}},8000);
+    const health=healthLabel(Number(r.status)||0);
+    const message=compact(r.data?.error||r.data?.message||"",220);
+    return {
+      id,name,configured:true,ok:health.ok,status:health.status,reason:health.reason,
+      httpStatus:r.status,latencyMs:Date.now()-started,checkedAt,
+      detail:message||undefined,credentialSent:requiresToken?!!token:false
+    };
+  }catch(e){
+    const message=e?.name==="AbortError"?"tempo esgotado":compact(e?.message||String(e),220);
+    return {id,name,configured:true,ok:false,status:message==="tempo esgotado"?"tempo esgotado":"sem resposta",reason:message==="tempo esgotado"?"timeout":"network_error",latencyMs:Date.now()-started,checkedAt,detail:message};
+  }
 }
 async function status(){
-  const predictBase=configuredUrl("PREDICTLM_URL"),predict=predictBase&&predictKey()?predictBase:null,wa=configuredUrl("WA_AUTO_URL"),grey=configuredUrl("GREY_URL"),lexisBase=configuredUrl("LEXISPREDICT_URL"),lexis=lexisBase&&lexisKey()?lexisBase:null,lead=configuredUrl("LEADCHECKIN_URL");
+  const predict=configuredUrl("PREDICTLM_URL"),wa=configuredUrl("WA_AUTO_URL"),grey=configuredUrl("GREY_URL"),lexis=configuredUrl("LEXISPREDICT_URL"),lead=configuredUrl("LEADCHECKIN_URL");
   const remote=await Promise.all([
-    serviceStatus("predictlm","PredictLM",predict,"/api/capabilities?surface=chat",predictKey(),"Authorization"),
-    serviceStatus("waauto","WA.Auto",wa,"/api/health",null),
-    serviceStatus("grey","GREY",grey,"/health",process.env.GREY_API_KEY,"x-brain-key"),
-    serviceStatus("lexispredict","LexisPredict",lexis,"/api/integration/sheetspredict",lexisKey(),"Authorization")
+    serviceStatus({id:"predictlm",name:"PredictLM",base:predict,path:"/api/capabilities?surface=chat",token:predictKey(),header:"Authorization",urlEnv:"PREDICTLM_URL",keyEnv:"PREDICTLM_API_KEY"}),
+    serviceStatus({id:"waauto",name:"WA.Auto",base:wa,path:"/api/health",token:null,urlEnv:"WA_AUTO_URL",requiresToken:false}),
+    serviceStatus({id:"grey",name:"GREY",base:grey,path:"/health",token:process.env.GREY_API_KEY,header:"x-brain-key",urlEnv:"GREY_URL",keyEnv:"GREY_API_KEY"}),
+    serviceStatus({id:"lexispredict",name:"LexisPredict",base:lexis,path:"/api/integration/sheetspredict",token:lexisKey(),header:"Authorization",urlEnv:"LEXISPREDICT_URL",keyEnv:"LEXISPREDICT_API_KEY"})
   ]);
-  return {ok:true,repositories:REPOSITORIES,services:remote,builtins:[
+  return {ok:true,checkedAt:new Date().toISOString(),repositories:REPOSITORIES,services:remote,builtins:[
     {id:"synccrm",name:"SyncCRM Intelligence",ok:true,status:"embutido",configured:true},
     {id:"leadcheckin",name:"LEADCHECKIN Public Scan",ok:true,status:lead?"remoto + embutido":"embutido",configured:true},
     {id:"leadcheck",name:"Leadcheck Bacen/Revisional",ok:true,status:"embutido",configured:true},
