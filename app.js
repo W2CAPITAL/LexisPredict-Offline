@@ -9,6 +9,9 @@ const PAGE_DEFAULT=200;
 const DJEN_GEO_BLOCK_MS=10*60*1000;
 const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
 const THEME_KEY="sheetspredict_theme_v1";
+const RELEASE_SEEN_KEY="sheetspredict_release_seen_v1";
+const UPDATE_STATE_KEY="sheetspredict_update_state_v1";
+const UPDATE_POLL_MS=60000;
 const THEMES=[
   {id:"default",name:"SheetsPredict",desc:"Azul jurídico claro",mode:"Claro",accent:"#0876e8",bg:"#f5f8fb",surface:"#ffffff",nav:"#08182b",meta:"#08182b"},
   {id:"clean",name:"Clean",desc:"Branco, cinza e azul discreto",mode:"Claro",accent:"#2563eb",bg:"#f8fafc",surface:"#ffffff",nav:"#111827",meta:"#111827"},
@@ -30,7 +33,7 @@ function applyTheme(id,{persist=true}={}){
   if(persist)try{localStorage.setItem(THEME_KEY,theme.id)}catch(_){}
   return theme;
 }
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -365,6 +368,125 @@ function startAutoSync(){
 function stopAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
   state.autoSyncTimer=null;
+}
+function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+function setUpdateLock(on){
+  state.updateLock=!!on;
+  document.body.classList.toggle("app-update-locked",!!on);
+  const login=$("#login"),app=$("#app");
+  if(login)login.inert=!!on;
+  if(app)app.inert=!!on;
+}
+function updateOverlay({title,detail,meta,progress=12,retry=false,eyebrow="ATUALIZAÇÃO DO SISTEMA"}={}){
+  const overlay=$("#appUpdateOverlay");if(!overlay)return;
+  overlay.classList.remove("hidden");
+  const e=$("#appUpdateEyebrow"),t=$("#appUpdateTitle"),d=$("#appUpdateDetail"),m=$("#appUpdateMeta"),p=$("#appUpdateProgress"),r=$("#appUpdateRetry");
+  if(e)e.textContent=eyebrow;if(t)t.textContent=title||"Atualizando SheetsPredict";if(d)d.textContent=detail||"Aguarde a conclusão.";
+  if(m)m.textContent=meta||"Login e edições ficam bloqueados durante a atualização.";
+  if(p)p.style.width=Math.max(4,Math.min(100,Number(progress)||0))+"%";
+  if(r)r.classList.toggle("hidden",!retry);
+}
+function hideUpdateOverlay(){
+  const overlay=$("#appUpdateOverlay");if(overlay)overlay.classList.add("hidden");
+  setUpdateLock(false);
+}
+function readUpdateState(){
+  try{return JSON.parse(localStorage.getItem(UPDATE_STATE_KEY)||"null")}catch(_){return null}
+}
+function writeUpdateState(value){
+  try{if(value)localStorage.setItem(UPDATE_STATE_KEY,JSON.stringify(value));else localStorage.removeItem(UPDATE_STATE_KEY)}catch(_){}
+}
+async function currentReleaseId(){
+  const r=await fetch("/sw.js?release="+Date.now(),{cache:"no-store",headers:{"Cache-Control":"no-cache"}});
+  if(!r.ok)throw new Error("Não foi possível conferir a versão publicada.");
+  const text=await r.text(),m=text.match(/const CACHE="([^"]+)"/);
+  return m?.[1]||"";
+}
+async function waitForSyncIdle(maxMs=15000){
+  const started=Date.now();
+  while(state.syncing&&Date.now()-started<maxMs)await sleep(180);
+  return !state.syncing;
+}
+async function applyWaitingUpdate(target){
+  if(state.updateLock)return;
+  setUpdateLock(true);stopAutoSync();state.updateTarget=target||"nova-versao";
+  updateOverlay({title:"Nova atualização pronta",detail:"Bloqueamos temporariamente login e edições. Antes de trocar a versão, o SheetsPredict vai confirmar as alterações pendentes.",meta:"Não feche esta página.",progress:18});
+  try{
+    await waitForSyncIdle();
+    updateOverlay({title:"Protegendo seus dados",detail:"Confirmando edições pendentes e finalizando a sincronização antes da atualização.",meta:"Nenhuma nova edição pode ser feita agora.",progress:38});
+    if(state.session&&navigator.onLine){
+      await flushOutbox({force:true});
+      await flushCrmOutbox();
+    }
+    updateOverlay({title:"Atualizando SheetsPredict",detail:"Dados pendentes confirmados. Aplicando a nova versão do aplicativo.",meta:"O aplicativo será recarregado automaticamente.",progress:72});
+    writeUpdateState({status:"reloading",target:state.updateTarget,startedAt:Date.now()});
+    let reg=state.swRegistration;
+    if(!reg&&"serviceWorker"in navigator)reg=await navigator.serviceWorker.getRegistration();
+    if(reg){
+      await reg.update().catch(()=>{});
+      const waiting=reg.waiting||null;
+      if(waiting){
+        waiting.postMessage({type:"SKIP_WAITING"});
+        setTimeout(()=>{if(state.updateLock)location.reload()},7000);
+        return;
+      }
+    }
+    location.reload();
+  }catch(e){
+    updateOverlay({title:"Atualização pausada",detail:"A nova versão não será aplicada enquanto houver dados que não foram confirmados.",meta:e?.message||String(e),progress:38,retry:true,eyebrow:"PROTEÇÃO DE DADOS"});
+    const retry=$("#appUpdateRetry");
+    if(retry)retry.onclick=()=>{setUpdateLock(false);void applyWaitingUpdate(state.updateTarget||target)};
+  }
+}
+async function checkForAppUpdate({initial=false}={}){
+  if(!navigator.onLine||state.updateLock)return false;
+  let remote="";try{remote=await currentReleaseId()}catch(_){return false}
+  if(!remote)return false;
+  const seen=localStorage.getItem(RELEASE_SEEN_KEY)||"";
+  const pending=readUpdateState();
+  if(pending?.status==="reloading"&&pending.target===remote){
+    localStorage.setItem(RELEASE_SEEN_KEY,remote);writeUpdateState(null);
+    setUpdateLock(true);
+    updateOverlay({title:"Atualização concluída",detail:"A nova versão foi carregada. Validando a interface antes de liberar o acesso.",meta:"SheetsPredict "+remote,progress:100,eyebrow:"SISTEMA ATUALIZADO"});
+    await sleep(1400);hideUpdateOverlay();
+    return false;
+  }
+  if(!seen){
+    localStorage.setItem(RELEASE_SEEN_KEY,remote);
+    return false;
+  }
+  if(remote!==seen){
+    void applyWaitingUpdate(remote);
+    return true;
+  }
+  if(initial&&state.swRegistration?.waiting){
+    void applyWaitingUpdate(remote);
+    return true;
+  }
+  return false;
+}
+async function initUpdateGuard(){
+  if(!("serviceWorker"in navigator))return false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{
+    if(!state.updateLock)return;
+    updateOverlay({title:"Finalizando atualização",detail:"Nova versão ativada. Recarregando o SheetsPredict.",meta:"Aguarde alguns segundos.",progress:92});
+    setTimeout(()=>location.reload(),220);
+  });
+  const reg=await navigator.serviceWorker.register("/sw.js",{updateViaCache:"none"});
+  state.swRegistration=reg;
+  reg.addEventListener("updatefound",()=>{
+    const worker=reg.installing;if(!worker)return;
+    worker.addEventListener("statechange",()=>{
+      if(worker.state==="installed"&&navigator.serviceWorker.controller&&!state.updateLock){
+        void currentReleaseId().then(target=>applyWaitingUpdate(target||"nova-versao")).catch(()=>applyWaitingUpdate("nova-versao"));
+      }
+    });
+  });
+  await reg.update().catch(()=>{});
+  const blocked=await checkForAppUpdate({initial:true});
+  if(state.updatePollTimer)clearInterval(state.updatePollTimer);
+  state.updatePollTimer=setInterval(()=>{void checkForAppUpdate()},UPDATE_POLL_MS);
+  return blocked||state.updateLock;
 }
 function comparable(v,key){
   const s=String(v??"").trim();
@@ -727,12 +849,20 @@ function hubSourceMeta(id){
     offline:{icon:"↻",tone:"gray",feature:"Cache e continuidade",open:"integrations"}
   };return map[id]||{icon:"◇",tone:"gray",feature:"Integração",open:"integrations"};
 }
+function hubStatusDetail(st){
+  if(!st)return"Verificando conexão…";
+  const parts=[st.status];
+  if(st.httpStatus)parts.push("HTTP "+st.httpStatus);
+  if(Number.isFinite(Number(st.latencyMs)))parts.push(st.latencyMs+" ms");
+  if(st.detail&&!String(st.detail).toLowerCase().includes(String(st.status||"").toLowerCase()))parts.push(st.detail);
+  return parts.filter(Boolean).join(" · ");
+}
 function hubSourceCard(src){
   const st=hubSourceStatus(src.id),ok=!!st?.ok,configured=st?st.configured!==false:false,meta=hubSourceMeta(src.id);
-  const label=!st?"Verificando":ok?"Online":configured?"Indisponível":"Não configurado";
+  const label=!st?"Verificando":ok?"Online":st?.reason==="unauthorized"?"Credencial recusada":configured?"Indisponível":"Configuração incompleta";
   const cls=ok?"good":configured?"warn":"gray";
-  const detail=st?.status||(!configured?"Configuração privada pendente":"Estado do serviço");
-  return '<article class="hub-source-card reference-service-card"><div class="reference-service-title"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><div><strong>'+esc(src.name)+'</strong><small>'+esc(src.feature||meta.feature)+'</small></div></div><div>'+badge(label,cls)+'</div><p>'+esc(detail)+'</p><button class="btn sm" data-hub-open="'+esc(meta.open)+'">'+(ok?"Abrir":"Configurar")+'</button></article>';
+  const detail=hubStatusDetail(st);
+  return '<article class="hub-source-card reference-service-card"><div class="reference-service-title"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><div><strong>'+esc(src.name)+'</strong><small>'+esc(src.feature||meta.feature)+'</small></div></div><div>'+badge(label,cls)+'</div><p title="'+esc(detail)+'">'+esc(detail)+'</p><button class="btn sm" data-hub-open="'+esc(meta.open)+'">'+(ok?"Abrir":"Diagnosticar")+'</button></article>';
 }
 function hubTabs(){
   const tabs=[["overview","Visão geral"],["ai","IA"],["whatsapp","WhatsApp"],["leads","Leads"],["revisional","Revisional"],["sheets","Planilha"],["integrations","Integrações"]];
@@ -752,10 +882,10 @@ function hubOverviewHtml(){
   const serviceBy=id=>services.find(x=>x.id===id)||null;
   const rows=[
     {time:state.lastSync||"—",service:"Google Sheets",event:"Sincronização",details:state.companyRows.length+" registros em cache",ok:!!state.lastSync},
-    {time:"agora",service:"PredictLM",event:"Motor principal",details:serviceBy("predictlm")?.status||"aguardando status",ok:!!serviceBy("predictlm")?.ok},
-    {time:"agora",service:"LexisPredict",event:"Motor jurídico",details:serviceBy("lexispredict")?.status||"aguardando status",ok:!!serviceBy("lexispredict")?.ok},
-    {time:"agora",service:"WA.Auto",event:"Mensageria",details:serviceBy("waauto")?.status||"aguardando status",ok:!!serviceBy("waauto")?.ok},
-    {time:"agora",service:"GREY",event:"Motor privado",details:serviceBy("grey")?.status||"aguardando status",ok:!!serviceBy("grey")?.ok}
+    {time:"agora",service:"PredictLM",event:"Motor principal",details:hubStatusDetail(serviceBy("predictlm")),ok:!!serviceBy("predictlm")?.ok},
+    {time:"agora",service:"LexisPredict",event:"Motor jurídico",details:hubStatusDetail(serviceBy("lexispredict")),ok:!!serviceBy("lexispredict")?.ok},
+    {time:"agora",service:"WA.Auto",event:"Mensageria",details:hubStatusDetail(serviceBy("waauto")),ok:!!serviceBy("waauto")?.ok},
+    {time:"agora",service:"GREY",event:"Motor privado",details:hubStatusDetail(serviceBy("grey")),ok:!!serviceBy("grey")?.ok}
   ];
   return '<div class="reference-hub-services">'+useCards.map(hubSourceCard).join("")+'</div>'+
   '<div class="reference-hub-lower"><section class="card reference-card"><div class="reference-card-head"><div><h3>Fila de eventos e logs</h3><small>Estado operacional das integrações</small></div><button class="link-btn" data-hub-open="integrations">Ver todos os logs →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Horário</th><th>Serviço</th><th>Evento</th><th>Detalhes</th><th>Status</th></tr></thead><tbody>'+
@@ -763,12 +893,12 @@ function hubOverviewHtml(){
   '</tbody></table></div></section>'+
   '<aside class="reference-hub-side"><section class="card reference-card"><div class="reference-card-head"><h3>Ações rápidas</h3></div><div class="reference-quick-grid">'+
     '<button data-hub-open="sheets"><b>↻</b><span><strong>Sincronizar agora</strong><small>Forçar atualização de dados</small></span></button>'+
-    '<button data-hub-open="integrations"><b>▣</b><span><strong>Testar integrações</strong><small>Verificar conexões e permissões</small></span></button>'+
+    '<button data-hub-test="1"><b>▣</b><span><strong>Testar integrações</strong><small>Fazer diagnóstico ao vivo agora</small></span></button>'+
     '<button data-hub-open="ai"><b>✦</b><span><strong>Chat AI</strong><small>PredictLM + Lexis jurídico</small></span></button>'+
     '<button data-hub-open="whatsapp"><b>◉</b><span><strong>WA.Auto</strong><small>Mensagens e monitor jurídico</small></span></button>'+
   '</div></section>'+
-  '<section class="card reference-card"><div class="reference-card-head"><h3>Status dos serviços</h3><span>'+services.filter(x=>x.ok).length+' online</span></div><div class="reference-status-list">'+
-    wanted.map(id=>{const st=serviceBy(id),meta=hubSourceMeta(id),name=id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY";return '<div><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><strong>'+name+'</strong><em class="'+(st?.ok?"online":"offline")+'">'+(st?.ok?"Online":st?.configured===false?"Não configurado":"Atenção")+'</em></div>'}).join("")+
+  '<section class="card reference-card"><div class="reference-card-head"><h3>Status dos serviços</h3><span>'+wanted.filter(id=>serviceBy(id)?.ok).length+' de '+wanted.length+' online</span></div><div class="reference-status-list">'+
+    wanted.map(id=>{const st=serviceBy(id),meta=hubSourceMeta(id),name=id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY";const label=st?.ok?"Online":st?.status||"Verificando";return '<div title="'+esc(hubStatusDetail(st))+'"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><strong>'+name+'</strong><em class="'+(st?.ok?"online":"offline")+'">'+esc(label)+'</em></div>'}).join("")+
   '</div></section></aside></div>';
 }
 function hubAiHtml(){
@@ -816,8 +946,8 @@ function hubSheetsHtml(){
     '<section class="card"><div class="card-head"><div><span class="eyebrow">MAPEAMENTO</span><h3>Cabeçalho → campo operacional</h3></div></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>Campo</th><th>Cabeçalho detectado</th><th>Confiança</th></tr></thead><tbody>'+a.mapping.map(x=>'<tr><td>'+esc(x.field)+'</td><td>'+esc(x.sheetHeader||"não localizado")+'</td><td>'+badge(x.confidence+"%",x.confidence>=80?"good":x.confidence>=50?"warn":"bad")+'</td></tr>').join("")+'</tbody></table></div></section></div>';
 }
 function hubIntegrationsHtml(){
-  const h=state.hub.status,sources=window.SheetsHub?.sources||[];
-  return '<section class="card"><div class="card-head"><div><span class="eyebrow">RUNTIME FEDERADO</span><h3>Fontes e motores</h3></div><button class="btn sm" id="hubStatusRefresh">Revalidar</button></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div><div class="card-body"><p class="hub-note">Integrações externas usam configuração privada no servidor. O navegador recebe apenas estado operacional, nunca credenciais ou endereços privados. Planilha inteligente, Bacen, scanner público e offline continuam disponíveis de forma independente.</p></div></section>'+
+  const h=state.hub.status,sources=window.SheetsHub?.sources||[],checked=h?.checkedAt?new Date(h.checkedAt).toLocaleString("pt-BR"):"ainda não verificado";
+  return '<section class="card"><div class="card-head"><div><span class="eyebrow">DIAGNÓSTICO AO VIVO</span><h3>Fontes e motores</h3><small>Última verificação: '+esc(checked)+'</small></div><button class="btn sm" id="hubStatusRefresh">'+(state.hub.loading?"Verificando…":"Testar agora")+'</button></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div><div class="card-body"><p class="hub-note">Cada serviço remoto é consultado de verdade pelo backend. HTTP 401 indica chave diferente/ausente no serviço remoto; HTTP 404 indica URL/endpoint incorreto; erro 5xx indica serviço ativo, mas com falha; “URL ausente” significa variável de ambiente faltando.</p></div></section>'+
   (!h?'<div class="empty">Carregando estado das integrações…</div>':'');
 }
 function renderHub(){
@@ -827,6 +957,7 @@ function renderHub(){
   '</div></div>';
   bindGotos();
   document.querySelectorAll("[data-hub-tab],[data-hub-open]").forEach(b=>b.onclick=()=>{state.hub.tab=b.dataset.hubTab||b.dataset.hubOpen;renderHub()});
+  document.querySelectorAll("[data-hub-test]").forEach(b=>b.onclick=async()=>{state.hub.tab="integrations";renderHub();await loadHubStatus(true)});
   if(!state.hub.status&&!state.hub.loading)void loadHubStatus();
   if($("#hubStatusRefresh"))$("#hubStatusRefresh").onclick=()=>loadHubStatus(true);
   if($("#hubAiSend"))$("#hubAiSend").onclick=hubRunAi;
@@ -1784,6 +1915,7 @@ function openProcess(key){
   $("#fAdvogado").value=pick(r,"Advogado");$("#fEscritorio").value=pick(r,"Escritório","Escritorio");$("#fTribunal").value=pick(r,"Tribunal");$("#fStatus").value=pick(r,"Status");$("#fTelefone").value=pick(r,"Telefone")||linkedClient?.Telefone_Principal||"";$("#fRetorno").value=pick(r,"Último Retorno");$("#fProximo").value=pick(r,"Próximo Retorno");$("#fObs").value=pick(r,"Observações","Observacao");$("#processStatus").textContent="";$("#processDialog").showModal()
 }
 async function saveProcess(){
+  if(state.updateLock){showBanner("Atualização em andamento. Edições estão temporariamente bloqueadas.","bad");return}
   const key=$("#editKey").value,isNew=!key;
   const current=findRow(key)||{};
   const next={...current,
@@ -1891,6 +2023,7 @@ function setupEvents(){
   };
   $("#saveProcessBtn").onclick=saveProcess;
   $("#loginBtn").onclick=async()=>{
+    if(state.updateLock){$("#loginStatus").textContent="Atualização em andamento. Aguarde a conclusão.";return}
     const u=$("#loginUser").value.trim(),p=$("#loginPass").value;
     $("#loginStatus").textContent="Autenticando…";
     if(!u||!p){$("#loginStatus").textContent="Informe usuário e senha.";return}
@@ -1937,7 +2070,10 @@ async function boot(){
   restoreDjenBlock();
   state.view=pathView();
   const cachedSession=restoreSession();
-  if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});
+  try{
+    const blocked=await initUpdateGuard();
+    if(blocked)return;
+  }catch(_){}
   try{await loadLocal()}catch(_){state.companyRows=[];state.rows=[]}
   try{await loadCrmCache()}catch(_){}
 
