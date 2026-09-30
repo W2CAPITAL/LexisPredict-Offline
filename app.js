@@ -1719,7 +1719,7 @@ function setupEvents(){
   const mobileMenu=$("#mobileMenuBtn"),mobileBackdrop=$("#mobileNavBackdrop");
   if(mobileMenu)mobileMenu.onclick=()=>setMobileNav(!document.body.classList.contains("mobile-nav-open"));
   if(mobileBackdrop)mobileBackdrop.onclick=()=>setMobileNav(false);
-  $("#nav .nav-item").forEach(b=>b.onclick=()=>{setMobileNav(false);setView(b.dataset.view)});
+  $$("#nav .nav-item").forEach(b=>b.onclick=()=>{setMobileNav(false);setView(b.dataset.view)});
   document.addEventListener("keydown",e=>{if(e.key==="Escape")setMobileNav(false)});
   window.addEventListener("resize",()=>{if(window.innerWidth>700)setMobileNav(false)});
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
