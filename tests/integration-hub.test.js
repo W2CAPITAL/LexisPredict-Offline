@@ -25,6 +25,14 @@ assert.match(app,/action:"wa_send"/);
 assert.match(app,/action:"lead_scan"/);
 assert.match(app,/action:"bacen"/);
 const api=fs.readFileSync(path.join(__dirname,"..","api","integration-hub.js"),"utf8");
+assert.match(api,/requireSession/);
+assert.match(api,/requireSameOrigin/);
+assert.match(api,/PREDICTLM_API_KEY/);
+assert.match(api,/SHEETSPREDICT_AI_API_KEY/);
+assert.match(api,/SHEETSPREDICT_AI_BASE_URL/);
+assert.match(api,/resolvedPublicUrl/);
+assert.match(api,/dns\.lookup/);
+
 for(const repo of ["W2CAPITAL/PredictLm","W2CAPITAL/Wa.Auto","W2CAPITAL/LexisPredict","W1CAPITAL/SyncCRM","W2CAPITAL/LEADCHECKIN","W1CAPITAL/OFFLINE-LEXISPREDICT","W1CAPITAL/Leadcheck","W1CAPITAL/GREY"]){
   assert.ok(api.includes(repo),"fonte ausente: "+repo);
 }
