@@ -1667,3 +1667,6 @@ body.app-update-locked{overflow:hidden}
 @keyframes sp-save-spin{to{transform:rotate(360deg)}}
 @keyframes sp-save-pulse{0%{box-shadow:0 0 0 0 rgba(22,119,210,.28)}70%{box-shadow:0 0 0 7px rgba(22,119,210,0)}100%{box-shadow:0 0 0 0 rgba(22,119,210,0)}}
 @media (prefers-reduced-motion:reduce){.btn-spinner,.status-line.operation-pending:before{animation:none}}
+
+.app-update-actions{grid-column:2;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.app-update-actions .btn{height:32px;font-size:9px}

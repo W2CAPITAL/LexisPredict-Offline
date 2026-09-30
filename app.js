@@ -466,18 +466,35 @@ function setUpdateLock(on){
   if(login)login.inert=!!on;
   if(app)app.inert=!!on;
 }
-function updateOverlay({title,detail,meta,progress=12,retry=false,eyebrow="ATUALIZAÇÃO DO SISTEMA"}={}){
+function updateOverlay({title,detail,meta,progress=12,retry=false,continueApp=false,eyebrow="ATUALIZAÇÃO DO SISTEMA"}={}){
   const overlay=$("#appUpdateOverlay");if(!overlay)return;
   overlay.classList.remove("hidden");
-  const e=$("#appUpdateEyebrow"),t=$("#appUpdateTitle"),d=$("#appUpdateDetail"),m=$("#appUpdateMeta"),p=$("#appUpdateProgress"),r=$("#appUpdateRetry");
+  const e=$("#appUpdateEyebrow"),t=$("#appUpdateTitle"),d=$("#appUpdateDetail"),m=$("#appUpdateMeta"),p=$("#appUpdateProgress"),r=$("#appUpdateRetry"),c=$("#appUpdateContinue");
   if(e)e.textContent=eyebrow;if(t)t.textContent=title||"Atualizando SheetsPredict";if(d)d.textContent=detail||"Aguarde a conclusão.";
   if(m)m.textContent=meta||"Login e edições ficam bloqueados durante a atualização.";
   if(p)p.style.width=Math.max(4,Math.min(100,Number(progress)||0))+"%";
   if(r)r.classList.toggle("hidden",!retry);
+  if(c)c.classList.toggle("hidden",!continueApp);
 }
 function hideUpdateOverlay(){
   const overlay=$("#appUpdateOverlay");if(overlay)overlay.classList.add("hidden");
   setUpdateLock(false);
+}
+function withTimeout(promise,ms,label){
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_,reject)=>setTimeout(()=>reject(Object.assign(new Error(label||"Operação excedeu o tempo limite."),{timeout:true})),ms))
+  ]);
+}
+function releaseUpdateLock(message){
+  writeUpdateState(null);
+  hideUpdateOverlay();
+  startAutoSync();
+  if(message)showBanner(message,"bad");
+}
+function configureUpdateContinue(message){
+  const c=$("#appUpdateContinue");
+  if(c)c.onclick=()=>releaseUpdateLock(message||"Atualização adiada. Você pode continuar usando o app.");
 }
 function readUpdateState(){
   try{return JSON.parse(localStorage.getItem(UPDATE_STATE_KEY)||"null")}catch(_){return null}
@@ -499,48 +516,61 @@ async function waitForSyncIdle(maxMs=15000){
 async function applyWaitingUpdate(target){
   if(state.updateLock)return;
   setUpdateLock(true);stopAutoSync();state.updateTarget=target||"nova-versao";
-  updateOverlay({title:"Nova atualização pronta",detail:"Bloqueamos temporariamente login e edições. Antes de trocar a versão, o SheetsPredict vai confirmar as alterações pendentes.",meta:"Não feche esta página.",progress:18});
+  updateOverlay({title:"Nova atualização pronta",detail:"Bloqueamos temporariamente login e edições enquanto verificamos alterações pendentes.",meta:"A atualização não ficará presa: se algo falhar, o app será liberado novamente.",progress:18,continueApp:true});
+  configureUpdateContinue("Atualização adiada. O app foi liberado.");
+  const watchdog=setTimeout(()=>{
+    if(!state.updateLock)return;
+    updateOverlay({title:"Atualização adiada",detail:"A proteção demorou mais do que o esperado. O app será liberado sem descartar suas alterações locais.",meta:"Você pode continuar usando o sistema e tentar atualizar depois.",progress:38,continueApp:true,eyebrow:"ATUALIZAÇÃO PAUSADA"});
+    configureUpdateContinue("Atualização adiada porque excedeu o tempo limite.");
+    setTimeout(()=>{if(state.updateLock)releaseUpdateLock("Atualização adiada porque excedeu o tempo limite.")},1800);
+  },18000);
   try{
-    await waitForSyncIdle();
-    updateOverlay({title:"Protegendo seus dados",detail:"Confirmando edições pendentes e finalizando a sincronização antes da atualização.",meta:"Nenhuma nova edição pode ser feita agora.",progress:38});
-    if(state.session&&navigator.onLine){
-      // Duas passagens fecham a pequena janela de uma edição iniciada imediatamente
-      // antes de o bloqueio visual entrar em vigor.
-      for(let pass=0;pass<2;pass++){
-        await flushOutbox({force:true});
-        await flushCrmOutbox();
-        await updateSleep(220);
-      }
-      const pendingWrites=await outboxCount().catch(()=>0);
-      const pendingCrm=(await idbAll("crmOutbox").catch(()=>[])).length;
-      if(pendingWrites||pendingCrm)throw new Error("Ainda existem "+(pendingWrites+pendingCrm)+" alteração(ões) pendente(s) de confirmação.");
+    await waitForSyncIdle(5000);
+    const pendingWrites=await outboxCount().catch(()=>0);
+    const pendingCrm=(await idbAll("crmOutbox").catch(()=>[])).length;
+    if(pendingWrites||pendingCrm){
+      updateOverlay({title:"Protegendo seus dados",detail:"Existem "+(pendingWrites+pendingCrm)+" alteração(ões) local(is). Tentando confirmá-las antes da atualização.",meta:"Se a planilha não responder, a atualização será adiada e o app será liberado.",progress:38,continueApp:true});
+      configureUpdateContinue("Atualização adiada. Suas alterações locais continuam preservadas.");
+      if(!navigator.onLine)throw new Error("Sem conexão para confirmar alterações pendentes.");
+      await withTimeout((async()=>{
+        if(pendingWrites)await flushOutbox({force:true});
+        if(pendingCrm)await flushCrmOutbox();
+      })(),9000,"A sincronização pendente não respondeu a tempo.");
+      const leftWrites=await outboxCount().catch(()=>0);
+      const leftCrm=(await idbAll("crmOutbox").catch(()=>[])).length;
+      if(leftWrites||leftCrm)throw new Error("Ainda existem "+(leftWrites+leftCrm)+" alteração(ões) pendente(s).");
     }
-    updateOverlay({title:"Atualizando SheetsPredict",detail:"Dados pendentes confirmados. Aplicando a nova versão do aplicativo.",meta:"O aplicativo será recarregado automaticamente.",progress:72});
+
+    updateOverlay({title:"Atualizando SheetsPredict",detail:"Nenhuma alteração pendente bloqueia a atualização. Ativando a nova versão.",meta:"O aplicativo será recarregado automaticamente.",progress:72,continueApp:false});
     writeUpdateState({status:"reloading",target:state.updateTarget,startedAt:Date.now()});
     let reg=state.swRegistration;
     if(!reg&&"serviceWorker"in navigator)reg=await navigator.serviceWorker.getRegistration();
     if(reg){
-      await reg.update().catch(()=>{});
+      await withTimeout(reg.update().catch(()=>{}),5000,"Não foi possível verificar o Service Worker.");
       let waiting=reg.waiting||null;
       if(!waiting&&reg.installing){
-        waiting=await new Promise(resolve=>{
-          const worker=reg.installing,timer=setTimeout(()=>resolve(reg.waiting||null),8000);
-          worker.addEventListener("statechange",()=>{
-            if(worker.state==="installed"){clearTimeout(timer);resolve(reg.waiting||worker)}
-          });
-        });
+        waiting=await withTimeout(new Promise(resolve=>{
+          const worker=reg.installing;
+          const done=()=>{if(worker.state==="installed"||worker.state==="activated")resolve(reg.waiting||worker)};
+          worker.addEventListener("statechange",done);
+        }),5000,"A nova versão não terminou de instalar.");
       }
       if(waiting){
         waiting.postMessage({type:"SKIP_WAITING"});
-        setTimeout(()=>{if(state.updateLock)location.reload()},7000);
+        setTimeout(()=>location.reload(),2500);
+        clearTimeout(watchdog);
         return;
       }
     }
+    clearTimeout(watchdog);
     location.reload();
   }catch(e){
-    updateOverlay({title:"Atualização pausada",detail:"A nova versão não será aplicada enquanto houver dados que não foram confirmados.",meta:e?.message||String(e),progress:38,retry:true,eyebrow:"PROTEÇÃO DE DADOS"});
+    clearTimeout(watchdog);
+    updateOverlay({title:"Atualização adiada",detail:"Não foi possível concluir a atualização agora. Nenhuma alteração local será descartada.",meta:e?.message||String(e),progress:38,retry:true,continueApp:true,eyebrow:"ATUALIZAÇÃO PAUSADA"});
+    configureUpdateContinue("Atualização adiada. O app foi liberado e seus dados locais foram preservados.");
     const retry=$("#appUpdateRetry");
-    if(retry)retry.onclick=()=>{setUpdateLock(false);void applyWaitingUpdate(state.updateTarget||target)};
+    if(retry)retry.onclick=()=>{releaseUpdateLock();setTimeout(()=>void applyWaitingUpdate(state.updateTarget||target),50)};
+    setTimeout(()=>{if(state.updateLock)releaseUpdateLock("Atualização adiada. O app foi liberado automaticamente.")},5000);
   }
 }
 async function checkForAppUpdate({initial=false}={}){
