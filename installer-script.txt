@@ -833,30 +833,36 @@ function ensureSheetWithHeaders_(ss, name, headers) {
 
 
 
-function getProcSheet_() {
-
-  ensureSheets_();
-
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PROC_SHEET);
-
-  if (!sh) throw new Error("Aba Processos não encontrada.");
-
-  return sh;
-
+function existingSheet_(name) {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
 }
 
+function sheetValues_(sh, headers) {
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  if (lastRow < 1) return [];
+  var width = Math.max(1, headers && headers.length ? headers.length : sh.getLastColumn());
+  return sh.getRange(1, 1, lastRow, width).getValues();
+}
 
+function getProcSheet_() {
+  var sh = existingSheet_(PROC_SHEET);
+  if (!sh) {
+    ensureSheets_();
+    sh = existingSheet_(PROC_SHEET);
+  }
+  if (!sh) throw new Error("Aba Processos não encontrada.");
+  return sh;
+}
 
 function getUsersSheet_() {
-
-  ensureSheets_();
-
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(USERS_SHEET);
-
+  var sh = existingSheet_(USERS_SHEET);
+  if (!sh) {
+    ensureSheets_();
+    sh = existingSheet_(USERS_SHEET);
+  }
   if (!sh) throw new Error("Aba Usuarios não encontrada.");
-
   return sh;
-
 }
 
 
@@ -1169,7 +1175,7 @@ function readRows_(opts) {
 
   var headers = headers_(sh);
 
-  var data = sh.getDataRange().getValues();
+  var data = sheetValues_(sh, headers);
 
   var map = headerMap_(headers);
 
@@ -1755,11 +1761,14 @@ function crmReadTable_(name, actor, body) {
   var t = crmTableConfig_(name);
   var access = roleAccess(actor && actor.perfil);
   if (access < Number(t.cfg.minAccess || 10)) throw new Error("sem permissao para " + t.name);
-  ensureSheets_();
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(t.name);
+  var sh = existingSheet_(t.name);
+  if (!sh) {
+    ensureSheets_();
+    sh = existingSheet_(t.name);
+  }
   if (!sh) throw new Error("aba CRM nao encontrada: " + t.name);
   var headers = headers_(sh);
-  var data = sh.getDataRange().getValues();
+  var data = sheetValues_(sh, headers);
   var limit = Math.min(Math.max(Number(body && body.limit || 5000), 1), 12000);
   var rows = [];
   for (var r = HEADER_ROW; r < data.length; r++) {
@@ -1783,8 +1792,7 @@ function crmReadTable_(name, actor, body) {
 
 function auditRows_(entries) {
   if (!entries || !entries.length) return;
-  ensureSheets_();
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("AuditoriaLogsApp");
+  var sh = existingSheet_("AuditoriaLogsApp");
   if (!sh) return;
   var headers = headers_(sh);
   var values = entries.map(function(e) {
@@ -1815,13 +1823,17 @@ function crmWriteTable_(name, rows, actor) {
   if (!Array.isArray(rows)) rows = [];
   if (!rows.length) return { ok: true, table: t.name, written: 0, added: 0, updated: 0 };
   if (rows.length > 1000) throw new Error("lote CRM acima de 1000 linhas");
-  ensureSheets_();
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(t.name);
+  var sh = existingSheet_(t.name);
+  if (!sh) {
+    ensureSheets_();
+    sh = existingSheet_(t.name);
+  }
+  if (!sh) throw new Error("aba CRM nao encontrada: " + t.name);
   var headers = headers_(sh);
   var hmap = headerMap_(headers);
   var keyIdx = findCol_(hmap, [t.cfg.key]);
   if (keyIdx < 0) throw new Error("chave ausente na aba " + t.name + ": " + t.cfg.key);
-  var data = sh.getDataRange().getValues();
+  var data = sheetValues_(sh, headers);
   var index = {};
   for (var i = HEADER_ROW; i < data.length; i++) {
     var k = String(data[i][keyIdx] || "").trim();
@@ -1884,8 +1896,8 @@ function crmSeedClients_() {
   var pmap = headerMap_(ph), cmap = headerMap_(ch);
   var clienteIdx = findCol_(pmap, ["Cliente"]), phoneIdx = findCol_(pmap, ["Telefone"]), assistIdx = findCol_(pmap, ["Assistente"]), clientIdIdx = findCol_(pmap, ["ClienteId"]);
   if (clienteIdx < 0 || clientIdIdx < 0) throw new Error("Processos precisa de Cliente e ClienteId");
-  var pdata = proc.getDataRange().getValues();
-  var cdata = cli.getDataRange().getValues();
+  var pdata = sheetValues_(proc, ph);
+  var cdata = sheetValues_(cli, ch);
   var byName = {};
   for (var c = HEADER_ROW; c < cdata.length; c++) {
     var nm = norm(cdata[c][findCol_(cmap,["Nome"])] || "");
@@ -2207,7 +2219,7 @@ function criarUsuario_(login, nome, senha, perfil, escritorio) {
 
   if (cL < 0 || cS < 0) return { ok: false, error: "Usuarios precisa de login e senha" };
 
-  var data = sh.getDataRange().getValues();
+  var data = sheetValues_(sh, headers);
 
   for (var i = HEADER_ROW; i < data.length; i++) {
 
@@ -2271,7 +2283,7 @@ function doAuth_(body) {
 
 
 
-  var data = sh.getDataRange().getValues();
+  var data = sheetValues_(sh, headers);
 
   var found = null;
 
@@ -2437,7 +2449,7 @@ function listUsers_() {
 
   var cA = findCol_(map, ["ativo"]);
 
-  var data = sh.getDataRange().getValues();
+  var data = sheetValues_(sh, headers);
 
   var users = [];
 
@@ -2502,7 +2514,7 @@ function setUsuarioServer_(body, callerLogin, callerAccess) {
 
   var cA = findCol_(map, ["ativo"]);
 
-  var data = sh.getDataRange().getValues();
+  var data = sheetValues_(sh, headers);
 
   var row = -1;
 
