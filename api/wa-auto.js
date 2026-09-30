@@ -148,6 +148,20 @@ module.exports=async(req,res)=>{
     else return res.status(400).json({ok:false,error:"Ação WA.Auto desconhecida."});
     return res.status(200).json({ok:true,data});
   }catch(e){
-    return res.status(Number(e?.status)||400).json({ok:false,configured:true,error:e?.message||String(e)});
+    const upstreamStatus=Number(e?.status)||0;
+    // Consultas passivas não devem gerar 503 no console quando o host do WA.Auto
+    // está suspenso/indisponível. O estado real continua exposto no payload.
+    if(action==="status"||action==="state"){
+      return res.status(200).json({
+        ok:true,configured:true,available:false,degraded:true,
+        upstreamStatus:upstreamStatus||null,
+        error:e?.message||String(e),
+        connection:{status:"unavailable"},
+        campaigns:[],events:[],monitors:[],suppressions:[],
+        sheet:{autoEnabled:false,available:false,error:e?.message||String(e)},
+        legal:{available:false}
+      });
+    }
+    return res.status(upstreamStatus||503).json({ok:false,configured:true,available:false,error:e?.message||String(e),upstreamStatus:upstreamStatus||null});
   }
 };
