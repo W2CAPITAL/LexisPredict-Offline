@@ -10,7 +10,7 @@ const DJEN_GEO_BLOCK_MS=10*60*1000;
 const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
 const THEME_KEY="sheetspredict_theme_v1";
 const THEMES=[
-  {id:"default",name:"SheetsPredict",desc:"Azul jurídico claro",mode:"Claro",accent:"#1677d2",bg:"#f4f6f9",surface:"#ffffff",nav:"#0b1220",meta:"#0b1220"},
+  {id:"default",name:"SheetsPredict",desc:"Azul jurídico claro",mode:"Claro",accent:"#0876e8",bg:"#f5f8fb",surface:"#ffffff",nav:"#08182b",meta:"#08182b"},
   {id:"clean",name:"Clean",desc:"Branco, cinza e azul discreto",mode:"Claro",accent:"#2563eb",bg:"#f8fafc",surface:"#ffffff",nav:"#111827",meta:"#111827"},
   {id:"dark",name:"Dark",desc:"Escuro neutro para uso prolongado",mode:"Escuro",accent:"#3b82f6",bg:"#0d1117",surface:"#161b22",nav:"#090d13",meta:"#090d13"},
   {id:"midnight",name:"Midnight",desc:"Azul-marinho profundo",mode:"Escuro",accent:"#38bdf8",bg:"#07111f",surface:"#0d1b2a",nav:"#050b14",meta:"#050b14"},
@@ -30,7 +30,7 @@ function applyTheme(id,{persist=true}={}){
   if(persist)try{localStorage.setItem(THEME_KEY,theme.id)}catch(_){}
   return theme;
 }
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -589,7 +589,16 @@ function renderWAAuto(){
     showBanner
   });
 }
-async function updateSyncUi(){const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session;$("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";$("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");$("#syncText").textContent=(state.lastSync?"Sync "+state.lastSync:"Aguardando autenticação")+((count+crmCount)?" • "+(count+crmCount)+" pendente(s)":"")}
+async function updateSyncUi(){
+  const count=await outboxCount(),crmCount=(await idbAll("crmOutbox").catch(()=>[])).length,online=navigator.onLine,authenticated=!!state.session,pending=count+crmCount;
+  $("#modeChip").textContent=authenticated?(online?"AUTENTICADO":"SEM CONEXÃO"):"BLOQUEADO";
+  $("#syncDot").className="dot "+(authenticated&&online?"ok":"bad");
+  const text=(state.lastSync?state.lastSync:"Aguardando autenticação")+(pending?" • "+pending+" pendente(s)":"");
+  $("#syncText").textContent=text;
+  const label=$("#syncLabel");if(label)label.textContent=authenticated&&online?(pending?"Pendente":"Sincronizado"):(online?"Autenticação":"Offline");
+  const notice=$("#topNotifCount"),n=tasks().filter(x=>x.w>=800||statusRet(x.r)==="VENCIDO").length;
+  if(notice){notice.textContent=String(Math.min(n,99));notice.classList.toggle("hidden",!n)}
+}
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function isRecentDate(v,days=7){
   const d=parseDate(v);if(!d)return false;
@@ -1774,6 +1783,12 @@ function setupEvents(){
   document.addEventListener("keydown",e=>{if(e.key==="Escape")setMobileNav(false)});
   window.addEventListener("resize",()=>{if(window.innerWidth>700)setMobileNav(false)});
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
+  const syncIndicator=$("#syncIndicatorBtn");if(syncIndicator)syncIndicator.onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
+  const globalSearch=$("#globalSearch");if(globalSearch){
+    globalSearch.onkeydown=e=>{if(e.key!=="Enter")return;state.query=e.currentTarget.value.trim();resetPage("processos");setView("processos")};
+  }
+  const notifications=$("#topNotifications");if(notifications)notifications.onclick=()=>setView("tarefas");
+  const topUser=$("#topUser");if(topUser)topUser.onclick=()=>setView("settings");
   $("#newProcessBtn").onclick=()=>openProcess("");
   $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
   $("#closeAttendanceBtn").onclick=()=>$("#attendanceDialog").close();
@@ -1822,7 +1837,13 @@ function setupEvents(){
   });
   window.addEventListener("popstate",()=>{setMobileNav(false);setView(pathView(),false)});
 }
-function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
+function applyUser(){
+  const u=state.session?.user||{},name=u.nome||u.usuario||"Usuário",role=u.perfil||"autenticado";
+  $("#userName").textContent=name;$("#userRole").textContent=role;
+  const topName=$("#topUserName"),topRole=$("#topUserRole"),avatar=$("#topUserInitials");
+  if(topName)topName.textContent=name;if(topRole)topRole.textContent=role;
+  if(avatar){const parts=String(name).trim().split(/\s+/).filter(Boolean);avatar.textContent=((parts[0]?.[0]||"S")+(parts.length>1?(parts.at(-1)?.[0]||""):"")).toUpperCase()}
+}
 
 async function boot(){
   applyTheme(savedTheme(),{persist:false});
