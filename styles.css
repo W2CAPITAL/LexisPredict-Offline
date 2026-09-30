@@ -111,8 +111,16 @@ body.sidebar-collapsed .link-btn:after{content:"↪";font-size:15px}
 .crm-table .table{min-width:1680px}
 .dashboard-table{max-height:52vh}
 .dashboard-table .table{min-width:980px}
-.process-actions{min-width:470px;white-space:nowrap}
-.process-actions .icon-action{margin:2px 1px}
+.process-actions{min-width:320px;width:320px;white-space:normal}
+.process-actions>.actions{display:flex;flex-wrap:wrap;gap:5px;white-space:normal}
+.process-actions .icon-action{margin:0;white-space:nowrap}
+.process-actions-head,.process-actions{position:sticky!important;right:0;z-index:5;background:var(--surface,#fff)!important;box-shadow:-12px 0 16px -16px rgba(15,23,42,.55)}
+.process-actions-head{z-index:7!important;background:var(--surface2,#f8fafc)!important}
+.process-table{min-width:1680px!important}
+.process-table-wrap{overflow-x:auto!important;overscroll-behavior-x:contain;scrollbar-gutter:stable}
+.process-x-scroll{display:none;width:100%;height:20px;overflow-x:scroll;overflow-y:hidden;background:var(--surface2,#f8fafc);border:1px solid var(--line);border-bottom:0;position:sticky;top:0;z-index:9;scrollbar-gutter:stable}
+.process-x-scroll.active{display:block}
+.process-x-scroll>div{height:1px;min-width:100%}
 .table th{top:0}
 .lexis-page-shell{min-width:0}
 .lexis-page-header{background:#fff;border:1px solid var(--line);border-radius:15px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:12px;box-shadow:0 1px 2px rgba(16,24,40,.03)}
@@ -1121,6 +1129,8 @@ body.sidebar-collapsed .global-x-scroll{left:76px}
     overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch
   }
   .global-x-scroll{display:none!important}
+  .process-table-wrap{scrollbar-width:auto!important}
+  .process-table-wrap::-webkit-scrollbar{display:block!important;height:12px!important}
 
   .lexis-page-header,.command-strip,.report-head,.scanner-hero,.crm360-head{
     padding:13px!important;border-radius:12px!important;gap:11px!important
@@ -1158,7 +1168,9 @@ body.sidebar-collapsed .global-x-scroll{left:76px}
     position:sticky;left:0;z-index:3;background:var(--surface)
   }
   .table th:first-child{background:var(--surface2);z-index:4}
-  .process-actions{min-width:300px!important}
+  .process-table{min-width:1180px!important}
+  .process-actions{min-width:260px!important;width:260px!important}
+  .process-x-scroll{display:block!important;position:sticky;top:0;height:20px}
 
   .dialog{width:100%!important;max-width:none!important;margin:0!important;padding:8px!important}
   .dialog-card,.dialog-card.wide{
