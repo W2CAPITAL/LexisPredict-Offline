@@ -1731,7 +1731,7 @@ function renderAuditDialog(){
   $("#auditRefreshBtn").onclick=()=>refreshAudit(state.auditSuggest);
   const aiCopy=$("[data-copy-ai-suggestion]");if(aiCopy)aiCopy.onclick=async()=>{const text=state.auditAiSuggestion?.texto||"";if(!text)return;try{await navigator.clipboard.writeText(text);showBanner("Resposta recomendada copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}};
   const aiRetry=$("[data-retry-ai-suggestion]");if(aiRetry)aiRetry.onclick=()=>{state.auditAiSuggestion=null;void loadAuditAiSuggestion(true)};
-  $("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
+  $$("[data-copy-suggestion]").forEach(b=>b.onclick=async()=>{
     const suggestion=suggestions[Number(b.dataset.copySuggestion)];if(!suggestion)return;
     try{await navigator.clipboard.writeText(suggestion.texto);showBanner("Resposta copiada.","good")}catch(_){showBanner("Não foi possível copiar automaticamente.","bad")}
   });
