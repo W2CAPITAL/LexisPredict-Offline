@@ -1,5 +1,8 @@
 const assert=require("node:assert/strict");
+const fs=require("node:fs");
+const path=require("node:path");
 const cfg=require("../vercel.json");
+const app=fs.readFileSync(path.join(__dirname,"..","app.js"),"utf8");
 const rewrites=Array.isArray(cfg.rewrites)?cfg.rewrites:[];
 assert.equal(rewrites[0]?.source,"/api/(.*)","API passthrough deve vir antes do fallback SPA");
 assert.equal(rewrites[0]?.destination,"/api/$1","API passthrough deve preservar Vercel Functions");
