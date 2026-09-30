@@ -511,6 +511,15 @@ function pathView(){
   return Object.entries(viewPaths).find(([,x])=>x===p)?.[0]||"dashboard";
 }
 function viewUrl(v){const p=viewPaths[v]||"/";return p==="/"?"/#/":"/#"+p}
+function setMobileNav(open){
+  const active=!!open&&window.matchMedia("(max-width:700px)").matches;
+  document.body.classList.toggle("mobile-nav-open",active);
+  const btn=$("#mobileMenuBtn");
+  if(btn){
+    btn.setAttribute("aria-expanded",active?"true":"false");
+    btn.setAttribute("aria-label",active?"Fechar navegação":"Abrir navegação");
+  }
+}
 function setView(v,push=true){
   state.view=v;
   document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
@@ -1707,7 +1716,12 @@ function setupEvents(){
       scheduleGlobalXScroll();
     };
   }
-  $$("#nav .nav-item").forEach(b=>b.onclick=()=>setView(b.dataset.view));
+  const mobileMenu=$("#mobileMenuBtn"),mobileBackdrop=$("#mobileNavBackdrop");
+  if(mobileMenu)mobileMenu.onclick=()=>setMobileNav(!document.body.classList.contains("mobile-nav-open"));
+  if(mobileBackdrop)mobileBackdrop.onclick=()=>setMobileNav(false);
+  $("#nav .nav-item").forEach(b=>b.onclick=()=>{setMobileNav(false);setView(b.dataset.view)});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape")setMobileNav(false)});
+  window.addEventListener("resize",()=>{if(window.innerWidth>700)setMobileNav(false)});
   $("#syncBtn").onclick=async()=>{try{await syncFromCloud()}catch(e){showBanner(e.message,"bad")}};
   $("#newProcessBtn").onclick=()=>openProcess("");
   $("#closeAuditBtn").onclick=()=>$("#auditDialog").close();
@@ -1755,7 +1769,7 @@ function setupEvents(){
     const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
     if(!cacheFresh()||pending||crmPending)try{await syncFromCloud({quiet:true})}catch(_){}
   });
-  window.addEventListener("popstate",()=>setView(pathView(),false));
+  window.addEventListener("popstate",()=>{setMobileNav(false);setView(pathView(),false)});
 }
 function applyUser(){const u=state.session?.user||{};$("#userName").textContent=u.nome||u.usuario||"Usuário";$("#userRole").textContent=u.perfil||"autenticado"}
 
