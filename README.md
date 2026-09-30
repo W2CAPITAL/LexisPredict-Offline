@@ -368,6 +368,16 @@ A integração atual cobre:
 
 A presença de uma capability no catálogo **não significa que um serviço externo esteja configurado**. O runtime autenticado informa o catálogo; credenciais continuam exclusivamente no servidor.
 
+### PredictLM Learning Pack
+
+O SheetsPredict incorpora o aprendizado consolidado do PredictLM em duas camadas:
+
+- snapshot local com **146 lições técnicas versionadas + 3 lições operacionais promovidas**;
+- sincronização autenticada com o PredictLM para receber uma versão mais nova do pacote quando o runtime estiver disponível.
+
+As lições são recuperadas por relevância e entram tanto no Chat AI server-side quanto nos runtimes locais/WebLLM. Feedback bruto, credenciais e dados pessoais não fazem parte do pacote portátil.
+
+
 O fallback auditável é derivado de:
 
 ```text
