@@ -21,10 +21,12 @@ const TRANSIENT_STATUSES=new Set([408,425,429,500,502,503,504]);
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fetchBridge(url,body,action){
   const safeRead=READ_ACTIONS.has(action);
-  const attempts=safeRead?3:1;
+  // Não bloqueia a UI por quase um minuto em cold-start/update do Apps Script.
+  // Uma tentativa curta é suficiente; o cliente mantém cache e agenda nova tentativa.
+  const attempts=1;
   let lastError=null,lastStatus=0,lastText="";
   for(let attempt=0;attempt<attempts;attempt++){
-    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),18000);
+    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),10000);
     try{
       const up=await fetch(url,{
         method:"POST",
@@ -86,7 +88,9 @@ module.exports=async(req,res)=>{
     const up=bridged.up,txt=bridged.txt,data=bridged.data;
     if(bridged.parseError){
       if(READ_ACTIONS.has(action))return transientRead(res,action,"Google Apps Script está trocando de versão ou respondeu temporariamente fora do formato esperado.",up.status);
-      return res.status(503).json({ok:false,transient:true,error:"Apps Script temporariamente indisponível durante a gravação. A alteração deve permanecer na fila local.",detail:String(txt||"").slice(0,300)});
+      res.setHeader("Cache-Control","no-store");
+      res.setHeader("X-Sheets-Degraded","1");
+      return res.status(202).json({ok:false,transient:true,degraded:true,error:"Apps Script temporariamente indisponível durante a gravação. A alteração permanece na fila local.",detail:String(txt||"").slice(0,300),retryAfterMs:5000});
     }
     if(READ_ACTIONS.has(action)&&TRANSIENT_STATUSES.has(Number(up.status))){
       return transientRead(res,action,data?.error||("Google Apps Script respondeu HTTP "+up.status+" durante a atualização."),up.status);
@@ -154,6 +158,8 @@ module.exports=async(req,res)=>{
     const action=String(body?.payload?.action||"").trim().toLowerCase();
     const msg=e?.name==="AbortError"?"Tempo esgotado ao acessar o Google Apps Script.":(e?.message||String(e));
     if(READ_ACTIONS.has(action))return transientRead(res,action,msg,503);
-    return res.status(503).json({ok:false,transient:true,error:msg});
+    res.setHeader("Cache-Control","no-store");
+    res.setHeader("X-Sheets-Degraded","1");
+    return res.status(202).json({ok:false,transient:true,degraded:true,error:msg,retryAfterMs:5000});
   }
 };
