@@ -1,3 +1,5 @@
+const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
+
 const MAX_BODY=900_000;
 function privateHost(host){
   const h=String(host||"").toLowerCase();
@@ -67,6 +69,8 @@ function rows(input){
 module.exports=async(req,res)=>{
   res.setHeader("Cache-Control","no-store");
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"POST only"});
+  if(!requireSameOrigin(req,res))return;
+  const auth=await requireSession(req,res);if(!auth)return;
   const length=Number(req.headers["content-length"]||0);
   if(length>MAX_BODY)return res.status(413).json({ok:false,error:"Payload grande demais."});
   let body={};try{body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{})}catch{return res.status(400).json({ok:false,error:"JSON inválido."})}
