@@ -51,6 +51,21 @@ function transientRead(res,action,message,status){
     error:message||"A planilha está temporariamente indisponível. O cache local foi preservado."
   });
 }
+async function probeBridgeVersion(url,token){
+  try{
+    const probe=await fetchBridge(url,{action:"ping",token},"ping");
+    const data=probe?.data||null;
+    return {
+      ok:!!(data&&data.ok),
+      version:String(data?.v||"").trim(),
+      pong:!!data?.pong,
+      httpStatus:Number(probe?.up?.status)||0,
+      error:String(data?.error||"").trim()
+    };
+  }catch(e){
+    return {ok:false,version:"",pong:false,httpStatus:0,error:e?.message||String(e)};
+  }
+}
 module.exports=async(req,res)=>{
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"Método não permitido"});
   if(!requireSameOrigin(req,res))return;
@@ -90,14 +105,29 @@ module.exports=async(req,res)=>{
     let bridged=await fetchBridge(url,bridgePayload,action);
     let up=bridged.up,txt=bridged.txt,data=bridged.data;
     if(action==="list"&&data&&data.ok===false&&/acao desconhecida:\s*list_compact/i.test(String(data.error||""))){
+      const probe=await probeBridgeVersion(url,fixedToken);
       res.setHeader("Cache-Control","no-store");
-      return res.status(200).json({
-        ok:false,
-        upgradeRequired:true,
-        code:"APPS_SCRIPT_OUTDATED",
-        requiredVersion:"8.1",
-        error:"Google Apps Script desatualizado. Publique o installer 8.1 em LEXIS-SYNC-AppsScript.gs antes de sincronizar a carteira."
-      });
+      if(probe.ok&&/^8\.1(?:\b|$)/.test(probe.version)){
+        return res.status(200).json({
+          ok:false,
+          bridgeMismatch:true,
+          code:"APPS_SCRIPT_ROUTE_MISMATCH",
+          detectedVersion:probe.version,
+          requiredVersion:"8.1",
+          error:"O endpoint /exec responde como installer 8.1, mas não expõe list_compact. Isso indica implantação/handler divergente (por exemplo, outro doPost ativo). Não é necessário colar o installer novamente; verifique qual implantação e qual doPost estão atendendo a URL."
+        });
+      }
+      if(probe.ok){
+        return res.status(200).json({
+          ok:false,
+          deploymentOutdated:true,
+          code:"APPS_SCRIPT_DEPLOYMENT_OLD",
+          detectedVersion:probe.version||"sem versão",
+          requiredVersion:"8.1",
+          error:"O código-fonte pode estar atualizado, mas a URL /exec publicada ainda responde como versão "+(probe.version||"anterior")+". Publique uma NOVA VERSÃO na implantação existente; não precisa colar o installer novamente."
+        });
+      }
+      return transientRead(res,action,"Não foi possível confirmar a versão publicada do Google Apps Script. O cache local foi preservado.",probe.httpStatus||503);
     }
     if(bridged.parseError){
       if(READ_ACTIONS.has(action))return transientRead(res,action,"Google Apps Script está trocando de versão ou respondeu temporariamente fora do formato esperado.",up.status);
