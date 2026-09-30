@@ -33,7 +33,7 @@ function applyTheme(id,{persist=true}={}){
   if(persist)try{localStorage.setItem(THEME_KEY,theme.id)}catch(_){}
   return theme;
 }
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,autoEnriching:false,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -336,6 +336,8 @@ async function apiSheets(payload){
 async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
 async function syncFromCloud(opts={}){
   if(state.syncing)return;
+  const previousKeys=new Set((state.companyRows||[]).map(r=>digits(pick(r,"Protocolo"))).filter(x=>x.length===20));
+  let enrichCandidates=[];
   state.syncing=true;
   if(!opts.quiet)showBanner("Sincronizando carteira com o Google Sheets…","good");
   try{
@@ -346,16 +348,20 @@ async function syncFromCloud(opts={}){
     let rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
     const pending=await idbAll("outbox");
     rows=mergePending(rows,pending);
+    enrichCandidates=autoEnrichCandidates(rows,previousKeys);
     state.companyRows=rows;refreshScopes();await saveRows(rows);
     state.lastSync=now();state.lastSyncAt=Date.now();
     await idbPut("meta",{key:"lastSync",value:state.lastSync});
     await idbPut("meta",{key:"lastSyncAt",value:state.lastSyncAt});
     if(!opts.quiet){
-      showBanner("Sincronização concluída: "+rows.length+" processos da empresa em cache"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+".","good");
+      showBanner("Sincronização concluída: "+rows.length+" processos da empresa em cache"+(pending.length?" • "+pending.length+" edição(ões) pendente(s)":"")+(enrichCandidates.length?" • "+enrichCandidates.length+" novo(s) aguardando DataJud/DJEN":"")+".","good");
     }
     render();
     void syncCRM({quiet:true}).then(()=>{if(window.WAAutoModule?.backgroundSync)void window.WAAutoModule.backgroundSync(state.companyRows,crmClients());}).catch(()=>{});
-  } finally { state.syncing=false; }
+  } finally {
+    state.syncing=false;
+  }
+  if(enrichCandidates.length)void autoEnrichNewProcesses(enrichCandidates);
 }
 function startAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
@@ -1549,6 +1555,58 @@ async function advancedJudicialSearch(){
       items.slice(0,50).map(it=>'<tr><td>'+esc(it.numeroProcesso||it.numero_processo||it.data_disponibilizacao||"—")+'</td><td>'+esc(it.tribunal||it.siglaTribunal||"—")+'</td><td>'+esc(it.classe||it.tipoComunicacao||it.tipoDocumento||"—")+'</td><td>'+esc(String(it.texto||[...(it.poloAtivo||[]),...(it.poloPassivo||[])].join(" × ")||it.orgaoJulgador||"").slice(0,220))+'</td></tr>').join("")+
       '</tbody></table></div>';
   }catch(e){out.innerHTML='<div class="banner bad">'+esc(e.message||String(e))+'</div>'}
+}
+function autoEnrichCandidates(rows,previousKeys){
+  const hasBaseline=previousKeys&&previousKeys.size>0;
+  return (rows||[]).filter(row=>{
+    const cnj=digits(pick(row,"Protocolo"));if(cnj.length!==20)return false;
+    const isNew=hasBaseline&&!previousKeys.has(cnj);
+    const auto=norm(pick(row,"Automação"));
+    const neverSynced=!String(pick(row,"Última Sincronização")||"").trim();
+    const explicitlyPending=auto==="pendente"||auto==="novo"||auto==="aguardando";
+    return isNew||(!hasBaseline&&neverSynced&&explicitlyPending);
+  }).sort((a,b)=>{
+    const aa=norm(pick(a,"Automação"))==="pendente"?1:0,bb=norm(pick(b,"Automação"))==="pendente"?1:0;
+    return bb-aa;
+  }).slice(0,6);
+}
+function nextAutoSyncIso(minutes=15){return new Date(Date.now()+minutes*60000).toISOString()}
+async function markAutoEnrichFailure(row,message){
+  const patch={
+    "Protocolo":pick(row,"Protocolo"),
+    "Automação":"PENDENTE",
+    "Erro / Observação":String(message||"Consulta automática não concluída.").slice(0,900),
+    "Próxima Sincronização":nextAutoSyncIso(15)
+  };
+  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);
+  try{await queueWrite(patch);if(navigator.onLine)await flushOutbox()}catch(_){}
+}
+async function autoEnrichNewProcesses(rows){
+  if(state.autoEnriching||state.updateLock||!state.session||!navigator.onLine)return;
+  const queue=(rows||[]).filter(r=>digits(pick(r,"Protocolo")).length===20).slice(0,6);
+  if(!queue.length)return;
+  state.autoEnriching=true;
+  try{
+    for(const row of queue){
+      if(state.updateLock||!navigator.onLine)break;
+      const cnj=pick(row,"Protocolo");
+      const preparing={"Protocolo":cnj,"Automação":"CONSULTANDO","Próxima Sincronização":nextAutoSyncIso(5)};
+      Object.assign(row,preparing);updateLocalRow(row);await saveRows(state.companyRows);
+      try{await queueWrite(preparing);await flushOutbox()}catch(_){}
+      const result=await scanOne(cnj,true);
+      if(!result||result.sheetError||(!result.patch&&result.ok===false)){
+        await markAutoEnrichFailure(row,result?.sheetError||result?.error||"DataJud/DJEN não concluído.");
+      }else{
+        const done={"Protocolo":cnj,"Próxima Sincronização":nextAutoSyncIso(result.partial?30:60)};
+        if(!pick(row,"Automação"))done["Automação"]=result.partial?"PARCIAL":"OK";
+        Object.assign(row,done);updateLocalRow(row);await saveRows(state.companyRows);
+        try{await queueWrite(done);await flushOutbox()}catch(_){}
+      }
+      await sleep(result?.djenPaused?1200:1800);
+    }
+  }finally{
+    state.autoEnriching=false;refreshScopes();render();
+  }
 }
 async function scanOne(cnj,quiet=false){
   const d=digits(cnj);if(d.length!==20){if(!quiet)showBanner("CNJ inválido. Use 20 dígitos.","bad");return null}
