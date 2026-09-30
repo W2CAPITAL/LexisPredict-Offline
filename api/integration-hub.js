@@ -1,3 +1,4 @@
+const dns=require("node:dns").promises;
 const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
 
 const REPOSITORIES=[
@@ -36,6 +37,33 @@ function publicUrl(raw){
   let u;try{u=new URL(String(raw||"").trim())}catch{return null}
   if(!["http:","https:"].includes(u.protocol)||privateHost(u.hostname))return null;
   u.hash="";return u;
+}
+
+async function resolvedPublicUrl(raw){
+  const u=publicUrl(raw);if(!u)return null;
+  try{
+    const addresses=await dns.lookup(u.hostname,{all:true,verbatim:true});
+    if(!addresses.length||addresses.some(item=>privateHost(item.address)))return null;
+  }catch{return null}
+  return u;
+}
+async function fetchPublic(raw,opts={},ms=10000,maxRedirects=4){
+  let u=await resolvedPublicUrl(raw);if(!u)throw new Error("URL pública inválida.");
+  for(let i=0;i<=maxRedirects;i++){
+    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),ms);
+    let r;
+    try{r=await fetch(u.toString(),{...opts,signal:ctrl.signal,redirect:"manual"})}
+    finally{clearTimeout(timer)}
+    if(r.status>=300&&r.status<400){
+      const location=r.headers.get("location");
+      if(!location||i===maxRedirects)throw new Error("Redirecionamento recusado.");
+      const next=await resolvedPublicUrl(new URL(location,u).toString());
+      if(!next)throw new Error("Destino de redirecionamento inválido.");
+      u=next;continue;
+    }
+    return {response:r,url:u};
+  }
+  throw new Error("Redirecionamento recusado.");
 }
 function urlAt(base,path){
   const u=new URL(base.toString());
@@ -93,18 +121,20 @@ function personName(text){
   return m?.[1]||"";
 }
 async function scanPublicPage(raw){
-  const firstUrl=publicUrl(raw);if(!firstUrl)throw new Error("URL pública inválida.");
+  const firstUrl=await resolvedPublicUrl(raw);if(!firstUrl)throw new Error("URL pública inválida.");
   const headers={"user-agent":"Mozilla/5.0 (compatible; SheetsPredictPublicScanner/1.0)","accept":"text/html,application/xhtml+xml"};
-  const first=await fetchWithTimeout(firstUrl.toString(),{headers},9000);
-  if(!first.ok)return {ok:false,blocked:true,url:firstUrl.toString(),status:first.status,error:"O site recusou a consulta pública (HTTP "+first.status+")."};
+  const firstResult=await fetchPublic(firstUrl.toString(),{headers},9000);
+  const first=firstResult.response;
+  if(!first.ok)return {ok:false,blocked:true,url:firstResult.url.toString(),status:first.status,error:"O site recusou a consulta pública (HTTP "+first.status+")."};
   const firstHtml=(await first.text()).slice(0,1200000);
-  const finalUrl=publicUrl(first.url)||firstUrl;
+  const finalUrl=firstResult.url;
   const pages=[finalUrl.toString(),...contactLinks(firstHtml,finalUrl.toString())];
   let visible="",scanned=0;
   for(const page of pages){
     const safe=publicUrl(page);if(!safe||safe.origin!==finalUrl.origin)continue;
     try{
-      const r=page===pages[0]?null:await fetchWithTimeout(safe.toString(),{headers},7000);
+      const fetched=page===pages[0]?null:await fetchPublic(safe.toString(),{headers},7000);
+      const r=fetched?.response;
       const html=page===pages[0]?firstHtml:(r&&r.ok?(await r.text()).slice(0,800000):"");
       if(html){visible+=" "+cleanHtml(html);scanned++}
     }catch{}
