@@ -652,9 +652,10 @@ function hubSourceStatus(id){
 }
 function hubSourceCard(src){
   const st=hubSourceStatus(src.id),ok=!!st?.ok,configured=st?st.configured!==false:false;
-  const label=!st?"carregando":ok?"ativo":configured?"indisponível":"não configurado";
+  const label=!st?"verificando":ok?"ativo":configured?"indisponível":src.id==="predictlm"?"requer API":"opcional";
   const cls=ok?"good":configured?"warn":"gray";
-  return '<article class="hub-source-card"><div class="hub-source-head"><strong>'+esc(src.name)+'</strong>'+badge(label,cls)+'</div><p>'+esc(src.feature||src.role||"")+'</p><small>'+esc(src.repo||"")+'</small></article>';
+  const detail=st?.status||(!configured?(src.id==="predictlm"?"credencial privada necessária":"integração não habilitada"):"estado do serviço");
+  return '<article class="hub-source-card"><div class="hub-source-head"><strong>'+esc(src.name)+'</strong>'+badge(label,cls)+'</div><p>'+esc(src.feature||src.role||"")+'</p><small>'+esc(detail)+'</small></article>';
 }
 function hubTabs(){
   const tabs=[["overview","Visão geral"],["ai","IA"],["whatsapp","WhatsApp"],["leads","Leads"],["revisional","Revisional"],["sheets","Planilha"],["integrations","Integrações"]];
@@ -678,7 +679,7 @@ function hubOverviewHtml(){
   '</div>'+
   '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">FUSÃO</span><h3>8 motores, um SheetsPredict</h3></div></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div></section>'+
   '<section class="card"><div class="card-head"><div><span class="eyebrow">ATALHOS</span><h3>Operação integrada</h3></div></div><div class="hub-actions">'+
-    '<button class="hub-action" data-hub-open="ai"><strong>IA operacional</strong><span>PredictLM → GREY → fallback local</span></button>'+
+    '<button class="hub-action" data-hub-open="ai"><strong>Chat AI</strong><span>PredictLM / IA própria → fallback local</span></button>'+
     '<button class="hub-action" data-hub-open="whatsapp"><strong>WhatsApp</strong><span>Estado e envio via WA.Auto</span></button>'+
     '<button class="hub-action" data-hub-open="leads"><strong>Leads públicos</strong><span>Scanner LEADCHECKIN + CRM</span></button>'+
     '<button class="hub-action" data-hub-open="revisional"><strong>Revisional</strong><span>Bacen SGS + simulação Leadcheck</span></button>'+
@@ -687,7 +688,7 @@ function hubOverviewHtml(){
 }
 function hubAiHtml(){
   const msgs=state.hub.ai||[];
-  return '<div class="hub-grid ai-layout"><section class="card hub-ai-card"><div class="card-head"><div><span class="eyebrow">PREDICTLM + GREY</span><h3>Assistente operacional</h3></div><span class="cell-sub">A carteira entra como contexto; a IA não altera dados sozinha.</span></div>'+
+  return '<div class="hub-grid ai-layout"><section class="card hub-ai-card"><div class="card-head"><div><span class="eyebrow">PREDICTLM / IA PRIVADA</span><h3>Chat AI</h3></div><span class="cell-sub">A carteira entra como contexto; a IA não altera dados sozinha.</span></div>'+
     '<div class="hub-chat">'+(msgs.length?msgs.map(m=>'<article class="hub-msg '+esc(m.role)+'"><div class="hub-msg-meta">'+esc(m.role==="user"?"Você":(m.engine||"SheetsPredict"))+(m.provider?' · '+esc(m.provider):'')+'</div><div>'+esc(m.content).replace(/\n/g,"<br>")+'</div></article>').join(""):'<div class="empty">Pergunte sobre a carteira, um processo, prioridades, dossiê ou atendimento.</div>')+'</div>'+
     '<div class="hub-compose"><input id="hubAiCnj" placeholder="CNJ para contexto (opcional)" value="'+esc(state.hub.selectedCnj||"")+'"/><textarea id="hubAiPrompt" placeholder="Ex.: analise este processo e diga o próximo passo operacional"></textarea><div class="row end"><label class="hub-check"><input id="hubAiDeep" type="checkbox"/> análise profunda</label><button class="btn" id="hubAiPortfolio">Analisar carteira</button><button class="btn primary" id="hubAiSend">'+(state.hub.aiBusy?"Analisando…":"Enviar")+'</button></div></div></section>'+
     '<aside class="card"><div class="card-head"><div><span class="eyebrow">CONTEXTO</span><h3>O que a IA recebe</h3></div></div><div class="card-body"><p class="hub-note">KPIs da carteira, auditoria da planilha e, quando informado, o processo selecionado. Histórico judicial continua vindo de DataJud/DJEN e não é inventado pela IA.</p></div></aside></div>';
@@ -731,7 +732,7 @@ function hubSheetsHtml(){
 }
 function hubIntegrationsHtml(){
   const h=state.hub.status,sources=window.SheetsHub?.sources||[];
-  return '<section class="card"><div class="card-head"><div><span class="eyebrow">RUNTIME FEDERADO</span><h3>Fontes e motores</h3></div><button class="btn sm" id="hubStatusRefresh">Revalidar</button></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div><div class="card-body"><p class="hub-note">Motores externos são ativados por variáveis de ambiente no deploy. Funcionalidades embutidas (planilha inteligente, Bacen, scanner público e offline) continuam disponíveis sem outro serviço.</p><div class="integration-env"><code>PREDICTLM_URL</code><code>WA_AUTO_URL</code><code>GREY_URL</code><code>LEADCHECKIN_URL</code><code>LEXISPREDICT_URL</code></div></div></section>'+
+  return '<section class="card"><div class="card-head"><div><span class="eyebrow">RUNTIME FEDERADO</span><h3>Fontes e motores</h3></div><button class="btn sm" id="hubStatusRefresh">Revalidar</button></div><div class="hub-source-grid">'+sources.map(hubSourceCard).join("")+'</div><div class="card-body"><p class="hub-note">Integrações externas usam configuração privada no servidor. O navegador recebe apenas estado operacional, nunca credenciais ou endereços privados. Planilha inteligente, Bacen, scanner público e offline continuam disponíveis de forma independente.</p></div></section>'+
   (!h?'<div class="empty">Carregando estado das integrações…</div>':'');
 }
 function renderHub(){
