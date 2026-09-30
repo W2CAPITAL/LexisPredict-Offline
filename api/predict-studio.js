@@ -1,4 +1,5 @@
 const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
+const learning=require("../lib/predict-learning-pack");
 
 const MAX_JSON=700_000;
 const TIMEOUTS={status:10000,chat:45000,work:45000,tutor:45000,legal:65000,build:90000,research:70000,imagine:90000,report:100000};
@@ -62,6 +63,7 @@ async function callAshna(body,surface,cfg=fallbackAiConfig()){
       "Você é o assistente do SheetsPredict, conectado à operação jurídica e administrativa.",
       "Responda em português do Brasil, salvo pedido explícito em outro idioma.",
       "Use o contexto fornecido como dado; nunca invente movimentações DataJud/DJEN, clientes, tarefas ou números.",
+      learning.context(payload.prompt,{surface,limit:6}),
       payload.instructions
     ].join(" ")},
     ...payload.messages,
@@ -173,6 +175,16 @@ module.exports=async(req,res)=>{
   const action=String(body.action||"status").toLowerCase();
 
   const ashna=fallbackAiConfig();
+
+  if(action==="learning_pack"){
+    if(base){
+      try{
+        const remote=await call(base,"/api/learning/export",{method:"GET",timeoutMs:TIMEOUTS.status});
+        if(remote.ok&&remote.data)return res.status(200).json({ok:true,source:"PredictLM",pack:remote.data});
+      }catch{}
+    }
+    return res.status(200).json({ok:true,source:"SheetsPredict snapshot",pack:learning.exportData()});
+  }
 
   if(!base && !ashna){
     return res.status(503).json({
