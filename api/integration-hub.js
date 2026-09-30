@@ -196,16 +196,63 @@ function contextSystem(ctx,prompt=""){
     ctx?("CONTEXTO SHEETSPREDICT:\n"+compact(ctx,16000)):""
   ].filter(Boolean).join("\n\n");
 }
+function looksLegalPrompt(prompt,ctx=""){
+  return /\b(processo|cnj|djen|datajud|tribunal|senten[cç]a|decis[aã]o|peti[cç][aã]o|recurso|prazo|cliente|jur[ií]dic|cumprimento|execu[cç][aã]o|intima[cç][aã]o|audi[eê]ncia|resposta|whatsapp)\b/i.test(String(prompt)+" "+String(ctx).slice(0,2500));
+}
+function answerScore(text,{legal=false,suggestion=false}={}){
+  const t=String(text||"").trim();if(!t)return -100;
+  let score=Math.min(24,Math.floor(t.length/90));
+  if(t.length>=120)score+=5;if(t.length>=300)score+=4;
+  if(/erro|indispon[ií]vel|falha|sem conte[uú]do|nenhum motor/i.test(t))score-=18;
+  if(/\b(fato|infer[eê]ncia|fonte|contexto|movimenta[cç][aã]o|publica[cç][aã]o|prazo)\b/i.test(t))score+=legal?5:1;
+  if(legal&&/\b(djen|datajud|tribunal|processo|cnj|decis[aã]o|peti[cç][aã]o)\b/i.test(t))score+=5;
+  if(suggestion){
+    if(/\bvoc[eê]\b|\bseu processo\b|\bte avis/i.test(t))score+=5;
+    if(/\bo autor\b|\ba parte autora\b|\bapelante\b/i.test(t))score-=8;
+    if(t.length>1600)score-=6;
+    if(t.split(/\n+/).length>=3&&t.split(/\n+/).length<=12)score+=3;
+  }
+  return score;
+}
+function predictText(data){
+  return data?.content||data?.answer||data?.response||data?.text||data?.result?.content||data?.result?.answer||"";
+}
+async function callPredictLm(prompt,context,messages,body={}){
+  const base=configuredUrl("PREDICTLM_URL"),key=predictKey();if(!base||!key)return null;
+  try{
+    const r=await jsonFetch(urlAt(base,"/api/chat"),{method:"POST",headers:{"Content-Type":"application/json",...authHeaders(key,"Authorization")},body:JSON.stringify({
+      prompt:compact(prompt,30000),messages:Array.isArray(messages)?messages.slice(-10):[],language:"pt-BR",deep:!!body.deep,
+      answerAnchor:compact(context,16000),sessionId:compact(body.sessionId,120)
+    })},body.deep?45000:35000);
+    const text=predictText(r.data);if(r.ok&&text)return {ok:true,engine:"PredictLM",provider:"PredictLM",content:String(text)};
+  }catch{}
+  return null;
+}
 async function aiChat(body){
   const prompt=compact(body.prompt,30000).trim();if(!prompt)throw new Error("Pergunta obrigatória.");
-  const context=compact(body.context,16000),messages=Array.isArray(body.messages)?body.messages.slice(-10):[];
-  const predictBase=configuredUrl("PREDICTLM_URL"),predict=predictBase&&predictKey()?predictBase:null;
-  if(predict){
-    try{
-      const r=await jsonFetch(urlAt(predict,"/api/chat"),{method:"POST",headers:{"Content-Type":"application/json",...authHeaders(predictKey(),"Authorization")},body:JSON.stringify({prompt,messages,language:"pt-BR",deep:!!body.deep,answerAnchor:context,sessionId:compact(body.sessionId,120)})},35000);
-      if(r.ok&&r.data?.content)return {ok:true,engine:"PredictLM",provider:"PredictLM",content:String(r.data.content)};
-    }catch{}
+  const context=compact(body.context,16000),messages=Array.isArray(body.messages)?body.messages.slice(-10):[],legal=looksLegalPrompt(prompt,context);
+
+  const primary=await callPredictLm(prompt,context,messages,body);
+  if(primary){
+    // PredictLM continua principal. Lexis só disputa em consulta jurídica profunda ou quando a saída ficou fraca.
+    const primaryScore=answerScore(primary.content,{legal});
+    if(legal&&(body.deep||primaryScore<10)){
+      const expert=await lexisChatFallback(prompt,context,messages);
+      if(expert){
+        const expertScore=answerScore(expert.content,{legal:true});
+        if(expertScore>primaryScore+2)return {...expert,engine:"LexisPredict Neural",provider:"LexisPredict",hybrid:true,primary:"PredictLM"};
+        return {...primary,engine:"PredictLM + Lexis guard",hybrid:true,expert:"LexisPredict"};
+      }
+    }
+    return primary;
   }
+
+  // Sem PredictLM: em matéria jurídica o núcleo Lexis entra antes de gateways genéricos.
+  if(legal){
+    const expert=await lexisChatFallback(prompt,context,messages);
+    if(expert)return {...expert,engine:"LexisPredict Neural",hybrid:true};
+  }
+
   const own=customAi();
   if(own){
     try{
@@ -216,9 +263,7 @@ async function aiChat(body){
         body:JSON.stringify({
           model:own.model,
           messages:[{role:"system",content:contextSystem(context,prompt)},...history,{role:"user",content:prompt}],
-          temperature:body.deep?.22:.35,
-          max_tokens:body.deep?2200:1400,
-          stream:false
+          temperature:body.deep?.22:.35,max_tokens:body.deep?2200:1400,stream:false
         })
       },35000);
       const text=r.data?.choices?.[0]?.message?.content||r.data?.response;
@@ -236,8 +281,7 @@ async function aiChat(body){
   const lexisFallback=await lexisChatFallback(prompt,context,messages);
   if(lexisFallback)return lexisFallback;
   let parsed={};try{parsed=JSON.parse(context||"{}")}catch{}
-  const metrics=parsed.metrics||{};
-  const facts=[];
+  const metrics=parsed.metrics||{},facts=[];
   if(metrics.total!=null)facts.push("Carteira: "+metrics.total+" processos.");
   if(metrics.vencidos!=null)facts.push("Retornos vencidos: "+metrics.vencidos+".");
   if(metrics.atencao!=null)facts.push("Em atenção: "+metrics.atencao+".");
@@ -248,7 +292,7 @@ async function lexisService(body){
   const base=configuredUrl("LEXISPREDICT_URL"),key=lexisKey();
   if(!base||!key)return {ok:false,configured:false,error:"LexisPredict não habilitado neste deploy."};
   const action=String(body.lexisAction||body.mode||"capabilities").toLowerCase();
-  const allowed=new Set(["capabilities","datajud","chat"]);
+  const allowed=new Set(["capabilities","datajud","chat","dispatch"]);
   if(!allowed.has(action))throw new Error("Ação LexisPredict não permitida.");
   const payload={action};
   if(action==="datajud"){
@@ -260,6 +304,18 @@ async function lexisService(body){
     payload.prompt=compact(body.prompt,18000);
     payload.history=Array.isArray(body.messages)?body.messages.slice(-10):[];
     payload.tribunalContext=compact(body.context,12000);
+    payload.preferred=compact(body.preferred||"omni",80);
+  }else if(action==="dispatch"){
+    Object.assign(payload,{
+      clienteNome:compact(body.clienteNome||body.cliente,180),protocolo:compact(body.protocolo||body.cnj,80),
+      ultimoRetorno:compact(body.ultimoRetorno,80),movimentos:Array.isArray(body.movimentos)?body.movimentos.slice(0,24):[],
+      djenTexts:Array.isArray(body.djenTexts)?body.djenTexts.slice(0,12):[],eventoTipo:compact(body.eventoTipo,80),
+      eventoResumo:compact(body.eventoResumo,1000),preferredModel:compact(body.preferredModel||"omni",80),canal:compact(body.canal||"whatsapp",20),
+      temNovoAndamento:!!body.temNovoAndamento,encerradoTribunal:!!body.encerradoTribunal,indicioBuscaApreensao:!!body.indicioBuscaApreensao,
+      emCumprimento:!!body.emCumprimento,datajudUltimoNome:compact(body.datajudUltimoNome,500),cumprimentoPendente:!!body.cumprimentoPendente,
+      procedente:!!body.procedente,oportunidadeElegivel:!!body.oportunidadeElegivel,oportunidadeScore:body.oportunidadeScore,
+      oportunidadeTipoCredito:compact(body.oportunidadeTipoCredito,120),diasAposTransito:body.diasAposTransito,textoPobre:!!body.textoPobre
+    });
   }
   const r=await jsonFetch(urlAt(base,"/api/integration/sheetspredict"),{
     method:"POST",
@@ -278,6 +334,55 @@ async function lexisChatFallback(prompt,context,messages){
   }catch{}
   return null;
 }
+function scanMovementPayload(scan,row){
+  const movs=scan?.datajud?.movimentos||scan?.movimentos||[];
+  const fallback=latest=>latest?[{dataHora:pickSafe(row,"DataJud • Data"),nome:String(latest)}]:[];
+  return Array.isArray(movs)&&movs.length?movs.slice(0,18).map(m=>({dataHora:m?.dataHora||m?.data||"",nome:m?.nome||m?.tipo||"",complemento:m?.complemento||"",descricao:m?.descricao||m?.texto||""})):fallback(pickSafe(row,"DataJud • Último Movimento","Último Andamento","Andamento"));
+}
+function pickSafe(row,...keys){for(const k of keys){if(row&&row[k]!=null&&String(row[k]).trim())return row[k]}return""}
+function scanDjenPayload(scan,row){
+  const items=scan?.djen?.items||scan?.comunicacoes||[];
+  if(Array.isArray(items)&&items.length)return items.slice(0,10).map(x=>String(x?.texto||x?.conteudo||x?.inteiroTeor||x?.tipoComunicacao||"")).filter(Boolean);
+  const saved=pickSafe(row,"DJEN • Última Publicação","Resumo DJEN","DJEN_Resumo");return saved?[String(saved)]:[];
+}
+async function suggestResponse(body){
+  const row=body.row&&typeof body.row==="object"?body.row:{},scan=body.scan&&typeof body.scan==="object"?body.scan:{};
+  const cnj=compact(pickSafe(row,"Protocolo","CNJ")||body.cnj,80),cliente=compact(pickSafe(row,"Cliente","Nome")||body.cliente,180);
+  const movimentos=scanMovementPayload(scan,row),djenTexts=scanDjenPayload(scan,row);
+  let lexis=null;
+  try{
+    const r=await lexisService({
+      lexisAction:"dispatch",clienteNome:cliente||"Cliente",protocolo:cnj,ultimoRetorno:pickSafe(row,"Último Retorno"),
+      movimentos,djenTexts,eventoTipo:pickSafe(row,"Tipo de Evento","Evento_Tipo"),eventoResumo:pickSafe(row,"Resumo do Evento","Diagnóstico Processual"),
+      preferredModel:"omni",canal:"whatsapp",temNovoAndamento:/^(sim|true|1)$/i.test(String(pickSafe(row,"Nova Atualização","Novo Andamento"))),
+      encerradoTribunal:/^(sim|true|1)$/i.test(String(pickSafe(row,"Encerrado no Tribunal","DatajudEncerrado"))),
+      emCumprimento:/^(sim|true|1)$/i.test(String(pickSafe(row,"Cumprimento"))),procedente:/^(sim|true|1)$/i.test(String(pickSafe(row,"Procedente"))),
+      datajudUltimoNome:pickSafe(row,"DataJud • Último Movimento","Último Andamento")
+    });
+    const data=r.result||{},text=data.rascunho||data.resposta||data.content||"";
+    if(text)lexis={content:String(text),provider:"LexisPredict",engine:data.engineUtilizada||data.engine||"Motor de Despacho Lexis"};
+  }catch{}
+
+  let predict=null;
+  if(lexis?.content){
+    const evidence=[
+      "CLIENTE: "+cliente,"CNJ: "+cnj,
+      "MOVIMENTOS CONFIRMADOS:\n"+movimentos.slice(0,8).map(x=>[x.dataHora,x.nome,x.complemento,x.descricao].filter(Boolean).join(" | ")).join("\n"),
+      "DJEN CONFIRMADO:\n"+djenTexts.slice(0,5).join("\n---\n"),
+      "RASCUNHO DO MOTOR LEXIS:\n"+lexis.content
+    ].join("\n\n");
+    predict=await callPredictLm(
+      "Revise o rascunho abaixo para atendimento por WhatsApp. Preserve estritamente os fatos fornecidos. Só altere se melhorar clareza, naturalidade e foco no ato mais recente. Use 2ª pessoa, 4–8 linhas, sem inventar prazo, valor, resultado ou obrigação. Entregue apenas a mensagem final.",
+      evidence,[],{deep:false,sessionId:"sheetspredict-suggest"}
+    );
+  }
+  const candidates=[lexis,predict].filter(Boolean);
+  if(!candidates.length)return {ok:false,configured:false,error:"Motores remotos indisponíveis.",content:""};
+  const ranked=candidates.map(x=>({...x,score:answerScore(x.content,{legal:true,suggestion:true})})).sort((a,b)=>b.score-a.score);
+  const best=ranked[0];
+  return {ok:true,content:best.content,provider:best.provider,engine:best.engine,hybrid:candidates.length>1,candidates:ranked.map(x=>({provider:x.provider,engine:x.engine,score:x.score}))};
+}
+
 
 async function waState(){
   const wa=configuredUrl("WA_AUTO_URL");if(!wa)return {ok:false,configured:false,error:"WA_AUTO_URL não configurada."};
@@ -314,6 +419,7 @@ module.exports=async(req,res)=>{
     let result;
     if(action==="status")result=await status();
     else if(action==="ai_chat")result=await aiChat(body);
+    else if(action==="suggest_response")result=await suggestResponse(body);
     else if(action==="wa_state")result=await waState();
     else if(action==="wa_send")result=await waSend(body);
     else if(action==="lexispredict")result=await lexisService(body);
