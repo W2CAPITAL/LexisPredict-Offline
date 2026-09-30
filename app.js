@@ -9,6 +9,7 @@ const PAGE_DEFAULT=200;
 const DJEN_GEO_BLOCK_MS=10*60*1000;
 const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
 const THEME_KEY="sheetspredict_theme_v1";
+const DASHBOARD_PERIOD_KEY="sheetspredict_dashboard_period_v1";
 const RELEASE_SEEN_KEY="sheetspredict_release_seen_v1";
 const UPDATE_STATE_KEY="sheetspredict_update_state_v1";
 const UPDATE_POLL_MS=60000;
@@ -33,7 +34,7 @@ function applyTheme(id,{persist=true}={}){
   if(persist)try{localStorage.setItem(THEME_KEY,theme.id)}catch(_){}
   return theme;
 }
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,autoEnriching:false,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",dashboardDays:30,session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,autoEnriching:false,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -840,32 +841,86 @@ function renderSettings(){
   });
   $("#resetThemeBtn").onclick=()=>{applyTheme("default");showBanner("Tema padrão restaurado.","good");renderSettings()};
 }
-function dashboardMovementSeries(rows,days=14){
-  const out=[];const today=new Date();today.setHours(12,0,0,0);
-  for(let i=days-1;i>=0;i--){
-    const d=new Date(today);d.setDate(today.getDate()-i);
-    out.push({key:[d.getFullYear(),d.getMonth(),d.getDate()].join("-"),label:String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0"),pub:0,pet:0,baixa:0,outros:0});
-  }
-  const map=new Map(out.map(x=>[x.key,x]));
-  for(const r of rows||[]){
-    const raw=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data","Última Sincronização"),d=parseDate(raw);if(!d)continue;
-    const k=[d.getFullYear(),d.getMonth(),d.getDate()].join("-"),slot=map.get(k);if(!slot)continue;
+const DASHBOARD_PERIODS=[
+  {days:7,label:"Últimos 7 dias"},
+  {days:14,label:"Últimos 14 dias"},
+  {days:30,label:"Últimos 30 dias"},
+  {days:60,label:"Últimos 60 dias"},
+  {days:90,label:"Últimos 90 dias"},
+  {days:180,label:"Últimos 6 meses"},
+  {days:365,label:"Último 1 ano"},
+  {days:730,label:"Últimos 2 anos"},
+  {days:1095,label:"Últimos 3 anos"}
+];
+function dashboardSavedDays(){
+  try{
+    const n=Number(localStorage.getItem(DASHBOARD_PERIOD_KEY)||30);
+    return DASHBOARD_PERIODS.some(x=>x.days===n)?n:30;
+  }catch(_){return 30}
+}
+function dashboardPeriodLabel(days){
+  return (DASHBOARD_PERIODS.find(x=>x.days===Number(days))||DASHBOARD_PERIODS[2]).label;
+}
+function dashboardMovementDate(r){
+  return parseDate(pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data","Última Sincronização"));
+}
+function dashboardPeriodRows(rows,days){
+  return (rows||[]).filter(r=>isRecentDate(pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data","Última Sincronização"),days));
+}
+function dashboardMovementSeries(rows,days=30){
+  const out=[],today=new Date();today.setHours(12,0,0,0);
+  const addType=(slot,r)=>{
+    if(!slot)return;
     const blob=norm([latestMove(r),pick(r,"DJEN • Última Publicação"),pick(r,"Tipo de Evento","Evento_Tipo")].join(" "));
     if(/publica|intimac|djen/.test(blob))slot.pub++;
     else if(/petic|manifest|recurso|contest/.test(blob))slot.pet++;
     else if(/baixa|arquiv|transito/.test(blob))slot.baixa++;
     else slot.outros++;
+  };
+  if(days<=31){
+    for(let i=days-1;i>=0;i--){
+      const d=new Date(today);d.setDate(today.getDate()-i);
+      out.push({key:[d.getFullYear(),d.getMonth(),d.getDate()].join("-"),label:String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0"),pub:0,pet:0,baixa:0,outros:0});
+    }
+    const map=new Map(out.map(x=>[x.key,x]));
+    for(const r of rows||[]){const d=dashboardMovementDate(r);if(!d)continue;addType(map.get([d.getFullYear(),d.getMonth(),d.getDate()].join("-")),r)}
+    return out;
+  }
+  if(days<=180){
+    const bucketCount=Math.ceil(days/7);
+    for(let i=bucketCount-1;i>=0;i--){
+      const end=new Date(today);end.setDate(today.getDate()-i*7);
+      out.push({label:String(end.getDate()).padStart(2,"0")+"/"+String(end.getMonth()+1).padStart(2,"0"),pub:0,pet:0,baixa:0,outros:0});
+    }
+    for(const r of rows||[]){
+      const d=dashboardMovementDate(r);if(!d)continue;
+      const diff=Math.floor((today-d)/86400000);if(diff<0||diff>=days)continue;
+      const idx=bucketCount-1-Math.floor(diff/7);addType(out[idx],r);
+    }
+    return out;
+  }
+  const monthCount=Math.min(36,Math.ceil(days/30.4375));
+  const monthMap=new Map();
+  for(let i=monthCount-1;i>=0;i--){
+    const d=new Date(today.getFullYear(),today.getMonth()-i,1,12);
+    const slot={key:d.getFullYear()+"-"+d.getMonth(),label:String(d.getMonth()+1).padStart(2,"0")+"/"+String(d.getFullYear()).slice(-2),pub:0,pet:0,baixa:0,outros:0};
+    out.push(slot);monthMap.set(slot.key,slot);
+  }
+  for(const r of rows||[]){
+    const d=dashboardMovementDate(r);if(!d)continue;
+    addType(monthMap.get(d.getFullYear()+"-"+d.getMonth()),r);
   }
   return out;
 }
-function dashboardChartHtml(rows){
-  const series=dashboardMovementSeries(rows,14),max=Math.max(1,...series.map(x=>x.pub+x.pet+x.baixa+x.outros));
+function dashboardChartHtml(rows,days=30){
+  const series=dashboardMovementSeries(rows,days),max=Math.max(1,...series.map(x=>x.pub+x.pet+x.baixa+x.outros));
+  const labelStep=Math.max(1,Math.ceil(series.length/12));
   return '<div class="ref-chart-legend"><span><i class="blue"></i>Publicações</span><span><i class="green"></i>Petições</span><span><i class="gray"></i>Baixas</span><span><i class="sky"></i>Outros</span></div>'+
     '<div class="ref-bars">'+series.map((x,i)=>{
       const total=x.pub+x.pet+x.baixa+x.outros,scale=total?Math.max(10,Math.round(total/max*100)):3;
       const sum=Math.max(1,total);
       const h=v=>Math.max(0,Math.round(scale*v/sum));
-      return '<div class="ref-bar-col" title="'+esc(x.label+' · '+total+' movimentação(ões)')+'"><div class="ref-bar-stack"><i class="outros" style="height:'+h(x.outros)+'%"></i><i class="baixa" style="height:'+h(x.baixa)+'%"></i><i class="pet" style="height:'+h(x.pet)+'%"></i><i class="pub" style="height:'+h(x.pub)+'%"></i></div><small>'+(i%3===0?esc(x.label):'')+'</small></div>';
+      return '<div class="ref-bar-col" title="'+esc(x.label+' · '+total+' movimentação(ões)')+'"><div class="ref-bar-stack"><i class="outros" style="height:'+h(x.outros)+'%"></i><i class="baixa" style="height:'+h(x.baixa)+'%"></i><i class="pet" style="height:'+h(x.pet)+'%"></i><i class="pub" style="height:'+h(x.pub)+'%"></i></div><small>'+(i%labelStep===0?esc(x.label):'')+'</small></div>';
     }).join("")+'</div>';
 }
 function dashboardSituationHtml(rows){
@@ -889,27 +944,37 @@ function dashboardRecentRows(rows){
   }).slice(0,6);
 }
 function renderDashboard(){
-  const rows=state.rows,m=metrics(rows),recent30=rows.filter(r=>isRecentDate(pick(r,"DataJud • Data","DJEN • Data","Última Sincronização"),30)).length;
+  if(!DASHBOARD_PERIODS.some(x=>x.days===Number(state.dashboardDays)))state.dashboardDays=dashboardSavedDays();
+  const rows=state.rows,days=Number(state.dashboardDays)||30,periodLabel=dashboardPeriodLabel(days),periodRows=dashboardPeriodRows(rows,days),m=metrics(rows);
+  const movementCount=periodRows.length;
   const próximos=rows.filter(r=>{const d=daysTo(pick(r,"Próximo Retorno"));return d!==null&&d>=0&&d<=30}).length;
-  const vencidos=rows.filter(r=>statusRet(r)==="VENCIDO").length,recent=dashboardRecentRows(rows);
+  const vencidos=rows.filter(r=>statusRet(r)==="VENCIDO").length,recent=dashboardRecentRows(periodRows);
+  const periodOptions=DASHBOARD_PERIODS.map(x=>'<option value="'+x.days+'" '+(x.days===days?'selected':'')+'>'+esc(x.label)+'</option>').join("");
   $("#content").innerHTML=
   '<div class="reference-page dashboard-reference">'+
-    '<div class="reference-page-head"><div><h2>Dashboard</h2><p>Visão geral da sua operação jurídica</p></div><div class="reference-head-actions"><select aria-label="Período"><option>Últimos 30 dias</option></select><button class="btn primary" data-new-record>＋ Novo cadastro</button></div></div>'+
+    '<div class="reference-page-head"><div><h2>Dashboard</h2><p>Visão geral da sua operação jurídica</p></div><div class="reference-head-actions"><select id="dashboardPeriod" aria-label="Período">'+periodOptions+'</select><button class="btn primary" data-new-record>＋ Novo cadastro</button></div></div>'+
     '<div class="reference-kpis">'+
       '<article class="reference-kpi"><div><strong>'+m.total.toLocaleString("pt-BR")+'</strong><span>Processos monitorados</span></div><b class="ref-icon blue">▣</b><small>'+m.active+' ativos</small></article>'+
-      '<article class="reference-kpi"><div><strong>'+recent30.toLocaleString("pt-BR")+'</strong><span>Movimentações (30 dias)</span></div><b class="ref-icon blue">↗</b><small>DataJud + DJEN registrados</small></article>'+
+      '<article class="reference-kpi"><div><strong>'+movementCount.toLocaleString("pt-BR")+'</strong><span>Movimentações</span></div><b class="ref-icon blue">↗</b><small>'+esc(periodLabel)+' · DataJud + DJEN</small></article>'+
       '<article class="reference-kpi"><div><strong>'+próximos.toLocaleString("pt-BR")+'</strong><span>Prazos próximos</span></div><b class="ref-icon orange">▣</b><small>próximos 30 dias</small></article>'+
       '<article class="reference-kpi"><div><strong>'+vencidos.toLocaleString("pt-BR")+'</strong><span>Prazos vencidos</span></div><b class="ref-icon red">!</b><small>exigem revisão</small></article>'+
     '</div>'+
     (vencidos?'<div class="reference-alert"><b>!</b><div><strong>'+vencidos+' prazo(s) vencido(s) precisam de atenção.</strong><span>Revise a fila prioritária e registre o próximo retorno.</span></div><button class="btn sm" data-goto="tarefas">Ver prazos vencidos</button></div>':'')+
-    '<div class="reference-grid-main"><section class="card reference-card"><div class="reference-card-head"><h3>Movimentações de processos</h3><span>Últimos 14 dias</span></div>'+dashboardChartHtml(rows)+'</section>'+
-    '<section class="card reference-card"><div class="reference-card-head"><h3>Carteira por situação</h3></div>'+dashboardSituationHtml(rows)+'</section></div>'+
-    '<div class="reference-grid-bottom"><section class="card reference-card"><div class="reference-card-head"><h3>Processos recentes</h3><button class="link-btn" data-goto="processos">Ver todos →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Processo</th><th>Cliente</th><th>Última movimentação</th><th>Situação</th></tr></thead><tbody>'+
-      recent.map(r=>'<tr><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Cliente")||"—")+'</td><td><div class="cell-main clamp2">'+esc(String(latestMove(r)||"Sem movimentação").slice(0,110))+'</div><div class="cell-sub">'+esc(pick(r,"DataJud • Data","DJEN • Data","Última Sincronização")||"")+'</div></td><td>'+badge(isClosed(r)?"BAIXADO":statusRet(r)==="VENCIDO"?"VENCIDO":"EM ANDAMENTO",isClosed(r)?"blue":statusRet(r)==="VENCIDO"?"bad":"good")+'</td></tr>').join("")+
+    '<div class="reference-grid-main"><section class="card reference-card"><div class="reference-card-head"><h3>Movimentações de processos</h3><span>'+esc(periodLabel)+'</span></div>'+dashboardChartHtml(periodRows,days)+'</section>'+
+    '<section class="card reference-card"><div class="reference-card-head"><h3>Carteira por situação</h3><span>Carteira atual</span></div>'+dashboardSituationHtml(rows)+'</section></div>'+
+    '<div class="reference-grid-bottom"><section class="card reference-card"><div class="reference-card-head"><h3>Processos recentes</h3><span>'+esc(periodLabel)+'</span><button class="link-btn" data-goto="processos">Ver todos →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Processo</th><th>Cliente</th><th>Última movimentação</th><th>Situação</th></tr></thead><tbody>'+
+      (recent.length?recent.map(r=>'<tr><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+esc(pick(r,"Cliente")||"—")+'</td><td><div class="cell-main clamp2">'+esc(String(latestMove(r)||"Sem movimentação").slice(0,110))+'</div><div class="cell-sub">'+esc(pick(r,"DataJud • Data","DJEN • Data","Última Sincronização")||"")+'</div></td><td>'+badge(isClosed(r)?"BAIXADO":statusRet(r)==="VENCIDO"?"VENCIDO":"EM ANDAMENTO",isClosed(r)?"blue":statusRet(r)==="VENCIDO"?"bad":"good")+'</td></tr>').join(""):'<tr><td colspan="4"><div class="empty">Nenhuma movimentação registrada neste período.</div></td></tr>')+
     '</tbody></table></div></section>'+
-    '<section class="card reference-card"><div class="reference-card-head"><h3>Tribunais mais ativos</h3><span>Carteira atual</span></div>'+dashboardTribunalHtml(rows)+'</section></div>'+
+    '<section class="card reference-card"><div class="reference-card-head"><h3>Tribunais mais ativos</h3><span>'+esc(periodLabel)+'</span></div>'+dashboardTribunalHtml(periodRows)+'</section></div>'+
   '</div>';
-  bindGotos();$$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
+  bindGotos();
+  const period=$("#dashboardPeriod");
+  if(period)period.onchange=()=>{
+    state.dashboardDays=Number(period.value)||30;
+    try{localStorage.setItem(DASHBOARD_PERIOD_KEY,String(state.dashboardDays))}catch(_){}
+    renderDashboard();
+  };
+  $("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
 
 async function hubApi(payload){
