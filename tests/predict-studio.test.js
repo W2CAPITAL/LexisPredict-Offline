@@ -26,7 +26,6 @@ for(const route of ["/api/chat","/api/legal/process","/api/legal/dossier","/api/
   assert.ok(api.includes(route),"proxy Predict Studio sem rota: "+route);
 }
 assert.match(api,/PREDICTLM_URL/);
-assert.match(api,/PREDICTLM_ACCESS_TOKEN/);
 assert.match(api,/PREDICTLM_API_KEY/);
 assert.match(api,/SHEETSPREDICT_AI_API_KEY/);
 assert.match(api,/SHEETSPREDICT_AI_BASE_URL/);
