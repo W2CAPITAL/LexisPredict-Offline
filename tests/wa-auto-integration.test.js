@@ -29,6 +29,8 @@ for(const endpoint of [
 ])assert.ok(proxy.includes(endpoint),"proxy WA.Auto sem endpoint: "+endpoint);
 assert.match(proxy,/WA_AUTO_URL/);
 assert.match(proxy,/privateHost/);
+assert.match(proxy,/action==="status"\|\|action==="state"/,"status passivo deve degradar sem 503");
+assert.match(proxy,/available:false/,"proxy deve expor indisponibilidade real do upstream");
 assert.doesNotMatch(proxy,/body\.url|body\.path/,"browser não deve selecionar upstream arbitrário");
 
 for(const page of ["Campanhas","WhatsApp","Clientes","Histórico","Processos","Configurações"])assert.ok(ui.includes(page),"subtela WA.Auto ausente: "+page);
@@ -39,6 +41,7 @@ assert.match(ui,/auto_settings/);
 assert.match(ui,/i\+=200/,"carteira deve sincronizar em lotes de 200");
 assert.match(ui,/optOut/);
 assert.match(ui,/sourceRow/);
+assert.match(ui,/Serviço indisponível/);
 
 assert.match(css,/SheetsPredict 4\.1 — WA\.Auto embedded skin/);
 for(const cls of [".wa-brandbar",".wa-tabs",".wa-stats",".wa-panel",".wa-preview",".wa-legal-grid",".wa-switch"])assert.ok(css.includes(cls),"skin WA.Auto ausente: "+cls);

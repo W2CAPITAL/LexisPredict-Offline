@@ -346,7 +346,19 @@ var PROC_HEADERS = [
 
   "Data_Movimentacao", "Andamento", "Evento_Tipo", "Novo_Andamento", "Busca_Apreensao",
 
-  "Cumprimento", "DJEN_Resumo", "Dias_Sem_Retorno", "Procedente", "Improcedente", "ClienteId"
+  "Cumprimento", "DJEN_Resumo", "Dias_Sem_Retorno", "Procedente", "Improcedente", "ClienteId",
+
+  "Data da Movimentação", "Último Andamento", "Último Retorno", "Próximo Retorno",
+
+  "Tipo de Evento", "Novo Andamento", "Encerrado no Tribunal",
+
+  "DataJud • Último Movimento", "DataJud • Data", "DJEN • Última Publicação", "DJEN • Data",
+
+  "Nova Atualização", "Fonte", "Última Sincronização", "Próxima Sincronização", "Automação",
+
+  "Erro / Observação", "_DataJudKey", "_DJENId", "_DJENDate",
+
+  "_ExecStatus", "_Favorecido", "_CommercialReason", "_CommercialConfidence", "_CommercialEvidence"
 
 ];
 
@@ -557,6 +569,7 @@ function syncOnOpen_(e) {
     .addItem("Garantir abas e cabeçalhos", "ensureSheetsUI")
     .addItem("Rodar lote DJEN agora", "uiRunDjenBatch")
     .addItem("Ativar DJEN automático", "uiEnableDjenAuto")
+    .addItem("Ativar novos processos automáticos", "uiEnableProcessAuto")
 
     .addItem("Criar usuário (login/senha)", "uiCriarUsuario")
 
@@ -572,16 +585,18 @@ function ensureSheetsUI() {
 
   ensureSheets_();
   var trigger = ensureDjenAutoTrigger_();
+  var processTriggers = ensureProcessAutoTriggers_();
+  markUnprocessedRowsPending_(250);
 
   try {
     SpreadsheetApp.getActiveSpreadsheet().toast(
-      "Estrutura conferida. DJEN automático: " + (trigger.created ? "ativado" : "já ativo") + ".",
+      "Estrutura conferida. DJEN automático e captura de novos processos estão ativos.",
       "Léxis",
-      6
+      7
     );
   } catch (_) {}
 
-  return { ok: true, djen_trigger: trigger, message: "Abas, cabeçalhos, histórico judicial e DJEN automático conferidos." };
+  return { ok: true, djen_trigger: trigger, process_triggers: processTriggers, message: "Abas, cabeçalhos, histórico judicial, DJEN e novos processos automáticos conferidos." };
 
 }
 
@@ -590,8 +605,98 @@ function ensureDjenAutoTrigger_() {
   triggers.forEach(function(t){ if (t.getHandlerFunction && t.getHandlerFunction() === fn) found.push(t); });
   for (var i = 1; i < found.length; i++) ScriptApp.deleteTrigger(found[i]);
   if (found.length) return {ok:true,created:false,count:1};
-  ScriptApp.newTrigger(fn).timeBased().everyMinutes(10).create();
+  ScriptApp.newTrigger(fn).timeBased().everyMinutes(5).create();
   return {ok:true,created:true,count:1};
+}
+
+function ensureProcessAutoTriggers_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), triggers = ScriptApp.getProjectTriggers();
+  var specs = [
+    {fn:"processSheetEdit_",kind:"edit"},
+    {fn:"processSheetChange_",kind:"change"}
+  ], created = [];
+  specs.forEach(function(spec){
+    var found = triggers.filter(function(t){return t.getHandlerFunction && t.getHandlerFunction() === spec.fn;});
+    for (var i = 1; i < found.length; i++) ScriptApp.deleteTrigger(found[i]);
+    if (found.length) return;
+    var builder = ScriptApp.newTrigger(spec.fn).forSpreadsheet(ss);
+    if (spec.kind === "edit") builder.onEdit().create(); else builder.onChange().create();
+    created.push(spec.fn);
+  });
+  return {ok:true,created:created,count:2};
+}
+
+function uiEnableProcessAuto() {
+  ensureSheets_();
+  var r = ensureProcessAutoTriggers_();
+  var marked = markUnprocessedRowsPending_(500);
+  try { SpreadsheetApp.getActiveSpreadsheet().toast("Novos processos automáticos ativos. "+marked+" linha(s) pendente(s) marcada(s).","Léxis",7); } catch (_) {}
+  return {ok:true,triggers:r,marked:marked};
+}
+
+function processAutomationColumns_(sh) {
+  var headers = headers_(sh), map = headerMap_(headers);
+  return {
+    headers:headers,
+    protocolo:findCol_(map,["Protocolo","CNJ","processo"]),
+    status:findCol_(map,["Status"]),
+    situacao:findCol_(map,["Situacao","Situação"]),
+    automacao:findCol_(map,["Automação","Automacao"]),
+    proxima:findCol_(map,["Próxima Sincronização","Proxima Sincronizacao"]),
+    ultima:findCol_(map,["Última Sincronização","Ultima Sincronizacao"]),
+    erro:findCol_(map,["Erro / Observação","Erro Observacao"])
+  };
+}
+
+function markPendingProcessRows_(startRow, numRows, force) {
+  var sh = getProcSheet_(), cols = processAutomationColumns_(sh);
+  if (cols.protocolo < 0 || cols.automacao < 0) return 0;
+  var first = Math.max(HEADER_ROW + 1, Number(startRow || HEADER_ROW + 1));
+  var end = Math.min(sh.getLastRow(), first + Math.max(1, Number(numRows || 1)) - 1);
+  if (end < first) return 0;
+  var data = sh.getRange(first,1,end-first+1,cols.headers.length).getValues(), changed = 0, now = new Date();
+  for (var i = 0; i < data.length; i++) {
+    var rowNum = first + i, row = data[i], cnj = digits(row[cols.protocolo]);
+    if (cnj.length !== 20) continue;
+    var lastSync = cols.ultima >= 0 ? String(row[cols.ultima] || "").trim() : "";
+    var auto = cols.automacao >= 0 ? norm(row[cols.automacao]) : "";
+    if (!force && lastSync && auto && auto !== "pendente") continue;
+    if (cols.status >= 0 && !String(row[cols.status] || "").trim()) sh.getRange(rowNum,cols.status+1).setValue("Em andamento");
+    if (cols.situacao >= 0 && !String(row[cols.situacao] || "").trim()) sh.getRange(rowNum,cols.situacao+1).setValue("EM ANDAMENTO");
+    sh.getRange(rowNum,cols.automacao+1).setValue("PENDENTE");
+    if (cols.proxima >= 0) sh.getRange(rowNum,cols.proxima+1).setValue(now);
+    if (cols.erro >= 0 && !lastSync) sh.getRange(rowNum,cols.erro+1).setValue("");
+    changed++;
+  }
+  if (changed) SpreadsheetApp.flush();
+  return changed;
+}
+
+function markUnprocessedRowsPending_(limit) {
+  var sh = getProcSheet_(), last = sh.getLastRow();
+  if (last <= HEADER_ROW) return 0;
+  var count = Math.min(Math.max(1,Number(limit || 250)),last-HEADER_ROW);
+  return markPendingProcessRows_(last-count+1,count,false);
+}
+
+function processSheetEdit_(e) {
+  try {
+    if (!e || !e.range) return;
+    var sh = e.range.getSheet();
+    if (!sh || sh.getName() !== PROC_SHEET || e.range.getRow() <= HEADER_ROW) return;
+    var cols = processAutomationColumns_(sh);
+    if (cols.protocolo < 0) return;
+    var startCol = e.range.getColumn(), endCol = startCol + e.range.getNumColumns() - 1;
+    var protocolEdited = (cols.protocolo + 1) >= startCol && (cols.protocolo + 1) <= endCol;
+    if (protocolEdited) markPendingProcessRows_(e.range.getRow(),e.range.getNumRows(),true);
+  } catch (_) {}
+}
+
+function processSheetChange_(e) {
+  try {
+    var type = String(e && e.changeType || "");
+    if (type === "INSERT_ROW" || type === "INSERT_GRID" || type === "OTHER") markUnprocessedRowsPending_(250);
+  } catch (_) {}
 }
 
 function uiEnableDjenAuto() {
@@ -616,8 +721,17 @@ function djenScheduledBatch_(options) {
 
   var rows = readRows_({limit:8000}).rows.filter(function(r){ return digits(r.Protocolo || r.protocolo || "").length === 20; });
   if (!rows.length) return {ok:true,checked:0,found:0,total:0};
+  rows.sort(function(a,b){
+    function priority(r){
+      var auto = norm(r["Automação"] || r.Automacao || "");
+      var last = String(r["Última Sincronização"] || r.UltimaSincronizacao || "").trim();
+      return (auto === "pendente" ? 3 : 0) + (!last ? 2 : 0);
+    }
+    return priority(b)-priority(a);
+  });
 
   var cursor = Math.max(0,Number(props.getProperty("LEXIS_DJEN_CURSOR") || 0));
+  if (rows.length && (norm(rows[0]["Automação"] || "") === "pendente" || !String(rows[0]["Última Sincronização"] || "").trim())) cursor = 0;
   if (cursor >= rows.length) cursor = 0;
   var batchSize = Math.min(25,Math.max(1,Number(options.batchSize || 20)));
   var checked = 0, found = 0, saved = 0, errors = [], actor = {u:"automation",nome:"DJEN Automático",perfil:"superadmin"};
@@ -1276,6 +1390,10 @@ function writeRecords_(rows, actor, allowInsert) {
     var empresaIdx = findCol_(hmap, ["EmpresaId", "empresa_id", "empresaId"]);
 
     var updatedIdx = findCol_(hmap, ["updated_at", "updatedAt"]);
+    var statusIdx = findCol_(hmap, ["Status"]);
+    var situacaoIdx = findCol_(hmap, ["Situacao", "Situação"]);
+    var automationIdx = findCol_(hmap, ["Automação", "Automacao"]);
+    var nextSyncIdx = findCol_(hmap, ["Próxima Sincronização", "Proxima Sincronizacao"]);
 
     var editedByIdx = findCol_(hmap, ["edited_by", "editado_por"]);
 
@@ -1446,6 +1564,12 @@ function writeRecords_(rows, actor, allowInsert) {
       if (editedNameIdx >= 0 && actor) current[editedNameIdx] = actor.nome || actor.u || "";
 
       if (editedAtIdx >= 0) current[editedAtIdx] = now;
+      if (!isExisting) {
+        if (statusIdx >= 0 && !String(current[statusIdx] || "").trim()) current[statusIdx] = "Em andamento";
+        if (situacaoIdx >= 0 && !String(current[situacaoIdx] || "").trim()) current[situacaoIdx] = "EM ANDAMENTO";
+        if (automationIdx >= 0 && !String(current[automationIdx] || "").trim()) current[automationIdx] = "PENDENTE";
+        if (nextSyncIdx >= 0 && !String(current[nextSyncIdx] || "").trim()) current[nextSyncIdx] = now;
+      }
 
       for (var ac = 0; ac < headers.length; ac++) {
         var oldV = before[ac] == null ? "" : before[ac];
