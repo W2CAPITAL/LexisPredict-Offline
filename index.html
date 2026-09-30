@@ -38,7 +38,7 @@
   <div id="app" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-top">
-        <div class="brand side-brand"><span class="brand-mark">S</span><span>SheetsPredict</span></div>
+        <div class="brand side-brand"><img class="brand-logo" src="/assets/sheetspredict-mark.svg" alt="" width="34" height="34"/><span>SheetsPredict</span></div>
         <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Recolher menu" title="Recolher/expandir menu">‹</button>
       </div>
       <div class="workspace-card">
@@ -74,12 +74,16 @@
         <button class="link-btn inverse" id="logoutBtn">Sair</button>
       </div>
     </aside>
+    <button class="mobile-nav-backdrop" id="mobileNavBackdrop" type="button" aria-label="Fechar navegação" tabindex="-1"></button>
 
     <main class="main">
       <header class="topbar">
-        <div>
-          <span class="eyebrow" id="viewEyebrow">CARTEIRA JURÍDICA</span>
-          <h1 id="viewTitle">Visão geral</h1>
+        <div class="topbar-heading">
+          <button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Abrir navegação" aria-controls="sidebar" aria-expanded="false">☰</button>
+          <div>
+            <span class="eyebrow" id="viewEyebrow">CARTEIRA JURÍDICA</span>
+            <h1 id="viewTitle">Visão geral</h1>
+          </div>
         </div>
         <div class="top-actions">
           <div class="sync-indicator"><span class="dot" id="syncDot"></span><span id="syncText">Local</span></div>
