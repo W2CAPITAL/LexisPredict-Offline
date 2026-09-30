@@ -1,10 +1,36 @@
-# SheetsPredict
+<div align="center">
 
-**Google Sheets + operação jurídica + IA autenticada + DataJud/DJEN + WhatsApp, em uma única interface.**
+<img src="docs/assets/sheetspredict-logo.svg" alt="SheetsPredict" width="760" />
 
-**SheetsPredict** é o cockpit operacional da carteira jurídica conectado ao Google Sheets. A planilha continua sendo a fonte de verdade; o navegador mantém uma réplica local para velocidade e continuidade, enquanto Vercel Functions e Apps Script fazem a ponte segura com serviços externos.
+<br />
+
+**Cockpit operacional jurídico conectado ao Google Sheets, com IA autenticada, DataJud/DJEN, CRM operacional e WhatsApp.**
+
+<br />
+
+[![CI](https://github.com/W2CAPITAL/SheetsPredict/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/W2CAPITAL/SheetsPredict/actions/workflows/ci.yml)
+![License](https://img.shields.io/badge/license-MIT-0F766E)
+![Mobile](https://img.shields.io/badge/mobile-touch--first-059669)
+![PredictLM](https://img.shields.io/badge/PredictLM-authenticated_API-0B1F33)
+![DataJud](https://img.shields.io/badge/DataJud%20%2B%20DJEN-integrated-1677D2)
+
+<br />
+
+[**Visão geral**](#visão-geral) ·
+[**Arquitetura**](#arquitetura) ·
+[**Central Integrada**](#central-integrada) ·
+[**IA**](#ia-no-sheetspredict) ·
+[**Mobile**](#interface-responsiva) ·
+[**Segurança**](#segurança) ·
+[**Licença**](#licença)
+
+</div>
+
+---
 
 **Versão atual: 4.2.0**
+
+SheetsPredict mantém o **Google Sheets como fonte operacional de verdade**, usa IndexedDB como réplica local/offline e concentra integrações externas atrás de funções server-side. O navegador não precisa conhecer chaves de PredictLM, LexisPredict, WA.Auto ou provedores de IA.
 
 ## Mapa cerebral da arquitetura
 
@@ -179,6 +205,18 @@ Visão geral | IA | WhatsApp | Leads | Revisional | Planilha | Integrações
 
 Funcionalidades embutidas, como auditoria da planilha, Bacen/revisional, scanner público e núcleo offline, continuam funcionando sem os serviços remotos.
 
+### APIs de serviço
+
+PredictLM e LexisPredict entram no SheetsPredict por **credenciais de serviço independentes**. Nenhuma integração reutiliza senha de usuário ou credencial de proprietário.
+
+```text
+SheetsPredict server
+  ├─ PredictLM API → Chat / Legal / Build / Research / Imagine / Report / skills / agentes
+  └─ LexisPredict API → inteligência jurídica e DataJud em superfície de serviço limitada
+```
+
+O LexisPredict expõe ao SheetsPredict somente uma superfície de integração delimitada; dados multi-tenant do CRM não são liberados por essa chave genérica.
+
 ### Estado das integrações
 
 A Central não trata toda integração ausente como erro. Os cards distinguem:
@@ -316,20 +354,21 @@ A rota `/studio` traz a camada de execução do PredictLM para dentro do SheetsP
 
 O proxy `/api/predict-studio` mantém o runtime remoto atrás da camada server-side do SheetsPredict. A integração com PredictLM usa a credencial de API mantida no ambiente do servidor; o navegador não recebe essa credencial.
 
-### Skill Federation
+### Skill & Agent Federation
 
-O SheetsPredict mantém um snapshot auditável do registro real do PredictLM, associado ao commit de origem. Na integração inicial são:
+Quando o PredictLM está conectado, o SheetsPredict consulta pela **API autenticada** o catálogo atual de skills e papéis do Agent Fabric. O snapshot local permanece somente como fallback para operação offline ou indisponibilidade temporária do runtime remoto.
 
-- **81 skills/capabilities registradas**, incluindo Graphify Brain;
-- **16 papéis de Agent Fabric**;
+A integração atual cobre:
+
+- **81 skills/capabilities do PredictLM**;
+- **16 papéis de agentes**: Explorer, Architect, Implementer, Researcher, Reviewer, Test Analyst, Security Reviewer, Visual Director, Identity Reviewer, Game Producer, Game Designer, Game Technical Director, Game Art Director, Gameplay Specialist, Playtest Reviewer e Verifier;
 - **4 controladores Four-Core**: Fly, Mouse, Macaque e Human;
-- **18 providers/rotas conhecidas do Provider Mesh**, incluindo AshnaAI;
-- **76 repositórios registrados no Capability Fusion**, incluindo Graphify;
-- catálogo de runtimes WebLLM, Transformers.js compatibility, FreeLLMAPI, Ollama, OpenAI-compatible, llama.cpp/llamafile e LowRAM.
+- Provider Mesh e runtimes federados;
+- Capability Fusion e catálogo de adapters/plugins.
 
-A presença no catálogo **não significa que um adapter externo esteja configurado**. A aba Plugins distingue `built-in`, `bridge` e `external`, e o runtime remoto é validado separadamente.
+A presença de uma capability no catálogo **não significa que um serviço externo esteja configurado**. O runtime autenticado informa o catálogo; credenciais continuam exclusivamente no servidor.
 
-O snapshot é derivado de:
+O fallback auditável é derivado de:
 
 ```text
 W2CAPITAL/PredictLm
