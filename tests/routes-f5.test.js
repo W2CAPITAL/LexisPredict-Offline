@@ -15,7 +15,7 @@ for(const route of ["/","/cases","/processos","/report","/scanner","/tarefas","/
 
 const sheetsApi=fs.readFileSync(path.join(__dirname,"..","api","sheets.js"),"utf8");
 assert.match(sheetsApi,/res\.status\(202\)\.json\(\{ok:false,transient:true,degraded:true/,"timeouts de gravação não devem voltar como 503");
-assert.match(sheetsApi,/setTimeout\(\(\)=>ctrl\.abort\(\),10000\)/,"bridge não deve bloquear a UI por dezenas de segundos");
+assert.match(sheetsApi,/const timeoutMs=action==="legacy_list"\?25000:action==="list"\?12000:action==="auto"\?7000:10000/,"bridge deve usar timeouts curtos por tipo de leitura");\nassert.match(sheetsApi,/setTimeout\(\(\)=>ctrl\.abort\(\),timeoutMs\)/,"bridge deve aplicar o timeout calculado ao AbortController");
 assert.match(app,/scheduleSheetRecovery/,"cliente deve reconectar automaticamente após timeout transitório");
 
 
