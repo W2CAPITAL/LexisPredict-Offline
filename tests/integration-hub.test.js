@@ -28,6 +28,10 @@ const api=fs.readFileSync(path.join(__dirname,"..","api","integration-hub.js"),"
 assert.match(api,/requireSession/);
 assert.match(api,/requireSameOrigin/);
 assert.match(api,/PREDICTLM_API_KEY/);
+assert.match(api,/LEXISPREDICT_API_KEY/);
+assert.match(api,/\/api\/integration\/sheetspredict/);
+assert.match(api,/lexisService/);
+assert.match(api,/lexisChatFallback/);
 assert.match(api,/SHEETSPREDICT_AI_API_KEY/);
 assert.match(api,/SHEETSPREDICT_AI_BASE_URL/);
 assert.match(api,/resolvedPublicUrl/);
