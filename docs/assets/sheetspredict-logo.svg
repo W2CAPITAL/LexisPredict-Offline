@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="300" viewBox="0 0 1320 300" role="img" aria-labelledby="title desc">
+  <title id="title">SheetsPredict</title>
+  <desc id="desc">SheetsPredict logo: layered spreadsheet panels with an ascending predictive curve.</desc>
+  <defs>
+    <linearGradient id="gPanel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0F766E"/>
+      <stop offset=".55" stop-color="#065F55"/>
+      <stop offset="1" stop-color="#032F35"/>
+    </linearGradient>
+    <linearGradient id="gEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5EEAD4"/>
+      <stop offset="1" stop-color="#10B981"/>
+    </linearGradient>
+    <linearGradient id="gWord" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0B1F33"/>
+      <stop offset=".57" stop-color="#0B1F33"/>
+      <stop offset=".58" stop-color="#059669"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#032F35" flood-opacity=".23"/>
+    </filter>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <g transform="translate(36 28)" filter="url(#shadow)">
+    <rect x="0" y="48" width="188" height="188" rx="34" fill="#083B3B" opacity=".52"/>
+    <rect x="18" y="26" width="188" height="188" rx="34" fill="#075A53" opacity=".78"/>
+    <rect x="42" y="6" width="210" height="210" rx="38" fill="url(#gPanel)" stroke="url(#gEdge)" stroke-width="3"/>
+
+    <g opacity=".62" stroke="#8FF7EA" stroke-width="3">
+      <path d="M72 62H218M72 101H218M72 140H218M72 179H218"/>
+      <path d="M108 48V196M150 48V196M192 48V196"/>
+    </g>
+
+    <path d="M71 181C95 166 108 153 124 141C145 125 154 115 170 98C184 84 199 66 219 45" fill="none" stroke="#E7FFF9" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#F8FFFD" stroke="#CFFDF4" stroke-width="2">
+      <circle cx="72" cy="181" r="9"/>
+      <circle cx="124" cy="141" r="11"/>
+      <circle cx="170" cy="98" r="12"/>
+      <circle cx="219" cy="45" r="14" filter="url(#glow)"/>
+    </g>
+  </g>
+
+  <g transform="translate(330 0)">
+    <text x="0" y="177" fill="url(#gWord)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="122" font-weight="800" letter-spacing="-6">SheetsPredict</text>
+    <text x="6" y="224" fill="#64748B" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="24" font-weight="650" letter-spacing="4">LEGAL OPERATIONS · AI · GOOGLE SHEETS</text>
+  </g>
+</svg>
