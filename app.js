@@ -369,7 +369,7 @@ function stopAutoSync(){
   if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
   state.autoSyncTimer=null;
 }
-function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+function updateSleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
 function setUpdateLock(on){
   state.updateLock=!!on;
   document.body.classList.toggle("app-update-locked",!!on);
@@ -404,7 +404,7 @@ async function currentReleaseId(){
 }
 async function waitForSyncIdle(maxMs=15000){
   const started=Date.now();
-  while(state.syncing&&Date.now()-started<maxMs)await sleep(180);
+  while(state.syncing&&Date.now()-started<maxMs)await updateSleep(180);
   return !state.syncing;
 }
 async function applyWaitingUpdate(target){
@@ -448,7 +448,7 @@ async function checkForAppUpdate({initial=false}={}){
     localStorage.setItem(RELEASE_SEEN_KEY,remote);writeUpdateState(null);
     setUpdateLock(true);
     updateOverlay({title:"Atualização concluída",detail:"A nova versão foi carregada. Validando a interface antes de liberar o acesso.",meta:"SheetsPredict "+remote,progress:100,eyebrow:"SISTEMA ATUALIZADO"});
-    await sleep(1400);hideUpdateOverlay();
+    await updateSleep(1400);hideUpdateOverlay();
     return false;
   }
   if(initial&&state.swRegistration?.waiting){
