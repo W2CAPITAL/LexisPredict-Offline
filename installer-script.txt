@@ -1973,7 +1973,7 @@ function syncDoPost_(e) {
 
 
 
-    if (action === "ping") return out_({ ok: true, pong: true, v: "8.0" });
+    if (action === "ping") return out_({ ok: true, pong: true, v: "8.1" });
 
     if (action === "auth" || action === "login") return out_(doAuth_(body));
 
@@ -2402,8 +2402,13 @@ function touchSess_(token) {
   try {
 
     var s = JSON.parse(raw);
+    var now = Date.now();
 
-    s.exp = Date.now() + SESS_DURATION_MS;
+    // Em uso multiusuário, não regravamos Script Properties a cada página da
+    // carteira. A sessão só é prorrogada quando faltam menos de 2 horas.
+    if (Number(s.exp || 0) - now > 2 * 3600 * 1000) return;
+
+    s.exp = now + SESS_DURATION_MS;
 
     props.setProperty(SESS_PREFIX + String(token), JSON.stringify(s));
 

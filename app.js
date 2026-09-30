@@ -327,6 +327,10 @@ async function apiSheets(payload){
     const e=new Error(j.error||"Falha ao acessar a planilha");
     e.status=r.status;e.data=j;e.transient=!!j.transient||r.status>=500;throw e;
   }
+  if(j.upgradeRequired){
+    const e=new Error(j.error||"Atualização do Google Apps Script necessária.");
+    e.status=r.status;e.data=j;e.upgradeRequired=true;throw e;
+  }
   if(j.transient){
     const e=new Error(j.error||"Planilha temporariamente indisponível; o cache local foi preservado.");
     e.status=Number(j.upstreamStatus)||503;e.data=j;e.transient=true;e.retryAfterMs=Number(j.retryAfterMs)||4000;throw e;
@@ -380,6 +384,10 @@ async function syncFromCloud(opts={}){
     render();
     void syncCRM({quiet:true}).then(()=>{if(window.WAAutoModule?.backgroundSync)void window.WAAutoModule.backgroundSync(state.companyRows,crmClients());}).catch(()=>{});
   } catch(e) {
+    if(e?.upgradeRequired){
+      showBanner("ATUALIZAÇÃO DO APPS SCRIPT NECESSÁRIA: publique o installer 8.1 em LEXIS-SYNC-AppsScript.gs. A carteira local foi preservada.","bad");
+      return {ok:false,upgradeRequired:true,error:e.message||String(e)};
+    }
     if(e?.transient){
       if(!opts.quiet)showBanner("Google Sheets está temporariamente ocupado. A carteira local continua disponível e a reconexão será automática.","bad");
       scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
@@ -391,17 +399,23 @@ async function syncFromCloud(opts={}){
   }
   if(enrichCandidates.length)void autoEnrichNewProcesses(enrichCandidates);
 }
+function syncJitter(maxMs=75000){
+  const u=currentUser(),seed=hash([u.usuario||u.nome||"anon",navigator.userAgent||"",location.hostname].join("|"));
+  return parseInt(seed,36)%Math.max(1,maxMs);
+}
 function startAutoSync(){
-  if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
-  state.autoSyncTimer=setInterval(async()=>{
-    if(!state.session||!navigator.onLine||document.hidden||state.syncing)return;
-    const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
-    if(cacheFresh()&&!pending&&!crmPending)return;
-    try{await syncFromCloud({quiet:true})}catch(_){}
-  },300000);
+  if(state.autoSyncTimer)clearTimeout(state.autoSyncTimer);
+  const run=async()=>{
+    if(state.session&&navigator.onLine&&!document.hidden&&!state.syncing){
+      const pending=await outboxCount().catch(()=>0),crmPending=(await idbAll("crmOutbox").catch(()=>[])).length;
+      if(!cacheFresh()||pending||crmPending)try{await syncFromCloud({quiet:true})}catch(_){}
+    }
+    state.autoSyncTimer=setTimeout(run,300000+syncJitter(90000));
+  };
+  state.autoSyncTimer=setTimeout(run,45000+syncJitter(90000));
 }
 function stopAutoSync(){
-  if(state.autoSyncTimer)clearInterval(state.autoSyncTimer);
+  if(state.autoSyncTimer)clearTimeout(state.autoSyncTimer);
   state.autoSyncTimer=null;
 }
 function updateSleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
@@ -425,19 +439,25 @@ function setOperationBusy(button,{busy,label,doneLabel,statusEl,status}={}){
 }
 function scheduleSheetRecovery(delay=5000){
   clearTimeout(scheduleSheetRecovery.t);
+  const waitMs=Math.min(45000,Math.max(5000,Number(delay)||5000)+syncJitter(6000));
   scheduleSheetRecovery.t=setTimeout(async()=>{
     if(!state.session||!navigator.onLine||state.syncing||state.updateLock)return;
     try{
       const check=await apiSheets({action:"session"});
       if(check?.ok){
         saveSession({user:check.user||state.session?.user||{}});
-        await syncFromCloud({quiet:true});
+        const result=await syncFromCloud({quiet:true});
+        if(result?.upgradeRequired)return;
         showBanner("Conexão com a planilha restabelecida.","good");
       }
     }catch(e){
-      if(e?.transient)scheduleSheetRecovery(Math.min(30000,Math.max(5000,Number(e.retryAfterMs)||delay*1.6)));
+      if(e?.upgradeRequired){
+        showBanner("ATUALIZAÇÃO DO APPS SCRIPT NECESSÁRIA: publique o installer 8.1 em LEXIS-SYNC-AppsScript.gs.","bad");
+        return;
+      }
+      if(e?.transient)scheduleSheetRecovery(Math.min(45000,Math.max(7000,Number(e.retryAfterMs)||waitMs*1.7)));
     }
-  },delay);
+  },waitMs);
 }
 function setUpdateLock(on){
   state.updateLock=!!on;

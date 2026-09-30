@@ -33,4 +33,8 @@ assert.match(sheetsApi,/list_compact/,"listagem deve usar transporte compacto");
 assert.match(app,/pageSize=600/,"carteira deve carregar em páginas menores");
 assert.match(installer,/function listCompactAction_/,"installer deve oferecer listagem compacta");
 assert.match(installer,/function readRowsCompact_/,"installer deve ler apenas a página necessária");
+
+assert.match(sheetsApi,/APPS_SCRIPT_OUTDATED/,"bridge deve identificar Apps Script desatualizado sem fallback pesado");
+assert.match(app,/syncJitter/,"sincronização multiusuário deve ter jitter");
+assert.match(installer,/faltam menos de 2 horas/,"sessão do Apps Script não deve ser regravada a cada página");
 console.log("routes-f5: ok");

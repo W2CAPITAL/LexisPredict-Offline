@@ -47,6 +47,12 @@ Para criar/confirmar esses gatilhos, após colar a nova versão do script execut
 
 Essas alterações atacam diretamente o erro **“Tempo esgotado ao acessar o Google Apps Script”**.
 
+## Multiusuário
+
+A versão 8.1 também reduz contenção quando várias pessoas usam o SheetsPredict ao mesmo tempo. A sessão do Apps Script deixa de ser regravada em `Script Properties` a cada página da carteira; ela só é prorrogada quando estiver próxima de expirar. O cliente também distribui as sincronizações automáticas em janelas diferentes por usuário/navegador para evitar que todos atinjam o Apps Script no mesmo segundo.
+
+Se o SheetsPredict detectar que a implantação publicada ainda não conhece `list_compact`, ele **não volta mais para a leitura pesada antiga**. Em vez disso, mostra explicitamente que o Apps Script precisa ser atualizado para a versão 8.1.
+
 ## Como validar
 
 Depois da publicação:
