@@ -1587,3 +1587,43 @@ body{background:var(--bg);font-size:12px}
   .reference-quick-grid{grid-template-columns:1fr}
   .process-table{min-width:1120px!important}
 }
+
+
+/* Reference lock 2026-09-30
+   Mantém a composição visual da referência aprovada: sidebar jurídica escura,
+   topbar branca com busca central, superfícies brancas compactas e densidade operacional. */
+:root[data-theme="default"]{
+  --bg:#f4f8fc;--surface:#ffffff;--surface2:#f7faff;--ink:#10243d;
+  --muted:#6f8199;--muted2:#9cadbf;--line:#dfe8f2;--line2:#edf3f8;
+  --nav:#07192c;--nav2:#0a2139;--primary:#0877ea;--primary2:#0568d4;
+  --green:#12a86b;--greenbg:#eaf9f2;--amber:#d68b18;--amberbg:#fff7e7;
+  --red:#e04444;--redbg:#fff0f0;--blue:#0877ea;--bluebg:#eaf4ff;
+}
+@media(min-width:701px){
+  :root{--saas-sidebar:184px!important;--saas-topbar:56px!important}
+  .app-shell{grid-template-columns:184px minmax(0,1fr)!important}
+  .sidebar{width:184px!important}
+  .topbar{grid-template-columns:minmax(120px,1fr) minmax(300px,370px) minmax(250px,1fr)!important}
+  .content{padding:10px 12px 34px!important}
+  .reference-page{gap:8px!important}
+  .reference-page-head{min-height:42px!important}
+  .reference-page-head h2{font-size:19px!important}
+  .reference-kpis{gap:8px!important}
+  .reference-kpi{min-height:68px!important;border-radius:8px!important}
+  .reference-grid-main,.reference-grid-bottom,.reference-hub-lower{gap:8px!important}
+  .reference-card{border-radius:8px!important}
+  .reference-card-head{min-height:36px!important}
+  .ref-bars{height:150px!important}
+  .ref-donut-wrap{min-height:176px!important}
+  .reference-table td{height:32px}
+  .reference-hub-services{gap:8px!important}
+  .reference-service-card{min-height:122px!important}
+  .ps-workspace{min-height:calc(100dvh - 142px)!important}
+}
+/* Ações e estados seguem a linguagem da referência sem alterar os outros temas. */
+:root[data-theme="default"] .btn.primary{box-shadow:0 4px 10px rgba(8,119,234,.16)!important}
+:root[data-theme="default"] .nav-item.active{background:#0b4c82!important}
+:root[data-theme="default"] .top-search{background:#f7faff!important}
+:root[data-theme="default"] .card,
+:root[data-theme="default"] .reference-card,
+:root[data-theme="default"] .reference-kpi{box-shadow:0 1px 3px rgba(22,52,84,.035)!important}

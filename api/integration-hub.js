@@ -228,29 +228,72 @@ async function callPredictLm(prompt,context,messages,body={}){
   }catch{}
   return null;
 }
+function parsedHubContext(context){
+  try{return JSON.parse(String(context||"{}"))||{}}catch{return{}}
+}
+function dispatchSeedFromContext(context){
+  const parsed=parsedHubContext(context),p=parsed.process||{};
+  if(!p||(!p.cnj&&!p.ultimoMovimento&&!p.djen))return null;
+  return {
+    clienteNome:p.cliente||"Cliente",protocolo:p.cnj||"",ultimoRetorno:p.ultimoRetorno||"",
+    movimentos:p.ultimoMovimento?[{dataHora:p.dataMovimento||"",nome:p.ultimoMovimento,descricao:p.ultimoMovimento}]:[],
+    djenTexts:p.djen?[String(p.djen)]:[],eventoResumo:p.ultimoMovimento||"",canal:"interno"
+  };
+}
+async function lexisExpertPack(prompt,context,messages,{includeDispatch=true}={}){
+  const jobs=[lexisChatFallback(prompt,context,messages)];
+  const seed=includeDispatch?dispatchSeedFromContext(context):null;
+  if(seed){
+    jobs.push(lexisService({lexisAction:"dispatch",...seed,preferredModel:"local_only"}).then(r=>{
+      const d=r.result||{},text=d.rascunho||d.resposta||d.content||"";
+      return text?{ok:true,engine:"Lexis Local",provider:"LexisPredict",content:String(text),layer:"local"}:null;
+    }).catch(()=>null));
+    jobs.push(lexisService({lexisAction:"dispatch",...seed,preferredModel:"omni"}).then(r=>{
+      const d=r.result||{},text=d.rascunho||d.resposta||d.content||"";
+      return text?{ok:true,engine:d.engineUtilizada||d.engine||"Lexis Neural Dispatch",provider:"LexisPredict",content:String(text),layer:"dispatch"}:null;
+    }).catch(()=>null));
+  }
+  return (await Promise.all(jobs)).filter(Boolean);
+}
 async function aiChat(body){
   const prompt=compact(body.prompt,30000).trim();if(!prompt)throw new Error("Pergunta obrigatória.");
   const context=compact(body.context,16000),messages=Array.isArray(body.messages)?body.messages.slice(-10):[],legal=looksLegalPrompt(prompt,context);
 
   const primary=await callPredictLm(prompt,context,messages,body);
   if(primary){
-    // PredictLM continua principal. Lexis só disputa em consulta jurídica profunda ou quando a saída ficou fraca.
     const primaryScore=answerScore(primary.content,{legal});
-    if(legal&&(body.deep||primaryScore<10)){
-      const expert=await lexisChatFallback(prompt,context,messages);
-      if(expert){
-        const expertScore=answerScore(expert.content,{legal:true});
-        if(expertScore>primaryScore+2)return {...expert,engine:"LexisPredict Neural",provider:"LexisPredict",hybrid:true,primary:"PredictLM"};
-        return {...primary,engine:"PredictLM + Lexis guard",hybrid:true,expert:"LexisPredict"};
+    if(legal&&(body.deep||primaryScore<11||dispatchSeedFromContext(context))){
+      const experts=await lexisExpertPack(prompt,context,messages,{includeDispatch:true});
+      if(experts.length){
+        const ranked=experts.map(x=>({...x,score:answerScore(x.content,{legal:true})})).sort((a,b)=>b.score-a.score);
+        const best=ranked[0];
+        if(best.score>primaryScore+3)return {...best,engine:best.engine||"LexisPredict Neural",provider:"LexisPredict",hybrid:true,primary:"PredictLM",expertLayers:ranked.map(x=>x.engine)};
+        if(body.deep||/resposta|mensagem|pr[oó]ximo passo|estrat[eé]gia|analise|an[aá]lise/i.test(prompt)){
+          const expertContext=ranked.slice(0,3).map(x=>"["+x.engine+"]\n"+x.content).join("\n\n");
+          const synthesis=await callPredictLm(
+            prompt,
+            context+"\n\nCAMADAS ESPECIALISTAS DO LEXISPREDICT (use apenas quando melhorarem a precisão; não copie erro ou inferência):\n"+expertContext,
+            messages,
+            {...body,deep:true,sessionId:compact(body.sessionId||"sheetspredict",120)+"-hybrid"}
+          );
+          if(synthesis){
+            const synthScore=answerScore(synthesis.content,{legal:true});
+            if(synthScore>=primaryScore)return {...synthesis,engine:"PredictLM + Lexis local/neural/dispatch",provider:"PredictLM",hybrid:true,expertLayers:ranked.map(x=>x.engine)};
+          }
+        }
+        return {...primary,engine:"PredictLM + Lexis guard",hybrid:true,expertLayers:ranked.map(x=>x.engine)};
       }
     }
     return primary;
   }
 
-  // Sem PredictLM: em matéria jurídica o núcleo Lexis entra antes de gateways genéricos.
+  // Sem PredictLM: o Lexis usa chat neural, motor local e despacho antes de gateways genéricos.
   if(legal){
-    const expert=await lexisChatFallback(prompt,context,messages);
-    if(expert)return {...expert,engine:"LexisPredict Neural",hybrid:true};
+    const experts=await lexisExpertPack(prompt,context,messages,{includeDispatch:true});
+    if(experts.length){
+      const best=experts.map(x=>({...x,score:answerScore(x.content,{legal:true})})).sort((a,b)=>b.score-a.score)[0];
+      return {...best,hybrid:experts.length>1,expertLayers:experts.map(x=>x.engine)};
+    }
   }
 
   const own=customAi();
@@ -349,34 +392,34 @@ async function suggestResponse(body){
   const row=body.row&&typeof body.row==="object"?body.row:{},scan=body.scan&&typeof body.scan==="object"?body.scan:{};
   const cnj=compact(pickSafe(row,"Protocolo","CNJ")||body.cnj,80),cliente=compact(pickSafe(row,"Cliente","Nome")||body.cliente,180);
   const movimentos=scanMovementPayload(scan,row),djenTexts=scanDjenPayload(scan,row);
-  let lexis=null;
-  try{
-    const r=await lexisService({
-      lexisAction:"dispatch",clienteNome:cliente||"Cliente",protocolo:cnj,ultimoRetorno:pickSafe(row,"Último Retorno"),
-      movimentos,djenTexts,eventoTipo:pickSafe(row,"Tipo de Evento","Evento_Tipo"),eventoResumo:pickSafe(row,"Resumo do Evento","Diagnóstico Processual"),
-      preferredModel:"omni",canal:"whatsapp",temNovoAndamento:/^(sim|true|1)$/i.test(String(pickSafe(row,"Nova Atualização","Novo Andamento"))),
-      encerradoTribunal:/^(sim|true|1)$/i.test(String(pickSafe(row,"Encerrado no Tribunal","DatajudEncerrado"))),
-      emCumprimento:/^(sim|true|1)$/i.test(String(pickSafe(row,"Cumprimento"))),procedente:/^(sim|true|1)$/i.test(String(pickSafe(row,"Procedente"))),
-      datajudUltimoNome:pickSafe(row,"DataJud • Último Movimento","Último Andamento")
-    });
-    const data=r.result||{},text=data.rascunho||data.resposta||data.content||"";
-    if(text)lexis={content:String(text),provider:"LexisPredict",engine:data.engineUtilizada||data.engine||"Motor de Despacho Lexis"};
-  }catch{}
+  const common={
+    lexisAction:"dispatch",clienteNome:cliente||"Cliente",protocolo:cnj,ultimoRetorno:pickSafe(row,"Último Retorno"),
+    movimentos,djenTexts,eventoTipo:pickSafe(row,"Tipo de Evento","Evento_Tipo"),eventoResumo:pickSafe(row,"Resumo do Evento","Diagnóstico Processual"),
+    canal:"whatsapp",temNovoAndamento:/^(sim|true|1)$/i.test(String(pickSafe(row,"Nova Atualização","Novo Andamento"))),
+    encerradoTribunal:/^(sim|true|1)$/i.test(String(pickSafe(row,"Encerrado no Tribunal","DatajudEncerrado"))),
+    emCumprimento:/^(sim|true|1)$/i.test(String(pickSafe(row,"Cumprimento"))),procedente:/^(sim|true|1)$/i.test(String(pickSafe(row,"Procedente"))),
+    datajudUltimoNome:pickSafe(row,"DataJud • Último Movimento","Último Andamento")
+  };
+  const dispatches=await Promise.all([
+    lexisService({...common,preferredModel:"local_only"}).then(r=>{const d=r.result||{},t=d.rascunho||d.resposta||d.content||"";return t?{content:String(t),provider:"LexisPredict",engine:"Lexis Local Scripts"}:null}).catch(()=>null),
+    lexisService({...common,preferredModel:"omni"}).then(r=>{const d=r.result||{},t=d.rascunho||d.resposta||d.content||"";return t?{content:String(t),provider:"LexisPredict",engine:d.engineUtilizada||d.engine||"Lexis Neural Dispatch"}:null}).catch(()=>null)
+  ]);
+  const lexisCandidates=dispatches.filter(Boolean);
 
   let predict=null;
-  if(lexis?.content){
+  if(lexisCandidates.length){
     const evidence=[
       "CLIENTE: "+cliente,"CNJ: "+cnj,
       "MOVIMENTOS CONFIRMADOS:\n"+movimentos.slice(0,8).map(x=>[x.dataHora,x.nome,x.complemento,x.descricao].filter(Boolean).join(" | ")).join("\n"),
       "DJEN CONFIRMADO:\n"+djenTexts.slice(0,5).join("\n---\n"),
-      "RASCUNHO DO MOTOR LEXIS:\n"+lexis.content
+      "RASCUNHOS LEXISPREDICT:\n"+lexisCandidates.map(x=>"["+x.engine+"]\n"+x.content).join("\n\n")
     ].join("\n\n");
     predict=await callPredictLm(
-      "Revise o rascunho abaixo para atendimento por WhatsApp. Preserve estritamente os fatos fornecidos. Só altere se melhorar clareza, naturalidade e foco no ato mais recente. Use 2ª pessoa, 4–8 linhas, sem inventar prazo, valor, resultado ou obrigação. Entregue apenas a mensagem final.",
+      "Escolha e refine o melhor rascunho para atendimento por WhatsApp. Preserve estritamente os fatos fornecidos. Só altere se melhorar clareza, naturalidade e foco no ato mais recente. Use 2ª pessoa, 4–8 linhas, sem inventar prazo, valor, resultado ou obrigação. Entregue apenas a mensagem final.",
       evidence,[],{deep:false,sessionId:"sheetspredict-suggest"}
     );
   }
-  const candidates=[lexis,predict].filter(Boolean);
+  const candidates=[...lexisCandidates,predict].filter(Boolean);
   if(!candidates.length)return {ok:false,configured:false,error:"Motores remotos indisponíveis.",content:""};
   const ranked=candidates.map(x=>({...x,score:answerScore(x.content,{legal:true,suggestion:true})})).sort((a,b)=>b.score-a.score);
   const best=ranked[0];
