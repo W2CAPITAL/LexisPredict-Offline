@@ -1,5 +1,6 @@
 const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
-const learning=require("../lib/predict-learning-pack");\nconst {revisionalBankContext}=require("../lib/revisional-skill");
+const learning=require("../lib/predict-learning-pack");
+const {revisionalBankContext}=require("../lib/revisional-skill");
 
 const MAX_JSON=700_000;
 const TIMEOUTS={status:10000,chat:45000,work:45000,tutor:45000,legal:65000,build:90000,research:70000,imagine:90000,report:100000};
