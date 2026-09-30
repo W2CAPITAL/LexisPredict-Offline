@@ -27,6 +27,11 @@ for(const route of ["/api/chat","/api/legal/process","/api/legal/dossier","/api/
 }
 assert.match(api,/PREDICTLM_URL/);
 assert.match(api,/PREDICTLM_ACCESS_TOKEN/);
+assert.match(api,/PREDICTLM_API_KEY/);
+assert.match(api,/SHEETSPREDICT_AI_API_KEY/);
+assert.match(api,/SHEETSPREDICT_AI_BASE_URL/);
+assert.match(api,/requireSession/);
+assert.match(api,/requireSameOrigin/);
 assert.match(api,/ASHNA_API_KEY/);
 assert.match(api,/https:\/\/api\.ashna\.ai\/v1\/api/);
 assert.match(api,/callAshna/);
