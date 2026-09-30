@@ -324,7 +324,11 @@ async function apiSheets(payload){
   if(!r.ok){
     if(r.status===401&&!["login","auth"].includes(action))handleCloudAuthFailure(j.error);
     const e=new Error(j.error||"Falha ao acessar a planilha");
-    e.status=r.status;e.data=j;throw e;
+    e.status=r.status;e.data=j;e.transient=!!j.transient||r.status>=500;throw e;
+  }
+  if(j.transient){
+    const e=new Error(j.error||"Planilha temporariamente indisponível; o cache local foi preservado.");
+    e.status=Number(j.upstreamStatus)||503;e.data=j;e.transient=true;e.retryAfterMs=Number(j.retryAfterMs)||4000;throw e;
   }
   if(j.ok===false&&!j.conflict){
     const e=new Error(j.error||"Falha ao acessar a planilha");
@@ -377,6 +381,40 @@ function stopAutoSync(){
   state.autoSyncTimer=null;
 }
 function updateSleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+function setOperationBusy(button,{busy,label,doneLabel,statusEl,status}={}){
+  if(button){
+    button.disabled=!!busy;
+    button.classList.toggle("is-loading",!!busy);
+    if(busy){
+      if(!button.dataset.idleLabel)button.dataset.idleLabel=button.textContent||doneLabel||"Salvar";
+      button.innerHTML='<span class="btn-spinner" aria-hidden="true"></span><span>'+esc(label||"Salvando…")+'</span>';
+      button.setAttribute("aria-busy","true");
+    }else{
+      button.removeAttribute("aria-busy");
+      button.textContent=doneLabel||button.dataset.idleLabel||"Salvar";
+    }
+  }
+  if(statusEl){
+    statusEl.classList.toggle("operation-pending",!!busy);
+    if(status!=null)statusEl.textContent=status;
+  }
+}
+function scheduleSheetRecovery(delay=5000){
+  clearTimeout(scheduleSheetRecovery.t);
+  scheduleSheetRecovery.t=setTimeout(async()=>{
+    if(!state.session||!navigator.onLine||state.syncing||state.updateLock)return;
+    try{
+      const check=await apiSheets({action:"auto"});
+      if(check?.ok){
+        saveSession({user:check.user||state.session?.user||{}});
+        await syncFromCloud({quiet:true});
+        showBanner("Conexão com a planilha restabelecida.","good");
+      }
+    }catch(e){
+      if(e?.transient)scheduleSheetRecovery(Math.min(30000,Math.max(5000,Number(e.retryAfterMs)||delay*1.6)));
+    }
+  },delay);
+}
 function setUpdateLock(on){
   state.updateLock=!!on;
   document.body.classList.toggle("app-update-locked",!!on);
@@ -1728,7 +1766,8 @@ function openAttendance(key){
 async function saveAttendance(){
   if(state.updateLock){showBanner("Atualização em andamento. Atendimentos estão temporariamente bloqueados.","bad");return}
   const key=$("#attendanceKey").value,row=findRow(key);if(!row)return;
-  const btn=$("#saveAttendanceBtn");btn.disabled=true;btn.textContent="Salvando…";
+  const btn=$("#saveAttendanceBtn"),statusEl=$("#attendanceStatus");
+  setOperationBusy(btn,{busy:true,label:"Registrando atendimento…",doneLabel:"Registrar atendimento",statusEl,status:"Salvando atendimento no dispositivo…"});
   const actor=currentUser().nome||currentUser().usuario||"Usuário";
   const nowIso=new Date().toISOString(),retorno=todayBrazil();
   const result=$("#attendanceResult").value||"EM ANDAMENTO";
@@ -1740,7 +1779,9 @@ async function saveAttendance(){
   if(result==="ENCERRADO"){patch["Status"]="Encerrado";patch["Situacao"]="ENCERRADO"}
   else if(result!=="SEM CONTATO"){patch["Situacao"]="EM ANDAMENTO"}
   if(note)patch["Observações"]=note;
-  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);await queueWrite(patch);if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
+  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);
+  if(statusEl)statusEl.textContent="Atendimento salvo localmente. Preparando sincronização…";
+  await queueWrite(patch);if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
   if(clientId){
     const interaction={
       InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),
@@ -1753,13 +1794,23 @@ async function saveAttendance(){
   }
   render();
   try{
-    if(navigator.onLine){await flushOutbox();await flushCrmOutbox().catch(()=>{})}
+    if(navigator.onLine){
+      if(statusEl)statusEl.textContent="Sincronizando atendimento com a planilha…";
+      await flushOutbox();
+      if(statusEl)statusEl.textContent="Confirmando histórico de atendimento…";
+      await flushCrmOutbox().catch(()=>{});
+    }
+    if(statusEl)statusEl.textContent=navigator.onLine?"Atendimento confirmado.":"Atendimento salvo offline.";
+    await updateSleep(260);
     $("#attendanceDialog").close();
     showBanner("Atendimento registrado por "+actor+" sem transferir o processo.","good");
   }catch(e){
+    if(statusEl)statusEl.textContent="Salvo localmente; aguardando a planilha voltar.";
+    await updateSleep(350);
     $("#attendanceDialog").close();
     showBanner("Atendimento salvo no cache e pendente para a planilha: "+(e.message||String(e)),"bad");
-  }finally{btn.disabled=false;btn.textContent="Registrar atendimento"}
+    if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
+  }finally{setOperationBusy(btn,{busy:false,doneLabel:"Registrar atendimento",statusEl})}
 }
 function historyDate(raw){
   const d=parseDate(raw);return d&&!Number.isNaN(d.getTime())?d:new Date(0);
@@ -2017,9 +2068,13 @@ async function saveProcess(){
   }
   const linkedClient=state.clientId?clientById(state.clientId):null;
   const clientId=pick(current,"ClienteId")||linkedClient?.ClienteId||(crm?.stableClientId?crm.stableClientId({Cliente:next["Cliente"],Telefone:next["Telefone"]}):"");
+  const saveBtn=$("#saveProcessBtn"),statusEl=$("#processStatus");
+  setOperationBusy(saveBtn,{busy:true,label:isNew?"Criando processo…":"Salvando alterações…",doneLabel:"Salvar",statusEl,status:"Salvando no dispositivo…"});
+  try{
   next["ClienteId"]=clientId;
   if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
   updateLocalRow(next);await saveRows(state.companyRows);
+  if(statusEl)statusEl.textContent="Processo salvo localmente. Preparando sincronização…";
   if(clientId){
     const clientRecord={ClienteId:clientId,Tipo:"Pessoa",Nome:next["Cliente"],Telefone_Principal:next["Telefone"],Origem:"App",Status:"ATIVO",Responsavel:next["Assistente"],OptOutWhatsApp:"NÃO",AtualizadoEm:new Date().toISOString()};
     await crmWrite("Clientes",clientRecord,{quiet:true});
@@ -2030,11 +2085,24 @@ async function saveProcess(){
   if(isNew)writePayload["Assistente"]=next["Assistente"];
   await queueWrite(writePayload);render();
   $("#processStatus").textContent="Salvo neste dispositivo. Enviando para a planilha…";
-  if(!navigator.onLine){$("#processDialog").close();showBanner("Cadastro salvo no cache e aguardando conexão.","good");return}
+  if(!navigator.onLine){
+    if(statusEl)statusEl.textContent="Salvo offline; será sincronizado quando a conexão voltar.";
+    await updateSleep(250);$("#processDialog").close();showBanner("Cadastro salvo no cache e aguardando conexão.","good");return
+  }
+  if(statusEl)statusEl.textContent="Sincronizando com a planilha…";
   try{
     const j=await flushOutbox();if(Number(j.rejected_count||0)>0)throw new Error("A planilha recusou a alteração.");
+    if(statusEl)statusEl.textContent="Processo confirmado na planilha.";
+    await updateSleep(260);
     $("#processDialog").close();showBanner((isNew?"Cadastro criado":"Alteração salva")+" sem transferir a carteira.","good");
-  }catch(e){$("#processDialog").close();showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
+  }catch(e){
+    if(statusEl)statusEl.textContent="Salvo localmente; aguardando a planilha voltar.";
+    await updateSleep(350);$("#processDialog").close();showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad");
+    if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
+  }
+  }finally{
+    setOperationBusy(saveBtn,{busy:false,doneLabel:"Salvar",statusEl});
+  }
 }
 
 function exportJson(){const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),rows:state.companyRows},null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="sheetspredict-"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(a.href)}
@@ -2175,7 +2243,14 @@ async function boot(){
       void syncCRM({quiet:true}).catch(()=>{});
     }
   }catch(e){
-    saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
+    const transient=!!e?.transient||Number(e?.status)>=500;
+    if(transient&&cachedSession){
+      state.session=cachedSession;refreshScopes();setLogged(true);applyUser();render();startAutoSync();
+      showBanner(state.companyRows.length?"Planilha temporariamente indisponível durante a atualização. Mantendo a carteira em cache e reconectando automaticamente.":"Planilha temporariamente indisponível durante a atualização. Reconectando automaticamente…","bad");
+      scheduleSheetRecovery(Number(e?.retryAfterMs)||5000);
+    }else{
+      saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
+    }
   }
   updateSyncUi();
 }
