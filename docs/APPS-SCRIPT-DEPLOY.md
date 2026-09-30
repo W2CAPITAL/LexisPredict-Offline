@@ -17,6 +17,17 @@ O SheetsPredict usa um Web App do Google Apps Script como bridge privado entre a
 
 Ao editar a implantação existente, a URL terminada em `/exec` permanece a mesma. Assim a variável `LEXIS_APPS_SCRIPT_URL` da Vercel não precisa ser alterada.
 
+## Automação de novos processos
+
+A versão atual do `installer-script.txt` também instala dois gatilhos na aba **Processos**:
+
+- edição do campo **Protocolo/CNJ**: marca o registro como `PENDENTE`, define a próxima sincronização e aplica os valores operacionais mínimos;
+- inserção/alteração estrutural de linhas: procura processos válidos ainda sem sincronização e os coloca na fila.
+
+O lote DJEN passa a priorizar registros pendentes. Quando o SheetsPredict estiver aberto e autenticado, a sincronização da carteira identifica CNJs novos e executa automaticamente a consulta **DataJud + DJEN**, gravando tanto os campos visíveis quanto os campos legados e as abas de histórico.
+
+Para criar/confirmar esses gatilhos, após colar a nova versão do script execute uma vez **Léxis → Garantir abas e cabeçalhos** ou a função `ensureSheetsUI`.
+
 ## Como validar
 
 Depois da publicação:
