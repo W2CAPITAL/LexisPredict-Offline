@@ -47,6 +47,9 @@ assert.match(ui,/action:"build"/);
 assert.match(ui,/action:"research"/);
 assert.match(ui,/action:"imagine"/);
 assert.match(ui,/action:"report"/);
+assert.match(ui,/applyRemoteCatalog/);
+assert.match(ui,/capabilities\?\.catalog/);
+assert.doesNotMatch(ui,/PREDICTLM_ACCESS_TOKEN/);
 
 const runtime=fs.readFileSync(path.join(__dirname,"..","lib","predict-runtime.js"),"utf8");
 assert.match(runtime,/Qwen3-1\.7B-q4f16_1-MLC/);
