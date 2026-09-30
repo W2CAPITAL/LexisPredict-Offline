@@ -327,9 +327,9 @@ async function apiSheets(payload){
     const e=new Error(j.error||"Falha ao acessar a planilha");
     e.status=r.status;e.data=j;e.transient=!!j.transient||r.status>=500;throw e;
   }
-  if(j.upgradeRequired){
-    const e=new Error(j.error||"Atualização do Google Apps Script necessária.");
-    e.status=r.status;e.data=j;e.upgradeRequired=true;throw e;
+  if(j.upgradeRequired||j.deploymentOutdated||j.bridgeMismatch){
+    const e=new Error(j.error||"A implantação do Google Apps Script não corresponde ao bridge esperado.");
+    e.status=r.status;e.data=j;e.upgradeRequired=!!j.upgradeRequired;e.deploymentOutdated=!!j.deploymentOutdated;e.bridgeMismatch=!!j.bridgeMismatch;throw e;
   }
   if(j.transient){
     const e=new Error(j.error||"Planilha temporariamente indisponível; o cache local foi preservado.");
@@ -384,9 +384,10 @@ async function syncFromCloud(opts={}){
     render();
     void syncCRM({quiet:true}).then(()=>{if(window.WAAutoModule?.backgroundSync)void window.WAAutoModule.backgroundSync(state.companyRows,crmClients());}).catch(()=>{});
   } catch(e) {
-    if(e?.upgradeRequired){
-      showBanner("ATUALIZAÇÃO DO APPS SCRIPT NECESSÁRIA: publique o installer 8.1 em LEXIS-SYNC-AppsScript.gs. A carteira local foi preservada.","bad");
-      return {ok:false,upgradeRequired:true,error:e.message||String(e)};
+    if(e?.upgradeRequired||e?.deploymentOutdated||e?.bridgeMismatch){
+      const prefix=e?.bridgeMismatch?"IMPLANTAÇÃO DO APPS SCRIPT DIVERGENTE: ":e?.deploymentOutdated?"IMPLANTAÇÃO DO APPS SCRIPT ANTIGA: ":"ATUALIZAÇÃO DO APPS SCRIPT NECESSÁRIA: ";
+      showBanner(prefix+(e.message||String(e))+" A carteira local foi preservada.","bad");
+      return {ok:false,upgradeRequired:!!e?.upgradeRequired,deploymentOutdated:!!e?.deploymentOutdated,bridgeMismatch:!!e?.bridgeMismatch,error:e.message||String(e)};
     }
     if(e?.transient){
       if(!opts.quiet)showBanner("Google Sheets está temporariamente ocupado. A carteira local continua disponível e a reconexão será automática.","bad");
@@ -451,8 +452,9 @@ function scheduleSheetRecovery(delay=5000){
         showBanner("Conexão com a planilha restabelecida.","good");
       }
     }catch(e){
-      if(e?.upgradeRequired){
-        showBanner("ATUALIZAÇÃO DO APPS SCRIPT NECESSÁRIA: publique o installer 8.1 em LEXIS-SYNC-AppsScript.gs.","bad");
+      if(e?.upgradeRequired||e?.deploymentOutdated||e?.bridgeMismatch){
+        const prefix=e?.bridgeMismatch?"IMPLANTAÇÃO DO APPS SCRIPT DIVERGENTE: ":e?.deploymentOutdated?"IMPLANTAÇÃO DO APPS SCRIPT ANTIGA: ":"ATUALIZAÇÃO DO APPS SCRIPT NECESSÁRIA: ";
+        showBanner(prefix+(e.message||String(e)),"bad");
         return;
       }
       if(e?.transient)scheduleSheetRecovery(Math.min(45000,Math.max(7000,Number(e.retryAfterMs)||waitMs*1.7)));
