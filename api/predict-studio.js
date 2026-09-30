@@ -1,3 +1,5 @@
+const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
+
 const MAX_JSON=700_000;
 const TIMEOUTS={status:10000,chat:45000,work:45000,tutor:45000,legal:65000,build:90000,research:70000,imagine:90000,report:100000};
 
@@ -8,7 +10,9 @@ function privateHost(host){
   const m=h.match(/^172\.(\d+)\./);if(m&&Number(m[1])>=16&&Number(m[1])<=31)return true;
   return /^\d+\.\d+\.\d+\.\d+$/.test(h)||/^\[?[0-9a-f:]+\]?$/i.test(h);
 }
+function predictKey(){return String(process.env.PREDICTLM_API_KEY||process.env.PREDICTLM_ACCESS_TOKEN||"").trim()}
 function baseUrl(){
+  if(!predictKey())return null;
   const raw=String(process.env.PREDICTLM_URL||"").trim();
   if(!raw)return null;
   let u;try{u=new URL(raw)}catch{return null}
@@ -26,7 +30,7 @@ function urlAt(base,path,query){
 }
 function clean(v,max=12000){return String(v??"").replace(/\u0000/g,"").trim().slice(0,max)}
 function bearer(){
-  const token=String(process.env.PREDICTLM_ACCESS_TOKEN||"").trim();
+  const token=predictKey();
   return token?{Authorization:"Bearer "+token}:{};
 }
 function ashnaConfig(){
@@ -37,8 +41,20 @@ function ashnaConfig(){
   base.pathname=base.pathname.replace(/\/$/,"");base.search="";base.hash="";
   return {base,key,model:String(process.env.ASHNA_AGENT_ID||process.env.ASHNA_MODEL||"glm-5.3-flash").trim()};
 }
-async function callAshna(body,surface){
-  const cfg=ashnaConfig();if(!cfg)throw Object.assign(new Error("AshnaAI não configurada."),{status:503,code:"ASHNA_NOT_CONFIGURED"});
+function customAiConfig(){
+  const key=String(process.env.SHEETSPREDICT_AI_API_KEY||"").trim();
+  const raw=String(process.env.SHEETSPREDICT_AI_BASE_URL||"").trim();
+  const model=String(process.env.SHEETSPREDICT_AI_MODEL||"").trim();
+  if(!key||!raw||!model)return null;
+  let base;try{base=new URL(raw)}catch{return null}
+  if(base.protocol!=="https:"||privateHost(base.hostname))return null;
+  base.pathname=base.pathname.replace(/\/$/,"");base.search="";base.hash="";
+  return {base,key,model,name:String(process.env.SHEETSPREDICT_AI_NAME||"IA própria").trim().slice(0,80)||"IA própria"};
+}
+function fallbackAiConfig(){return customAiConfig()||ashnaConfig()}
+
+async function callAshna(body,surface,cfg=fallbackAiConfig()){
+  if(!cfg)throw Object.assign(new Error("Nenhuma IA compatível foi habilitada."),{status:503,code:"AI_NOT_CONFIGURED"});
   const payload=chatPayload(body,surface);
   if(!payload.prompt)throw Object.assign(new Error("Informe uma mensagem."),{status:400});
   const messages=[
@@ -63,7 +79,7 @@ async function callAshna(body,surface){
     if(!r.ok)throw Object.assign(new Error(clean(data?.error?.message||data?.error||("AshnaAI HTTP "+r.status),900)),{status:r.status,code:"ASHNA_UPSTREAM_ERROR"});
     const content=clean(data?.choices?.[0]?.message?.content||data?.response,30000);
     if(!content)throw Object.assign(new Error("AshnaAI retornou resposta vazia."),{status:502,code:"ASHNA_EMPTY"});
-    return {ok:true,surface,content,provider:"ashna",model:cfg.model};
+    return {ok:true,surface,content,provider:cfg.name||"ashna",model:cfg.model};
   }finally{clearTimeout(timer)}
 }
 async function call(base,path,{method="POST",body,query,timeoutMs=45000,expect="json"}={}){
@@ -148,18 +164,20 @@ function imageBody(body){
 module.exports=async(req,res)=>{
   res.setHeader("Cache-Control","no-store");
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"POST only"});
+  if(!requireSameOrigin(req,res))return;
+  const auth=await requireSession(req,res);if(!auth)return;
   const len=Number(req.headers["content-length"]||0);
   if(len>MAX_JSON)return res.status(413).json({ok:false,error:"Payload acima do limite do Predict Studio."});
   const base=baseUrl();
   const body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});
   const action=String(body.action||"status").toLowerCase();
 
-  const ashna=ashnaConfig();
+  const ashna=fallbackAiConfig();
 
   if(!base && !ashna){
     return res.status(503).json({
       ok:false,configured:false,code:"PREDICTLM_NOT_CONFIGURED",
-      error:"Nenhum chatbot remoto está configurado. Configure PREDICTLM_URL ou ASHNA_API_KEY."
+      error:"Nenhum chatbot remoto foi habilitado neste deploy."
     });
   }
 
@@ -169,12 +187,12 @@ module.exports=async(req,res)=>{
       if(base){
         try{
           out=await call(base,"/api/capabilities",{method:"GET",query:{surface:clean(body.surface||"chat",30),q:clean(body.q,400)},timeoutMs:TIMEOUTS.status});
-          return res.status(200).json({ok:true,configured:true,source:base.origin,chatProvider:ashna?"PredictLM + AshnaAI fallback":"PredictLM",capabilities:out.data});
+          return res.status(200).json({ok:true,configured:true,chatProvider:ashna?"PredictLM + fallback privado":"PredictLM",capabilities:out.data});
         }catch(e){
           if(!ashna)throw e;
         }
       }
-      return res.status(200).json({ok:true,configured:true,source:"ashna.ai",chatProvider:"AshnaAI direct",capabilities:{surfaces:["chat","work","tutor"],provider:"ashna",model:ashna.model,limitedToChat:true}});
+      return res.status(200).json({ok:true,configured:true,chatProvider:ashna.name||"IA compatível",capabilities:{surfaces:["chat","work","tutor"],provider:ashna.name||"compatível",model:ashna.model,limitedToChat:true}});
     }
     if(["chat","work","tutor"].includes(action)){
       const payload=chatPayload(body,action);
@@ -187,9 +205,9 @@ module.exports=async(req,res)=>{
           if(!ashna)throw e;
         }
       }
-      return res.status(200).json(await callAshna(body,action));
+      return res.status(200).json(await callAshna(body,action,ashna));
     }
-    if(!base)return res.status(503).json({ok:false,configured:false,code:"PREDICTLM_REQUIRED_SURFACE",error:"Esta superfície exige o runtime completo do PredictLM. AshnaAI está disponível para Chat, Work e Tutor."});
+    if(!base)return res.status(503).json({ok:false,configured:false,code:"PREDICTLM_REQUIRED_SURFACE",error:"Esta superfície exige uma chave válida do runtime PredictLM. A IA alternativa permanece limitada ao chat."});
     if(action==="legal"){
       const number=legalNumber(body);if(!number)return res.status(400).json({ok:false,error:"Informe o CNJ."});
       out=await call(base,"/api/legal/process",{body:{number},timeoutMs:TIMEOUTS.legal});
