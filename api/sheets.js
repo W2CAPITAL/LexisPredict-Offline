@@ -80,7 +80,12 @@ module.exports=async(req,res)=>{
     const sess=cookies(req).lexis_session||"";
     if(!["login","auth","ping","logout"].includes(action)){
       const check=await validateSession(req);
-      if(!check.ok)return res.status(check.status||401).json({ok:false,error:check.error||"Não autenticado"});
+      if(!check.ok){
+        if(check.transient||Number(check.status)>=500){
+          return transientRead(res,action,check.error||"Google Apps Script está temporariamente indisponível durante a validação da sessão.",check.status||503);
+        }
+        return res.status(check.status||401).json({ok:false,error:check.error||"Não autenticado",reason:check.reason||"auth_failed"});
+      }
     }
     if(action!=="login"&&action!=="auth"&&action!=="ping"&&sess)payload.sess=sess;
 
