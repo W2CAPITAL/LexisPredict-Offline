@@ -1,4 +1,4 @@
-const {validateSession,requireSameOrigin}=require("../lib/bridge-auth");
+const {validateSession,requireSameOrigin,setSessionCookie,clearSessionCookie}=require("../lib/bridge-auth");
 const {scopeRows,isElevated}=require("../lib/sheet-scope");
 function safeUrl(raw){
   let u;try{u=new URL(String(raw||""))}catch{throw new Error("LEXIS_APPS_SCRIPT_URL inválida ou ausente na Vercel.")}
@@ -6,15 +6,6 @@ function safeUrl(raw){
   if(!okHost||u.protocol!=="https:")throw new Error("LEXIS_APPS_SCRIPT_URL deve ser uma URL HTTPS do Google Apps Script.");
   if(u.hostname==="script.google.com"&&!/\/macros\/s\/.+\/exec\/?$/.test(u.pathname))throw new Error("LEXIS_APPS_SCRIPT_URL deve terminar em /exec.");
   return u.toString();
-}
-function cookies(req){
-  const out={};String(req.headers.cookie||"").split(";").forEach(p=>{const i=p.indexOf("=");if(i>0)out[p.slice(0,i).trim()]=decodeURIComponent(p.slice(i+1).trim())});return out;
-}
-function setSessionCookie(res,value){
-  res.setHeader("Set-Cookie","lexis_session="+encodeURIComponent(value)+"; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800");
-}
-function clearSessionCookie(res){
-  res.setHeader("Set-Cookie","lexis_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
 }
 const READ_ACTIONS=new Set(["auto","list","get","crm_list","judicial_history","ping","users","list_users"]);
 const TRANSIENT_STATUSES=new Set([408,425,429,500,502,503,504]);
@@ -26,7 +17,8 @@ async function fetchBridge(url,body,action){
   const attempts=1;
   let lastError=null,lastStatus=0,lastText="";
   for(let attempt=0;attempt<attempts;attempt++){
-    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),10000);
+    const timeoutMs=action==="list"?12000:action==="auto"?7000:10000;
+    const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
     try{
       const up=await fetch(url,{
         method:"POST",
@@ -77,20 +69,30 @@ module.exports=async(req,res)=>{
     const fixedToken=String(process.env.LEXIS_SHEETS_TOKEN||"").trim();
     if(!fixedToken)return res.status(500).json({ok:false,error:"LEXIS_SHEETS_TOKEN não está configurado na Vercel."});
 
-    const sess=cookies(req).lexis_session||"";
+    let auth=null;
     if(!["login","auth","ping","logout"].includes(action)){
-      const check=await validateSession(req);
-      if(!check.ok){
-        if(check.transient||Number(check.status)>=500){
-          return transientRead(res,action,check.error||"Google Apps Script está temporariamente indisponível durante a validação da sessão.",check.status||503);
+      auth=await validateSession(req);
+      if(!auth.ok){
+        if(auth.transient||Number(auth.status)>=500){
+          return transientRead(res,action,auth.error||"Google Apps Script está temporariamente indisponível durante a validação da sessão.",auth.status||503);
         }
-        return res.status(check.status||401).json({ok:false,error:check.error||"Não autenticado",reason:check.reason||"auth_failed"});
+        return res.status(auth.status||401).json({ok:false,error:auth.error||"Não autenticado",reason:auth.reason||"auth_failed"});
       }
+      if(auth.legacy)setSessionCookie(res,auth.sess,auth.user||null);
+      if(action==="session"){
+        res.setHeader("Cache-Control","no-store");
+        return res.status(200).json({ok:true,user:auth.user||null,local:!!auth.local,upgraded:!!auth.legacy});
+      }
+      payload.sess=auth.sess;
     }
-    if(action!=="login"&&action!=="auth"&&action!=="ping"&&sess)payload.sess=sess;
 
-    const bridged=await fetchBridge(url,{...payload,token:fixedToken},action);
-    const up=bridged.up,txt=bridged.txt,data=bridged.data;
+    const bridgePayload={...payload,action:action==="list"?"list_compact":action,token:fixedToken};
+    let bridged=await fetchBridge(url,bridgePayload,action);
+    let up=bridged.up,txt=bridged.txt,data=bridged.data;
+    if(action==="list"&&data&&data.ok===false&&/acao desconhecida:\s*list_compact/i.test(String(data.error||""))){
+      bridged=await fetchBridge(url,{...payload,action:"list",token:fixedToken},action);
+      up=bridged.up;txt=bridged.txt;data=bridged.data;
+    }
     if(bridged.parseError){
       if(READ_ACTIONS.has(action))return transientRead(res,action,"Google Apps Script está trocando de versão ou respondeu temporariamente fora do formato esperado.",up.status);
       res.setHeader("Cache-Control","no-store");
@@ -110,7 +112,7 @@ module.exports=async(req,res)=>{
     if((action==="login"||action==="auth")&&data&&data.ok){
       const sessionToken=String(data.token||data.sess||data.session||"").trim();
       if(!sessionToken)return res.status(502).json({ok:false,error:"Apps Script autenticou, mas não retornou uma sessão."});
-      setSessionCookie(res,sessionToken);
+      setSessionCookie(res,sessionToken,data.user||null);
       const clean={...data};delete clean.token;delete clean.sess;delete clean.session;
       return res.status(up.ok?200:up.status).json(clean);
     }
@@ -121,9 +123,17 @@ module.exports=async(req,res)=>{
     }
 
     if(action==="list"&&data&&data.ok){
-      const user=data.user||null;
+      const user=data.user||auth?.user||null;
       if(!user)return res.status(502).json({ok:false,error:"O bridge não retornou o usuário da sessão para aplicar o escopo da carteira."});
-      const source=Array.isArray(data.rows)?data.rows:(Array.isArray(data.todas)?data.todas:[]);
+      let source=[];
+      if(data.compact&&Array.isArray(data.headers)&&Array.isArray(data.matrix)){
+        const headers=data.headers;
+        source=data.matrix.map(values=>{
+          const row={};headers.forEach((h,i)=>{row[h]=values?.[i]??""});return row;
+        });
+      }else{
+        source=Array.isArray(data.rows)?data.rows:(Array.isArray(data.todas)?data.todas:[]);
+      }
       const requestedScope=String(payload.scope||"mine").toLowerCase()==="company"?"company":"mine";
       const scoped=scopeRows(source,user,requestedScope);
       data.rows=scoped;
@@ -132,7 +142,7 @@ module.exports=async(req,res)=>{
       data.scope=requestedScope==="company"
         ?{field:"ALL",value:"*",mode:"company",sourceCount:source.length}
         :{field:isElevated(user.perfil)?"ALL":"Assistente",value:isElevated(user.perfil)?"*":(user.nome||user.usuario||""),mode:"mine",sourceCount:source.length};
-      delete data.todas;
+      delete data.matrix;delete data.todas;
     }
 
     if((action==="write"||action==="upsert_batch")&&data){
