@@ -35,7 +35,8 @@ assert.match(app,/pageSize=600/,"carteira deve carregar em páginas menores");
 assert.match(installer,/function listCompactAction_/,"installer deve oferecer listagem compacta");
 assert.match(installer,/function readRowsCompact_/,"installer deve ler apenas a página necessária");
 
-assert.match(sheetsApi,/APPS_SCRIPT_OUTDATED/,"bridge deve identificar Apps Script desatualizado sem fallback pesado");
+assert.match(sheetsApi,/APPS_SCRIPT_ROUTE_MISMATCH/,"bridge deve identificar rota publicada incompatível");
+assert.match(sheetsApi,/APPS_SCRIPT_LEGACY_FAILED/,"bridge deve sinalizar falha do modo legado sem apagar a carteira");
 assert.match(app,/syncJitter/,"sincronização multiusuário deve ter jitter");
 assert.match(installer,/faltam menos de 2 horas/,"sessão do Apps Script não deve ser regravada a cada página");
 
