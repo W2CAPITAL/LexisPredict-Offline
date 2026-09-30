@@ -347,11 +347,27 @@ async function syncFromCloud(opts={}){
   try{
     try{await flushOutbox({force:!opts.quiet})}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
     try{await flushCrmOutbox()}catch(_){}
-    const payload={action:"list",limit:8000,scope:"company"};
-    const j=await apiSheets(payload);
-    let rows=j.rows||j.data||j.todas||[];if(!Array.isArray(rows))throw new Error("Bridge não retornou uma lista de processos.");
     const pending=await idbAll("outbox");
-    rows=mergePending(rows,pending);
+    const pageSize=600,collected=[];
+    let offset=0,hasMore=true,totalRows=0,pages=0;
+    while(hasMore&&pages<20){
+      const j=await apiSheets({action:"list",limit:pageSize,offset,scope:"company"});
+      const page=j.rows||j.data||[];
+      if(!Array.isArray(page))throw new Error("Bridge não retornou uma página válida de processos.");
+      collected.push(...page);
+      totalRows=Math.max(totalRows,Number(j.totalRows||0));
+      hasMore=!!j.hasMore;
+      offset=Number(j.nextOffset);
+      if(!Number.isFinite(offset)||offset<0)offset=(pages+1)*pageSize;
+      pages++;
+      if(pages===1&&!state.companyRows.length&&page.length){
+        state.companyRows=mergePending(page,pending);refreshScopes();await saveRows(state.companyRows);render();
+      }
+      if(!opts.quiet&&hasMore)showBanner("Carregando carteira… "+collected.length+(totalRows?" de "+totalRows:"")+" registros recebidos.","good");
+      if(hasMore)await updateSleep(60);
+    }
+    if(hasMore)throw Object.assign(new Error("A carteira excedeu o limite de paginação desta sincronização."),{transient:true,retryAfterMs:5000});
+    let rows=mergePending(collected,pending);
     enrichCandidates=autoEnrichCandidates(rows,previousKeys);
     state.companyRows=rows;refreshScopes();await saveRows(rows);
     state.lastSync=now();state.lastSyncAt=Date.now();
@@ -411,7 +427,7 @@ function scheduleSheetRecovery(delay=5000){
   scheduleSheetRecovery.t=setTimeout(async()=>{
     if(!state.session||!navigator.onLine||state.syncing||state.updateLock)return;
     try{
-      const check=await apiSheets({action:"auto"});
+      const check=await apiSheets({action:"session"});
       if(check?.ok){
         saveSession({user:check.user||state.session?.user||{}});
         await syncFromCloud({quiet:true});
@@ -2229,35 +2245,38 @@ async function boot(){
   try{await loadLocal()}catch(_){state.companyRows=[];state.rows=[]}
   try{await loadCrmCache()}catch(_){}
 
-  // Offline-first: em F5 sem rede, mantém a sessão visual e os dados já validados
-  // anteriormente neste navegador. Nenhum token é salvo no localStorage.
-  if(!navigator.onLine&&cachedSession&&state.companyRows.length){
-    setLogged(true);applyUser();render();startAutoSync();updateSyncUi();return;
+  // Abre imediatamente pelo cache validado do navegador. A sessão do servidor é
+  // conferida em paralelo; assim um cold-start do Apps Script não trava a interface.
+  if(cachedSession){
+    state.session=cachedSession;refreshScopes();setLogged(true);applyUser();render();startAutoSync();updateSyncUi();
+    if(!navigator.onLine)return;
+    void (async()=>{
+      try{
+        const check=await apiSheets({action:"session"});
+        if(!check?.ok)throw new Error(check?.error||"Sessão inválida");
+        saveSession({user:check.user||cachedSession.user||{}});
+        applyUser();
+        const pending=await outboxCount().catch(()=>0);
+        if(!cacheFresh()||!state.companyRows.length||pending)await syncFromCloud({quiet:true});
+        else void syncCRM({quiet:true}).catch(()=>{});
+      }catch(e){
+        if(e?.transient||Number(e?.status)>=500){
+          showBanner(state.companyRows.length?"Planilha temporariamente indisponível. Mantendo a carteira em cache e reconectando automaticamente.":"Planilha temporariamente indisponível. Reconectando automaticamente…","bad");
+          scheduleSheetRecovery(Number(e?.retryAfterMs)||5000);
+        }
+      }
+    })();
+    return;
   }
 
   try{
-    const check=await apiSheets({action:"auto"});
+    const check=await apiSheets({action:"session"});
     if(!check?.ok)throw new Error(check?.error||"Sessão inválida");
-    saveSession({user:check.user||cachedSession?.user||{}});
-    refreshScopes();
-    setLogged(true);applyUser();render();startAutoSync();
-
-    const pending=await outboxCount().catch(()=>0);
-    if(!cacheFresh()||!state.companyRows.length||pending){
-      // Renderiza primeiro o cache; a sincronização pesada vem depois.
-      void syncFromCloud({quiet:true}).catch(e=>showBanner("Cache disponível; sincronização falhou: "+(e.message||String(e)),"bad"));
-    } else {
-      void syncCRM({quiet:true}).catch(()=>{});
-    }
+    saveSession({user:check.user||{}});
+    refreshScopes();setLogged(true);applyUser();render();startAutoSync();
+    void syncFromCloud({quiet:true}).catch(()=>{});
   }catch(e){
-    const transient=!!e?.transient||Number(e?.status)>=500;
-    if(transient&&cachedSession){
-      state.session=cachedSession;refreshScopes();setLogged(true);applyUser();render();startAutoSync();
-      showBanner(state.companyRows.length?"Planilha temporariamente indisponível durante a atualização. Mantendo a carteira em cache e reconectando automaticamente.":"Planilha temporariamente indisponível durante a atualização. Reconectando automaticamente…","bad");
-      scheduleSheetRecovery(Number(e?.retryAfterMs)||5000);
-    }else{
-      saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
-    }
+    saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
   }
   updateSyncUi();
 }

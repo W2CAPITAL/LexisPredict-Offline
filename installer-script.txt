@@ -1223,6 +1223,31 @@ function readRows_(opts) {
 
 }
 
+function readRowsCompact_(opts) {
+  opts = opts || {};
+  var sh = getProcSheet_();
+  var headers = headers_(sh);
+  var lastRow = sh.getLastRow();
+  var totalPhysical = Math.max(0, lastRow - HEADER_ROW);
+  var offset = Math.max(0, Math.min(totalPhysical, Number(opts.offset || 0)));
+  var limit = Math.min(800, Math.max(100, Number(opts.limit || 600)));
+  var startRow = HEADER_ROW + 1 + offset;
+  var count = Math.max(0, Math.min(limit, lastRow - startRow + 1));
+  var matrix = count > 0 ? sh.getRange(startRow, 1, count, headers.length).getValues() : [];
+  matrix = matrix.filter(function(values){
+    return values.some(function(v){ return String(v == null ? "" : v).trim() !== ""; });
+  });
+  var nextOffset = offset + count;
+  return {
+    headers: headers,
+    matrix: matrix,
+    offset: offset,
+    nextOffset: nextOffset,
+    hasMore: nextOffset < totalPhysical,
+    totalRows: totalPhysical
+  };
+}
+
 
 
 function findRowMap_(sh, headers, data) {
@@ -1993,22 +2018,21 @@ function syncDoPost_(e) {
       return out_(djenFetchAndPersist_(body,df.us));
     }
 
+    if (action === "list_compact") {
+      return out_(listCompactAction_(body));
+    }
+
     if (action === "list") {
-
       return out_(listAction_(body));
-
     }
 
     if (action === "get") {
-
+      var vg = validSess_(body.sess);
+      if (vg.err) return out_({ ok: false, error: vg.err });
       var rows = readRows_({ limit: 8000 }).rows;
-
       var target = digits(body.protocolo || body.cnj || "");
-
       var found = rows.find(function (r) { return digits(r.Protocolo || r.protocolo || r.protocolo_ref || "") === target; });
-
       return out_({ ok: true, row: found || null, data: found ? [found] : [] });
-
     }
 
     if (action === "write") {
@@ -2028,9 +2052,9 @@ function syncDoPost_(e) {
     }
 
     if (action === "upsert_batch") {
-
+      var vb = validSess_(body.sess);
+      if (vb.err) return out_({ ok: false, error: vb.err });
       return out_(upsertBatch_(body));
-
     }
 
     if (action === "users" || action === "list_users") {
@@ -2105,52 +2129,50 @@ function publicUser_(us) {
 
 
 
-function listAction_(body) {
-
-  var sh = getProcSheet_();
-
-  var all = readRows_({ limit: Math.min(Number(body.limit || 8000), 8000) });
-
-  var vs = body.sess ? validSess_(body.sess) : { err: null, us: null };
-
-  var isAdmin = !vs.us || roleAccess(vs.us.perfil) >= 20;
-
-  var user = vs.us;
-
-  var rows = all.rows;
-
-  if (body.responsavel && !isAdmin) {
-
-    var owner = norm(body.responsavel);
-
-    rows = rows.filter(function (r) {
-
-      return norm(r.Responsavel || r.CreatedBy || r.created_by || r.responsavel || "") === owner;
-
-    });
-
-  }
-
+function listCompactAction_(body) {
+  var vs = validSess_(body.sess);
+  if (vs.err) return { ok:false, error:vs.err };
+  var all = readRowsCompact_({
+    offset: Math.max(0, Number(body.offset || 0)),
+    limit: Math.min(800, Math.max(100, Number(body.limit || 600)))
+  });
   return {
-
-    ok: true,
-
-    rows: rows,
-
-    todas: all.rows,
-
-    minhas: rows,
-
-    headers: all.headers,
-
-    count: rows.length,
-
-    user: user ? publicUser_(user) : null,
-
-    v: "8.0"
-
+    ok:true,
+    compact:true,
+    headers:all.headers,
+    matrix:all.matrix,
+    offset:all.offset,
+    nextOffset:all.nextOffset,
+    hasMore:all.hasMore,
+    totalRows:all.totalRows,
+    user:publicUser_(vs.us),
+    v:"8.1"
   };
+}
 
+function listAction_(body) {
+  var vs = validSess_(body.sess);
+  if (vs.err) return { ok:false, error:vs.err };
+  var all = readRows_({ limit: Math.min(Number(body.limit || 8000), 8000) });
+  var isAdmin = roleAccess(vs.us.perfil) >= 20;
+  var user = vs.us;
+  var rows = all.rows;
+  if (body.responsavel && !isAdmin) {
+    var owner = norm(body.responsavel);
+    rows = rows.filter(function (r) {
+      return norm(r.Responsavel || r.CreatedBy || r.created_by || r.responsavel || "") === owner;
+    });
+  }
+  return {
+    ok:true,
+    rows:rows,
+    todas:all.rows,
+    minhas:rows,
+    headers:all.headers,
+    count:rows.length,
+    user:publicUser_(user),
+    v:"8.1"
+  };
 }
 
 
