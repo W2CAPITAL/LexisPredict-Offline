@@ -10,6 +10,19 @@
   <title>SheetsPredict</title>
 </head>
 <body>
+  <div id="appUpdateOverlay" class="app-update-overlay hidden" role="status" aria-live="assertive" aria-modal="true">
+    <div class="app-update-card">
+      <div class="app-update-mark">SP</div>
+      <div class="app-update-copy">
+        <span class="eyebrow" id="appUpdateEyebrow">ATUALIZAÇÃO DO SISTEMA</span>
+        <h2 id="appUpdateTitle">Preparando atualização</h2>
+        <p id="appUpdateDetail">O SheetsPredict vai bloquear temporariamente login e edições para proteger os dados.</p>
+        <div class="app-update-progress"><span id="appUpdateProgress"></span></div>
+        <small id="appUpdateMeta">Nenhuma alteração será permitida até a conclusão.</small>
+      </div>
+      <button class="btn hidden" id="appUpdateRetry" type="button">Tentar novamente</button>
+    </div>
+  </div>
   <div id="login" class="login-shell">
     <section class="login-art">
       <div class="brand"><span class="brand-mark">S</span><span>SheetsPredict</span></div>
