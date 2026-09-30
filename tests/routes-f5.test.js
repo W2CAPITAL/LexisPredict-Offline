@@ -18,4 +18,10 @@ assert.match(sheetsApi,/res\.status\(202\)\.json\(\{ok:false,transient:true,degr
 assert.match(sheetsApi,/setTimeout\(\(\)=>ctrl\.abort\(\),10000\)/,"bridge não deve bloquear a UI por dezenas de segundos");
 assert.match(app,/scheduleSheetRecovery/,"cliente deve reconectar automaticamente após timeout transitório");
 
+
+const bridgeAuth=fs.readFileSync(path.join(__dirname,"..","lib","bridge-auth.js"),"utf8");
+assert.match(bridgeAuth,/transient:true/,"timeout de validação deve ser transitório e não 401");
+assert.match(bridgeAuth,/status:401,reason:"expired_session"/,"401 deve ficar reservado para sessão realmente expirada");
+assert.match(sheetsApi,/check\.transient\|\|Number\(check\.status\)>=500/,"api/sheets deve preservar sessão em falha transitória");
+
 console.log("routes-f5: ok");
