@@ -1417,7 +1417,7 @@ function bindProcessList(renderFn,view){
   $$("[data-history]").forEach(b=>b.onclick=()=>openHistory(b.dataset.history));
   $$("[data-attendance]").forEach(b=>b.onclick=()=>openAttendance(b.dataset.attendance));
   $$("[data-contact]").forEach(b=>b.onclick=()=>markContacted(b.dataset.contact));
-  $$$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
+  $$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
 function renderProcessos(){
   const all=filteredRows(state.rows),rows=all.slice(0,pageLimit("processos"));
