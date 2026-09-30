@@ -929,3 +929,106 @@ body.sidebar-collapsed .global-x-scroll{left:76px}
   .kpi{min-height:96px;padding:12px}.kpi strong{font-size:22px}
   .wa-page{padding-inline:10px}
 }
+
+
+/* SheetsPredict responsive shell v4 */
+@media(min-width:1500px){
+  .content{max-width:1900px;padding-left:30px;padding-right:30px}
+  .hub-grid.two{grid-template-columns:minmax(0,1.55fr) minmax(360px,.7fr)}
+  .hub-grid.ai-layout{grid-template-columns:minmax(0,1.75fr) minmax(320px,.55fr)}
+  .hub-kpis{grid-template-columns:repeat(6,minmax(150px,1fr))}
+  .hub-source-grid{grid-template-columns:repeat(2,minmax(260px,1fr))}
+}
+@media(max-width:1000px){
+  .topbar{height:auto;min-height:68px}
+  .lexis-page-header{align-items:flex-start;flex-direction:column}
+  .lexis-page-header .command-actions{width:100%}
+  .lexis-page-header .command-actions .btn{flex:1 1 auto}
+  .hub-grid.two,.hub-grid.ai-layout{grid-template-columns:1fr}
+  .hub-ai-card{min-height:0}
+  .hub-chat{max-height:48dvh}
+}
+@media(max-width:700px){
+  html,body{height:100dvh}
+  .app-shell,.app-shell.hidden{height:100dvh}
+  .app-shell:not(.hidden){display:block}
+  .main{height:100dvh;width:100%;padding-bottom:72px}
+  .sidebar{
+    position:fixed;z-index:120;left:0;right:0;bottom:0;top:auto;
+    width:100%;height:72px;min-height:72px;padding:6px 8px calc(6px + env(safe-area-inset-bottom));
+    border-right:0;border-top:1px solid rgba(255,255,255,.12);
+    display:block;overflow:hidden
+  }
+  .sidebar-top,.sidebar-foot,.nav-section-label,.mode-chip{display:none!important}
+  #nav{
+    height:60px;display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;
+    padding:0 2px 3px;scroll-snap-type:x proximity;scrollbar-width:none
+  }
+  #nav::-webkit-scrollbar{display:none}
+  .nav-item{
+    flex:0 0 66px;min-width:66px;height:56px;min-height:56px;padding:5px 4px;
+    border-radius:9px;display:flex;flex-direction:column;justify-content:center;align-items:center;
+    gap:3px;text-align:center;scroll-snap-align:center;font-size:8px;line-height:1.1
+  }
+  .nav-item>span:not(.nav-icon):not(.nav-count){display:block!important;max-width:62px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nav-icon{width:auto;font-size:17px;line-height:1}
+  .nav-count{position:absolute!important;right:5px!important;top:3px!important;margin:0!important;padding:0 4px;font-size:7px}
+  .topbar{padding:9px 11px;min-height:60px;gap:8px}
+  .topbar h1{font-size:18px}
+  .topbar .eyebrow{font-size:8px}
+  .top-actions{gap:5px}
+  .top-actions .btn{height:36px;padding:0 9px;font-size:9px}
+  .content{padding:12px 10px 126px;scrollbar-gutter:auto}
+  .banner{margin:8px 10px 0}
+  .global-x-scroll{left:0!important;bottom:72px;height:18px}
+  .lexis-page-header{padding:14px;border-radius:12px;gap:12px}
+  .lexis-page-header h2{font-size:20px}
+  .lexis-page-header .command-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+  .lexis-page-header .command-actions .btn{width:100%;min-width:0;padding-inline:8px}
+  .lexis-tabbar,.hub-tabs{margin-inline:-2px;border-radius:10px;scrollbar-width:none}
+  .lexis-tabbar::-webkit-scrollbar,.hub-tabs::-webkit-scrollbar{display:none}
+  .hub-tabs{position:sticky;top:0;z-index:14;padding:4px}
+  .hub-tabs button{height:40px;padding:0 12px}
+  .hub-kpis,.hub-kpis.compact,.dashboard-kpis,.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .kpi{min-height:92px;padding:12px}
+  .kpi strong{font-size:23px}
+  .hub-source-grid{grid-template-columns:1fr;padding:10px}
+  .hub-source-card{padding:12px}
+  .hub-source-card small{font-size:9px;white-space:normal}
+  .hub-actions,.hub-form{padding:10px}
+  .hub-action{min-height:62px}
+  .hub-grid{gap:10px}
+  .card-head{padding:12px;align-items:flex-start;flex-wrap:wrap}
+  .hub-ai-card{min-height:0}
+  .hub-chat{min-height:260px;max-height:42dvh;padding:10px}
+  .hub-msg{max-width:96%;font-size:11px;padding:10px}
+  .hub-compose{padding:10px}
+  .hub-compose .row.end{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .hub-compose .hub-check{grid-column:1/-1}
+  .hub-compose .btn{width:100%}
+  .grid-2{grid-template-columns:1fr}
+  .row.end{flex-wrap:wrap}
+  .row.end .btn{min-height:40px}
+  .record-toolbar{position:static}
+  .toolbar{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .toolbar .search-field{grid-column:1/-1}
+  .toolbar .btn{width:100%}
+  .crm-table{max-height:none}
+  .process-actions{min-width:360px}
+  .dialog{width:calc(100% - 12px);max-width:none}
+  .dialog-card,.dialog-card.wide{width:100%;max-width:none;border-radius:14px;padding:14px}
+  .history-card{height:88dvh}
+}
+@media(max-width:420px){
+  .top-actions #syncBtn{display:none}
+  .top-actions .btn.primary{max-width:124px}
+  .hub-kpis,.hub-kpis.compact,.dashboard-kpis,.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hub-kpis .kpi,.dashboard-kpis .kpi{min-width:0}
+  .hub-kpis .kpi strong,.dashboard-kpis .kpi strong{font-size:20px}
+  .hub-kpis .kpi span,.hub-kpis .kpi small,.dashboard-kpis .kpi span,.dashboard-kpis .kpi small{font-size:8px}
+  .lexis-page-header .command-actions{grid-template-columns:1fr}
+  .toolbar{grid-template-columns:1fr}
+  .toolbar .search-field{grid-column:auto}
+  .hub-compose .row.end{grid-template-columns:1fr}
+  .nav-item{flex-basis:62px;min-width:62px}
+}
