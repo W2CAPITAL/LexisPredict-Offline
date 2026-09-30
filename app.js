@@ -789,6 +789,7 @@ function titleFor(v){return {
   tarefas:["OPERAÇÃO","Tarefas"],
   analise:["INTELIGÊNCIA","Análise"],
   report:["EXECUTIVO","Report"],
+  documentos:["DOCUMENTOS","Peças jurídicas"],
   scanner:["REDE JUDICIAL","DataJud + DJEN"],
   settings:["PREFERÊNCIAS","Configurações"]
 }[v]||["SHEETSPREDICT","Dashboard"]}
@@ -838,6 +839,7 @@ function render(){
   else if(state.view==="tarefas")renderTarefas();
   else if(state.view==="analise")renderAnalise();
   else if(state.view==="report")renderReport();
+  else if(state.view==="documentos")renderLegalDocuments();
   else if(state.view==="scanner")renderScanner();
   else if(state.view==="settings")renderSettings();
   else setView("dashboard",false);
