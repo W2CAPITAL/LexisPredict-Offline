@@ -60,6 +60,10 @@ assert.match(ui,/action:"report"/);
 assert.match(ui,/PredictLearningPack/);
 assert.match(ui,/action:"learning_pack"/);
 assert.match(ui,/applyRemoteCatalog/);
+assert.match(ui,/function innerNav\(/);
+assert.match(ui,/ps-chat-layout/);
+assert.match(ui,/ps-context-rail/);
+assert.match(ui,/psNewChatTop/);
 assert.match(ui,/capabilities\?\.catalog/);
 assert.doesNotMatch(ui,/PREDICTLM_ACCESS_TOKEN/);
 
