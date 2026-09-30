@@ -1,5 +1,7 @@
 # SheetsPredict
 
+**Google Sheets + operação jurídica + IA autenticada + DataJud/DJEN + WhatsApp, em uma única interface.**
+
 **SheetsPredict** é o cockpit operacional da carteira jurídica conectado ao Google Sheets. A planilha continua sendo a fonte de verdade; o navegador mantém uma réplica local para velocidade e continuidade, enquanto Vercel Functions e Apps Script fazem a ponte segura com serviços externos.
 
 **Versão atual: 4.2.0**
@@ -10,7 +12,7 @@
   <img src="docs/sheetspredict-brain-map.svg" alt="SheetsPredict SaaS brain architecture map" width="100%" />
 </p>
 
-O mapa acima representa o SheetsPredict como um cérebro operacional: **córtex de operação**, estado/router, memória em Google Sheets + Apps Script + IndexedDB, inteligência PredictLM/AshnaAI, rede judicial DataJud/DJEN, comunicação WA.Auto e um córtex de verificação.
+O mapa acima representa o SheetsPredict como um cérebro operacional: **córtex de operação**, estado/router, memória em Google Sheets + Apps Script + IndexedDB, inteligência PredictLM ou BYO-AI server-side, rede judicial DataJud/DJEN, comunicação WA.Auto e um córtex de verificação.
 
 O **Graphify Brain** complementa esse desenho com um grafo consultável do código. Antes de refactors que atravessam vários módulos, a skill pode usar `query`, `path` e `explain` para localizar dependências, distinguindo relações `EXTRACTED` das `INFERRED`. Código real e testes continuam sendo a fonte final de verificação.
 
@@ -32,6 +34,8 @@ O aplicativo reúne em uma única interface:
 - **Predict Studio** com Chat, Legal, Build, Work, Tutor, Research, Imagine e Report, mais catálogo completo de skills/agentes/plugins e Runtime Federation local opt-in.
 - **WA.Auto nativo** com a interface operacional do WA.Auto adaptada aos temas do SheetsPredict, sessão WhatsApp cloud e automação DataJud/DJEN baseada no último retorno.
 - Configurações com temas claros, escuros, jurídicos e de alto contraste.
+- Interface responsiva otimizada para desktop, notebook, tablet e celular, preservando tabelas largas e operação densa sem quebrar a navegação.
+- Integrações remotas protegidas por sessão do SheetsPredict e credenciais privadas mantidas no servidor.
 
 A regra operacional central continua sendo:
 
@@ -175,6 +179,19 @@ Visão geral | IA | WhatsApp | Leads | Revisional | Planilha | Integrações
 
 Funcionalidades embutidas, como auditoria da planilha, Bacen/revisional, scanner público e núcleo offline, continuam funcionando sem os serviços remotos.
 
+### Estado das integrações
+
+A Central não trata toda integração ausente como erro. Os cards distinguem:
+
+| Estado | Significado |
+|---|---|
+| **ativo** | integração configurada e respondendo |
+| **indisponível** | integração configurada, mas sem resposta válida naquele momento |
+| **requer API** | PredictLM disponível apenas após configuração de uma chave dedicada |
+| **opcional** | integração não habilitada neste deploy e não necessária ao núcleo do SheetsPredict |
+
+Esse modelo evita exibir “não configurado” como se fosse falha do aplicativo.
+
 Configuração de integrações:
 
 O repositório mantém apenas nomes de configuração e exemplos vazios em [`.env.example`](.env.example). Credenciais, endereços privados e dados reais de implantação pertencem ao ambiente do servidor e não ao código-fonte.
@@ -263,9 +280,20 @@ A sincronização completa também roda em segundo plano depois da atualização
 
 ## IA no SheetsPredict
 
-O Chat AI integrado usa um proxy server-side. O runtime preferencial é o PredictLM autenticado por uma chave de API dedicada ao consumidor. A credencial fica apenas no ambiente do servidor.
+O **Chat AI** integrado usa um proxy server-side. O navegador conversa apenas com o SheetsPredict; credenciais de provedores não são entregues ao cliente.
 
-Como o SheetsPredict é open source, um deploy próprio também pode apontar para uma API OpenAI-compatible usando o contrato BYO-AI documentado em [`.env.example`](.env.example). AshnaAI continua disponível como adapter opcional de Chat/Work/Tutor quando configurado.
+O runtime preferencial é o PredictLM autenticado por uma **chave de API dedicada ao SheetsPredict**. O token de proprietário do PredictLM não é usado como fallback para chamadas de integração.
+
+Como o SheetsPredict é open source, cada deploy também pode usar sua própria API OpenAI-compatible através do contrato BYO-AI documentado em [`.env.example`](.env.example). AshnaAI permanece como adapter opcional quando configurado.
+
+```text
+Browser
+  -> sessão SheetsPredict
+  -> proxy server-side
+     -> PredictLM com API key dedicada
+        ou
+     -> IA própria OpenAI-compatible
+```
 
 Recursos que dependem do runtime completo — como Legal, Build, Research, Imagine e Report — continuam usando o PredictLM quando essa integração está habilitada.
 
@@ -359,10 +387,16 @@ api/predict-studio.js
 
 Se `PREDICTLM_URL` não estiver configurada, o restante do SheetsPredict continua operando. A interface deixa claro que as superfícies remotas estão indisponíveis; Skills/Agentes/Plugins e os runtimes locais opt-in continuam acessíveis.
 
-## Interface SaaS 4.2
+## Interface responsiva
 
 A camada visual foi revisada sem trocar o modelo de dados nem as rotas existentes. O objetivo é reduzir a aparência de planilha e aproximar o produto de um SaaS operacional maduro:
 
+- desktop largo aproveita melhor a largura útil para KPIs, cards e operação simultânea;
+- em telas menores, grids e painéis colapsam para uma coluna sem perder contexto;
+- no celular, a navegação principal vira barra inferior compacta e rolável;
+- Central Integrada e Chat AI ajustam altura, composição e ações para viewport móvel;
+- diálogos e formulários ocupam a largura disponível sem ultrapassar a tela;
+- tabelas largas preservam rolagem horizontal controlada, sem criar rolagens verticais concorrentes;
 - sidebar organizada por **Visão / Operação / Gestão / Sistema**;
 - contexto de workspace visível, sem criar uma segunda sidebar;
 - topbar mais enxuta e hierarquia tipográfica consistente;
@@ -430,9 +464,11 @@ Ao atualizar o bridge, publique uma **nova versão da implantação existente** 
 
 ## Segurança
 
-O SheetsPredict separa navegador, bridge de planilha e integrações remotas. Sessões e credenciais de serviços externos são tratadas no servidor; o repositório público não deve conter tokens, endereços privados de implantação, dados reais de clientes ou notas detalhadas de vulnerabilidades.
+O SheetsPredict separa navegador, sessão, bridge de planilha e integrações remotas. Credenciais de PredictLM, IA própria, WA.Auto e demais serviços permanecem no servidor.
 
-Relatos de segurança devem ser enviados de forma privada ao mantenedor. O README público mantém apenas princípios de implantação e integração; detalhes operacionais ficam fora do repositório.
+O repositório público não deve conter tokens, endereços privados de implantação, dados reais de clientes nem documentação detalhada de vulnerabilidades. Relatos de segurança devem seguir o fluxo privado descrito em [`SECURITY.md`](SECURITY.md).
+
+A política pública documenta apenas o modelo de confiança necessário para operar e integrar o projeto, sem transformar o README em um mapa de ataque.
 
 ## Desenvolvimento e testes
 
@@ -473,10 +509,13 @@ Após uma alteração grande de frontend, um `Ctrl+Shift+R` pode ser usado uma v
 **SheetsPredict 4.2.0**
 
 Foco da versão:
+- autenticação reforçada entre navegador, SheetsPredict e serviços externos;
+- PredictLM consumido somente por API key dedicada;
+- Chat AI com suporte a PredictLM ou BYO-AI server-side;
+- Central Integrada com estados `ativo`, `indisponível`, `requer API` e `opcional`;
+- UI responsiva revisada para PC e celular;
 - shell SaaS empresarial com navegação agrupada e design tokens consistentes;
-- chatbot AshnaAI opcional para Chat/Work/Tutor;
 - Graphify Brain + mapas cerebrais versionados;
-
 - Central Integrada;
 - identidade SheetsPredict;
 - paginação de 200 registros;
