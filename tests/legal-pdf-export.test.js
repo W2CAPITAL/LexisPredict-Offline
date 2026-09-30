@@ -8,7 +8,7 @@ const gen=fs.readFileSync(path.join(root,"lib","legal-document-generator.js"),"u
 const css=fs.readFileSync(path.join(root,"styles.css"),"utf8");
 const sw=fs.readFileSync(path.join(root,"sw.js"),"utf8");
 
-assert.match(index,/jspdf@2\.5\.2\/dist\/jspdf\.umd\.min\.js/,"jsPDF deve estar carregado no shell");
+assert.match(index,/jspdf@4\.2\.1\/dist\/jspdf\.umd\.min\.js/,"jsPDF deve estar carregado no shell");
 assert.match(gen,/async function downloadPdfDocument\(/,"gerador deve produzir PDF diretamente");
 assert.match(gen,/doc\.save\(/,"PDF deve baixar por save(), sem popup");
 assert.doesNotMatch(gen,/window\.open\(/,"exportação jurídica não deve depender de window.open");
