@@ -187,10 +187,12 @@ module.exports=async(req,res)=>{
   }
 
   if(!base && !ashna){
-    return res.status(503).json({
+    const payload={
       ok:false,configured:false,code:"PREDICTLM_NOT_CONFIGURED",
       error:"Nenhum chatbot remoto foi habilitado neste deploy."
-    });
+    };
+    if(action==="status")return res.status(200).json(payload);
+    return res.status(503).json(payload);
   }
 
   try{
