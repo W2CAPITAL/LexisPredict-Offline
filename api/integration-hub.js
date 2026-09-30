@@ -181,10 +181,13 @@ async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requi
   const started=Date.now();
   try{
     const r=await jsonFetch(urlAt(base,path),{headers:{Accept:"application/json",...authHeaders(token,header)}},8000);
-    const health=healthLabel(Number(r.status)||0);
-    const message=compact(r.data?.error||r.data?.message||"",220);
+    const httpHealth=healthLabel(Number(r.status)||0);
+    const payloadUnhealthy=r.ok&&(r.data?.ok===false||r.data?.healthy===false||/^(error|failed|offline|unhealthy)$/i.test(String(r.data?.status||"")));
+    const message=compact(r.data?.error||r.data?.message||r.data?.detail||"",220);
+    const ok=httpHealth.ok&&!payloadUnhealthy;
     return {
-      id,name,configured:true,ok:health.ok,status:health.status,reason:health.reason,
+      id,name,configured:true,ok,status:ok?"online":payloadUnhealthy?(message||"serviço respondeu não saudável"):httpHealth.status,
+      reason:ok?"healthy":payloadUnhealthy?"unhealthy_payload":httpHealth.reason,
       httpStatus:r.status,latencyMs:Date.now()-started,checkedAt,
       detail:message||undefined,credentialSent:requiresToken?!!token:false
     };
