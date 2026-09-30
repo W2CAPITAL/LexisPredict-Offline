@@ -10,7 +10,7 @@ assert.match(css,/\.crm-table,[\s\S]*?\.dashboard-table,[\s\S]*?\.report-table[\
 assert.match(css,/\.global-scroll-target[\s\S]*?scrollbar-width:none!important/);
 assert.match(css,/#nav[\s\S]*?scrollbar-width:none!important/);
 
-assert.match(app,/querySelectorAll\("\.table-wrap,\.pipeline-board"\)/);
+assert.match(app,/querySelectorAll\("\\.table-wrap:not\\(\\.process-table-wrap\\),\\.pipeline-board"\)/);
 assert.doesNotMatch(app,/querySelectorAll\("\.table-wrap,\.pipeline-board,\.lexis-tabbar"\)/);
 assert.match(app,/const dockRange=Math\.max\(0,dock\.scrollWidth-dock\.clientWidth\)/);
 assert.match(app,/const targetRange=Math\.max\(0,globalXTarget\.scrollWidth-globalXTarget\.clientWidth\)/);
