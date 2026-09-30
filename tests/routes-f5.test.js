@@ -24,4 +24,13 @@ assert.match(bridgeAuth,/transient:true/,"timeout de validação deve ser transi
 assert.match(bridgeAuth,/status:401,reason:"expired_session"/,"401 deve ficar reservado para sessão realmente expirada");
 assert.match(sheetsApi,/check\.transient\|\|Number\(check\.status\)>=500/,"api/sheets deve preservar sessão em falha transitória");
 
+
+const bridgeAuth2=fs.readFileSync(path.join(__dirname,"..","lib","bridge-auth.js"),"utf8");
+const installer=fs.readFileSync(path.join(__dirname,"..","installer-script.txt"),"utf8");
+assert.match(bridgeAuth2,/createHmac\("sha256"/,"sessão deve ser validável localmente sem roundtrip ao Apps Script");
+assert.match(sheetsApi,/action==="session"/,"api/sheets deve expor validação local de sessão");
+assert.match(sheetsApi,/list_compact/,"listagem deve usar transporte compacto");
+assert.match(app,/pageSize=600/,"carteira deve carregar em páginas menores");
+assert.match(installer,/function listCompactAction_/,"installer deve oferecer listagem compacta");
+assert.match(installer,/function readRowsCompact_/,"installer deve ler apenas a página necessária");
 console.log("routes-f5: ok");
