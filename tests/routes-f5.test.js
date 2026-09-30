@@ -44,12 +44,12 @@ assert.doesNotMatch(app,/const blocked=await initUpdateGuard\(\);\s*if\(blocked\
 assert.match(app,/await initUpdateGuard\(\);/,"guard deve ser inicializado sem encerrar o boot");
 assert.match(app,/if\(state\.updateLock\)return;\s*startAutoSync\(\)/,"cache deve renderizar antes do bloqueio de atualização");
 
-assert.doesNotMatch(app,/\$\("\[data-new-record\]"\)\.forEach/,"dashboard não pode chamar forEach em $; use $");
+assert.doesNotMatch(app,/(?<!\$)\$\("\[data-new-record\]"\)\.forEach/,"dashboard não pode chamar forEach em $; use $");
 assert.match(app,/\$\$\("\[data-new-record\]"\)\.forEach/,"dashboard deve bindar todos os botões com $");
 assert.match(app,/localStorage\.setItem\(RELEASE_SEEN_KEY,String\(state\.updateTarget\)\)/,"adiar update deve impedir o mesmo release de bloquear novamente");
 assert.match(app,/if\(pendingWrites\|\|pendingCrm\)[\s\S]*Atualização adiada/,"update com pendências deve ser adiado sem forçar flush");
 
-assert.doesNotMatch(app,/\$\("\[data-new-record\]"\)\.forEach/,"selector unitário não pode usar forEach");
+assert.doesNotMatch(app,/(?<!\$)\$\("\[data-new-record\]"\)\.forEach/,"selector unitário não pode usar forEach");
 assert.match(app,/\$\$\("\[data-new-record\]"\)\.forEach/,"botões de novo cadastro devem usar seletor múltiplo");
 
 assert.match(sheetsApi,/legacy_list/,"bridge antigo deve ter fallback de compatibilidade");
