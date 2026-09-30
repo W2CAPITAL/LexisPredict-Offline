@@ -1,6 +1,8 @@
 const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
 const learning=require("../lib/predict-learning-pack");
 const {revisionalBankContext}=require("../lib/revisional-skill");
+const {scanJudicial}=require("../lib/judicial-intelligence");
+const {cnjFromText,summarizeJudicialScan,dossierHtml}=require("../lib/legal-chat-fallback");
 
 const MAX_JSON=700_000;
 const TIMEOUTS={status:10000,chat:45000,work:45000,tutor:45000,legal:65000,build:90000,research:70000,imagine:90000,report:100000};
@@ -138,6 +140,25 @@ function buildFiles(input){
   })).filter(f=>f.path&&f.content);
 }
 function legalNumber(body){return clean(body.number||body.cnj||body.processo,80)}
+async function localLegalFallback(number,{html=false}={}){
+  const cnj=clean(number,80);
+  if(!cnj)throw Object.assign(new Error("Informe o CNJ."),{status:400});
+  const scan=await scanJudicial({cnj,mode:"both"});
+  if(!scan||(!scan.ok&&!scan.partial&&!scan.datajud&&!scan.djen)){
+    throw Object.assign(new Error(scan?.error||"Não foi possível consultar DataJud/DJEN nesta tentativa."),{status:502,code:"LOCAL_LEGAL_UNAVAILABLE"});
+  }
+  if(html)return {ok:true,status:200,html:dossierHtml(scan),fallback:"sheetspredict-datajud-djen",scan};
+  return {
+    ok:true,status:200,
+    data:{
+      ok:true,
+      fallback:true,
+      source:"SheetsPredict DataJud/DJEN",
+      summary:summarizeJudicialScan(scan),
+      scan
+    }
+  };
+}
 function reportBody(body){
   return {
     request:clean(body.request||body.prompt,4000),
@@ -187,7 +208,8 @@ module.exports=async(req,res)=>{
     return res.status(200).json({ok:true,source:"SheetsPredict snapshot",pack:learning.exportData()});
   }
 
-  if(!base && !ashna){
+  const promptCnj=cnjFromText(body.prompt||body.context||body.request||"");
+  if(!base && !ashna && !["legal","legal_dossier"].includes(action) && !promptCnj){
     const payload={
       ok:false,configured:false,code:"PREDICTLM_NOT_CONFIGURED",
       error:"Nenhum chatbot remoto foi habilitado neste deploy."
@@ -212,27 +234,53 @@ module.exports=async(req,res)=>{
     if(["chat","work","tutor"].includes(action)){
       const payload=chatPayload(body,action);
       if(!payload.prompt)return res.status(400).json({ok:false,error:"Informe uma mensagem."});
+      let upstreamError=null;
       if(base){
         try{
           out=await call(base,"/api/chat",{body:payload,timeoutMs:TIMEOUTS[action]});
           return res.status(200).json({ok:true,surface:action,...out.data});
         }catch(e){
-          if(!ashna)throw e;
+          upstreamError=e;
         }
       }
-      return res.status(200).json(await callAshna(body,action,ashna));
+      const cnj=cnjFromText(payload.prompt);
+      if(cnj){
+        try{
+          const local=await localLegalFallback(cnj);
+          return res.status(200).json({
+            ok:true,surface:action,content:local.data.summary,
+            provider:"SheetsPredict DataJud/DJEN",model:"deterministic-legal-fallback",
+            fallback:true,legal:local.data
+          });
+        }catch{}
+      }
+      if(ashna)return res.status(200).json(await callAshna(body,action,ashna));
+      if(upstreamError)throw upstreamError;
+      return res.status(503).json({ok:false,configured:false,code:"NO_CHAT_RUNTIME",error:"Nenhum runtime de chat disponível para este pedido."});
     }
-    if(!base)return res.status(503).json({ok:false,configured:false,code:"PREDICTLM_REQUIRED_SURFACE",error:"Esta superfície exige uma chave válida do runtime PredictLM. A IA alternativa permanece limitada ao chat."});
     if(action==="legal"){
       const number=legalNumber(body);if(!number)return res.status(400).json({ok:false,error:"Informe o CNJ."});
-      out=await call(base,"/api/legal/process",{body:{number},timeoutMs:TIMEOUTS.legal});
-      return res.status(200).json({ok:true,surface:"legal",result:out.data});
+      if(base){
+        try{
+          out=await call(base,"/api/legal/process",{body:{number},timeoutMs:TIMEOUTS.legal});
+          return res.status(200).json({ok:true,surface:"legal",result:out.data});
+        }catch{}
+      }
+      const local=await localLegalFallback(number);
+      return res.status(200).json({ok:true,surface:"legal",result:local.data});
     }
     if(action==="legal_dossier"){
       const number=legalNumber(body);if(!number)return res.status(400).json({ok:false,error:"Informe o CNJ."});
-      out=await call(base,"/api/legal/dossier",{body:{number,mode:body.mode==="aggressive"?"aggressive":"standard",evidence:body.evidence||undefined},timeoutMs:TIMEOUTS.legal,expect:"html"});
-      return res.status(200).json({ok:true,surface:"legal",html:out.html});
+      if(base){
+        try{
+          out=await call(base,"/api/legal/dossier",{body:{number,mode:body.mode==="aggressive"?"aggressive":"standard",evidence:body.evidence||undefined},timeoutMs:TIMEOUTS.legal,expect:"html"});
+          return res.status(200).json({ok:true,surface:"legal",html:out.html});
+        }catch{}
+      }
+      const local=await localLegalFallback(number,{html:true});
+      return res.status(200).json({ok:true,surface:"legal",html:local.html,fallback:local.fallback});
     }
+    if(!base)return res.status(503).json({ok:false,configured:false,code:"PREDICTLM_REQUIRED_SURFACE",error:"Esta superfície exige uma chave válida do runtime PredictLM. A IA alternativa permanece limitada ao chat."});
     if(action==="build"){
       const prompt=clean(body.prompt,12000);if(!prompt)return res.status(400).json({ok:false,error:"Informe o que deseja construir ou alterar."});
       out=await call(base,"/api/agent",{body:{prompt,mode:body.deep===false?"fast":"deep",files:buildFiles(body.files)},timeoutMs:TIMEOUTS.build});
