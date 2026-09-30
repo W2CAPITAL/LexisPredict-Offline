@@ -1704,3 +1704,7 @@ body.app-update-locked{overflow:hidden}
   .legalgen-letterhead-preview{grid-template-columns:52px 1fr;padding:14px 18px 12px}.legalgen-letterhead-mark{width:52px;height:46px}.legalgen-letterhead-mark img{max-width:52px;max-height:44px}
   .legalgen-letterhead-copy strong{font-size:14px}.legalgen-paper{padding:30px 22px 36px!important;min-height:620px!important}.legalgen-paper-foot-preview{padding:9px 18px 12px;flex-direction:column;align-items:flex-start}
 }
+
+.wa-offline{margin:0 0 14px;padding:13px 15px;border:1px solid #d59c42;border-left:5px solid #9a5a00;background:#fff8e7;border-radius:10px;display:grid;gap:4px;color:#5f410e}
+.wa-offline strong{font-size:11px;text-transform:uppercase;letter-spacing:.06em}.wa-offline span{font-size:10px;font-weight:700}.wa-offline small{font-size:9px;color:#7b642f}
+.wa-shell button[disabled],.wa-shell input[disabled]{opacity:.48;cursor:not-allowed;filter:grayscale(.35)}
