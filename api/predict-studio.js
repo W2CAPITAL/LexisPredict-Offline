@@ -10,7 +10,7 @@ function privateHost(host){
   const m=h.match(/^172\.(\d+)\./);if(m&&Number(m[1])>=16&&Number(m[1])<=31)return true;
   return /^\d+\.\d+\.\d+\.\d+$/.test(h)||/^\[?[0-9a-f:]+\]?$/i.test(h);
 }
-function predictKey(){return String(process.env.PREDICTLM_API_KEY||process.env.PREDICTLM_ACCESS_TOKEN||"").trim()}
+function predictKey(){return String(process.env.PREDICTLM_API_KEY||"").trim()}
 function baseUrl(){
   if(!predictKey())return null;
   const raw=String(process.env.PREDICTLM_URL||"").trim();
