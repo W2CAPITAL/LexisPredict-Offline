@@ -489,7 +489,23 @@ function withTimeout(promise,ms,label){
 function releaseUpdateLock(message){
   writeUpdateState(null);
   hideUpdateOverlay();
-  startAutoSync();
+  if(state.session){
+    startAutoSync();
+    updateSyncUi();
+    if(navigator.onLine&&!state.syncing){
+      void apiSheets({action:"session"}).then(check=>{
+        if(check?.ok){
+          saveSession({user:check.user||state.session?.user||{}});
+          applyUser();
+          return syncFromCloud({quiet:true});
+        }
+      }).catch(e=>{
+        if(e?.transient||Number(e?.status)>=500)scheduleSheetRecovery(Number(e?.retryAfterMs)||7000);
+      });
+    }
+  }else{
+    setLogged(false);
+  }
   if(message)showBanner(message,"bad");
 }
 function configureUpdateContinue(message){
@@ -2354,8 +2370,10 @@ async function boot(){
   state.view=pathView();
   const cachedSession=restoreSession();
   try{
-    const blocked=await initUpdateGuard();
-    if(blocked)return;
+    // O guard de atualização pode bloquear interação, mas nunca pode abortar o boot.
+    // Assim o app e o cache ficam prontos por trás do overlay e "Continuar usando"
+    // realmente libera uma interface já inicializada.
+    await initUpdateGuard();
   }catch(_){}
   try{await loadLocal()}catch(_){state.companyRows=[];state.rows=[]}
   try{await loadCrmCache()}catch(_){}
@@ -2363,7 +2381,9 @@ async function boot(){
   // Abre imediatamente pelo cache validado do navegador. A sessão do servidor é
   // conferida em paralelo; assim um cold-start do Apps Script não trava a interface.
   if(cachedSession){
-    state.session=cachedSession;refreshScopes();setLogged(true);applyUser();render();startAutoSync();updateSyncUi();
+    state.session=cachedSession;refreshScopes();setLogged(true);applyUser();render();updateSyncUi();
+    if(state.updateLock)return;
+    startAutoSync();
     if(!navigator.onLine)return;
     void (async()=>{
       try{
@@ -2384,6 +2404,11 @@ async function boot(){
     return;
   }
 
+  if(state.updateLock){
+    setLogged(false);
+    updateSyncUi();
+    return;
+  }
   try{
     const check=await apiSheets({action:"session"});
     if(!check?.ok)throw new Error(check?.error||"Sessão inválida");
