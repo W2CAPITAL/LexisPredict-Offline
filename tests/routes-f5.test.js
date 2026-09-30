@@ -46,4 +46,7 @@ assert.doesNotMatch(app,/\$\("\[data-new-record\]"\)\.forEach/,"dashboard não p
 assert.match(app,/\$\$\("\[data-new-record\]"\)\.forEach/,"dashboard deve bindar todos os botões com $");
 assert.match(app,/localStorage\.setItem\(RELEASE_SEEN_KEY,String\(state\.updateTarget\)\)/,"adiar update deve impedir o mesmo release de bloquear novamente");
 assert.match(app,/if\(pendingWrites\|\|pendingCrm\)[\s\S]*Atualização adiada/,"update com pendências deve ser adiado sem forçar flush");
+
+assert.doesNotMatch(app,/\$\("\[data-new-record\]"\)\.forEach/,"selector unitário não pode usar forEach");
+assert.match(app,/\$\$\("\[data-new-record\]"\)\.forEach/,"botões de novo cadastro devem usar seletor múltiplo");
 console.log("routes-f5: ok");
