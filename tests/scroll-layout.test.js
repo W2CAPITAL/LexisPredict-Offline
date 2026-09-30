@@ -18,5 +18,9 @@ assert.match(app,/globalXTarget\.scrollLeft=ratio\*targetRange/);
 assert.match(app,/inner\.style\.width=\(dock\.clientWidth\+targetRange\)\+"px"/);
 assert.match(app,/classList\.add\("global-scroll-target"\)/);
 assert.match(app,/classList\.remove\("global-scroll-target"\)/);
+assert.match(app,/function bindProcessTableScroll\(/);
+assert.match(app,/data-process-x/);
+assert.match(css,/\.process-x-scroll/);
+assert.match(css,/\.process-table-wrap/);
 
 console.log("scroll-layout: ok");
