@@ -82,7 +82,7 @@ async function jsonFetch(url,opts={},ms=10000){
   try{data=JSON.parse(text)}catch{data={raw:text.slice(0,1000)}}
   return {ok:r.ok,status:r.status,data};
 }
-function predictKey(){return String(process.env.PREDICTLM_API_KEY||process.env.PREDICTLM_ACCESS_TOKEN||"").trim()}
+function predictKey(){return String(process.env.PREDICTLM_API_KEY||"").trim()}
 function customAi(){
   const key=String(process.env.SHEETSPREDICT_AI_API_KEY||"").trim();
   const model=String(process.env.SHEETSPREDICT_AI_MODEL||"").trim();
