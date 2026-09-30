@@ -17,7 +17,7 @@ async function fetchBridge(url,body,action){
   const attempts=1;
   let lastError=null,lastStatus=0,lastText="";
   for(let attempt=0;attempt<attempts;attempt++){
-    const timeoutMs=action==="list"?12000:action==="auto"?7000:10000;
+    const timeoutMs=action==="legacy_list"?25000:action==="list"?12000:action==="auto"?7000:10000;
     const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
     try{
       const up=await fetch(url,{
@@ -106,28 +106,35 @@ module.exports=async(req,res)=>{
     let up=bridged.up,txt=bridged.txt,data=bridged.data;
     if(action==="list"&&data&&data.ok===false&&/acao desconhecida:\s*list_compact/i.test(String(data.error||""))){
       const probe=await probeBridgeVersion(url,fixedToken);
-      res.setHeader("Cache-Control","no-store");
-      if(probe.ok&&/^8\.1(?:\b|$)/.test(probe.version)){
+      // Compatibilidade: instalações antigas (ex.: bridge 7.0) continuam
+      // funcionais enquanto o projeto Apps Script é saneado. Isso evita zerar
+      // a carteira apenas porque list_compact ainda não está no handler ativo.
+      if(probe.ok&&!/^8\.1(?:\b|$)/.test(probe.version)){
+        const legacy=await fetchBridge(url,{...payload,action:"list",limit:8000,token:fixedToken},"legacy_list");
+        if(legacy?.data?.ok){
+          data={...legacy.data,legacyBridge:true,detectedVersion:probe.version||String(legacy.data?.v||"legacy"),compatibilityMode:true};
+          up=legacy.up;txt=legacy.txt;bridged=legacy;
+        }else if(legacy?.parseError||TRANSIENT_STATUSES.has(Number(legacy?.up?.status))){
+          return transientRead(res,action,"Bridge legado "+(probe.version||"detectado")+" respondeu lentamente. A carteira local foi preservada.",legacy?.up?.status||503);
+        }else{
+          return res.status(200).json({
+            ok:false,bridgeMismatch:true,code:"APPS_SCRIPT_LEGACY_FAILED",
+            detectedVersion:probe.version||"legacy",
+            error:legacy?.data?.error||"O bridge legado foi detectado, mas não conseguiu devolver a carteira."
+          });
+        }
+      }else if(probe.ok){
         return res.status(200).json({
           ok:false,
           bridgeMismatch:true,
           code:"APPS_SCRIPT_ROUTE_MISMATCH",
           detectedVersion:probe.version,
           requiredVersion:"8.1",
-          error:"O endpoint /exec responde como installer 8.1, mas não expõe list_compact. Isso indica implantação/handler divergente (por exemplo, outro doPost ativo). Não é necessário colar o installer novamente; verifique qual implantação e qual doPost estão atendendo a URL."
+          error:"O endpoint /exec responde como installer 8.1, mas não expõe list_compact. Isso indica outro doPost/handler atendendo a implantação."
         });
+      }else{
+        return transientRead(res,action,"Não foi possível confirmar a versão publicada do Google Apps Script. O cache local foi preservado.",probe.httpStatus||503);
       }
-      if(probe.ok){
-        return res.status(200).json({
-          ok:false,
-          deploymentOutdated:true,
-          code:"APPS_SCRIPT_DEPLOYMENT_OLD",
-          detectedVersion:probe.version||"sem versão",
-          requiredVersion:"8.1",
-          error:"O código-fonte pode estar atualizado, mas a URL /exec publicada ainda responde como versão "+(probe.version||"anterior")+". Publique uma NOVA VERSÃO na implantação existente; não precisa colar o installer novamente."
-        });
-      }
-      return transientRead(res,action,"Não foi possível confirmar a versão publicada do Google Apps Script. O cache local foi preservado.",probe.httpStatus||503);
     }
     if(bridged.parseError){
       if(READ_ACTIONS.has(action))return transientRead(res,action,"Google Apps Script está trocando de versão ou respondeu temporariamente fora do formato esperado.",up.status);

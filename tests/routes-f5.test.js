@@ -49,4 +49,8 @@ assert.match(app,/if\(pendingWrites\|\|pendingCrm\)[\s\S]*Atualização adiada/,
 
 assert.doesNotMatch(app,/\$\("\[data-new-record\]"\)\.forEach/,"selector unitário não pode usar forEach");
 assert.match(app,/\$\$\("\[data-new-record\]"\)\.forEach/,"botões de novo cadastro devem usar seletor múltiplo");
+
+assert.match(sheetsApi,/legacy_list/,"bridge antigo deve ter fallback de compatibilidade");
+assert.match(sheetsApi,/legacyBridge:true/,"fallback deve sinalizar modo legado");
+assert.match(app,/modo de compatibilidade/,"UI deve informar compatibilidade sem bloquear a carteira");
 console.log("routes-f5: ok");

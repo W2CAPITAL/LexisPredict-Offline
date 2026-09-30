@@ -357,6 +357,9 @@ async function syncFromCloud(opts={}){
     let offset=0,hasMore=true,totalRows=0,pages=0;
     while(hasMore&&pages<20){
       const j=await apiSheets({action:"list",limit:pageSize,offset,scope:"company"});
+      if(j.legacyBridge&&pages===0){
+        showBanner("Bridge Apps Script "+esc(j.detectedVersion||"legado")+" em modo de compatibilidade. A carteira será carregada normalmente enquanto o handler antigo é corrigido.","bad");
+      }
       const page=j.rows||j.data||[];
       if(!Array.isArray(page))throw new Error("Bridge não retornou uma página válida de processos.");
       collected.push(...page);

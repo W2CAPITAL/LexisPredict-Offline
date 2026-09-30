@@ -1735,7 +1735,7 @@ function syncDoGet_(e) {
 
       if (p.token && String(p.token).trim() !== getToken_()) return out_({ ok: false, error: "token invalido" });
 
-      return out_({ ok: true, pong: true, v: "8.0", via: "GET" });
+      return out_({ ok: true, pong: true, v: "8.1", via: "GET" });
 
     }
 
