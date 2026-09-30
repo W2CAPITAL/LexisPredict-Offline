@@ -1,3 +1,5 @@
+const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
+
 const REPOSITORIES=[
   {id:"predictlm",name:"PredictLM",repo:"W2CAPITAL/PredictLm",role:"IA principal, análise, dossiês e capability fusion"},
   {id:"waauto",name:"WA.Auto",repo:"W2CAPITAL/Wa.Auto",role:"WhatsApp cloud, fila e monitor processual"},
@@ -52,6 +54,7 @@ async function jsonFetch(url,opts={},ms=10000){
   try{data=JSON.parse(text)}catch{data={raw:text.slice(0,1000)}}
   return {ok:r.ok,status:r.status,data};
 }
+function predictKey(){return String(process.env.PREDICTLM_API_KEY||process.env.PREDICTLM_ACCESS_TOKEN||"").trim()}
 function authHeaders(token,header="Authorization"){
   if(!token)return {};
   return header==="Authorization"?{Authorization:"Bearer "+token}:{[header]:token};
@@ -120,16 +123,16 @@ async function bacen(contractDate){
   }catch{return {...BACEN_FALLBACK,period:monthLabel(contractDate)}}
 }
 async function serviceStatus(id,name,base,path,token,header){
-  if(!base)return {id,name,configured:false,ok:false,status:"não configurado"};
+  if(!base)return {id,name,configured:false,ok:false,status:"acesso não habilitado"};
   try{
     const r=await jsonFetch(urlAt(base,path),{headers:{Accept:"application/json",...authHeaders(token,header)}},6000);
-    return {id,name,configured:true,ok:r.ok,status:r.ok?"online":"HTTP "+r.status,detail:r.data};
+    return {id,name,configured:true,ok:r.ok,status:r.ok?"online":"indisponível"};
   }catch(e){return {id,name,configured:true,ok:false,status:"indisponível",error:e?.message||String(e)}}
 }
 async function status(){
-  const predict=configuredUrl("PREDICTLM_URL"),wa=configuredUrl("WA_AUTO_URL"),grey=configuredUrl("GREY_URL"),lexis=configuredUrl("LEXISPREDICT_URL"),lead=configuredUrl("LEADCHECKIN_URL");
+  const predictBase=configuredUrl("PREDICTLM_URL"),predict=predictBase&&predictKey()?predictBase:null,wa=configuredUrl("WA_AUTO_URL"),grey=configuredUrl("GREY_URL"),lexis=configuredUrl("LEXISPREDICT_URL"),lead=configuredUrl("LEADCHECKIN_URL");
   const remote=await Promise.all([
-    serviceStatus("predictlm","PredictLM",predict,"/api/capabilities?surface=chat",process.env.PREDICTLM_ACCESS_TOKEN,"Authorization"),
+    serviceStatus("predictlm","PredictLM",predict,"/api/capabilities?surface=chat",predictKey(),"Authorization"),
     serviceStatus("waauto","WA.Auto",wa,"/api/health",null),
     serviceStatus("grey","GREY",grey,"/health",process.env.GREY_API_KEY,"x-brain-key"),
     serviceStatus("lexispredict","LexisPredict",lexis,"/api/health",process.env.LEXISPREDICT_TOKEN,"Authorization")
@@ -152,11 +155,11 @@ function contextSystem(ctx){
 async function aiChat(body){
   const prompt=compact(body.prompt,30000).trim();if(!prompt)throw new Error("Pergunta obrigatória.");
   const context=compact(body.context,16000),messages=Array.isArray(body.messages)?body.messages.slice(-10):[];
-  const predict=configuredUrl("PREDICTLM_URL");
+  const predictBase=configuredUrl("PREDICTLM_URL"),predict=predictBase&&predictKey()?predictBase:null;
   if(predict){
     try{
-      const r=await jsonFetch(urlAt(predict,"/api/chat"),{method:"POST",headers:{"Content-Type":"application/json",...authHeaders(process.env.PREDICTLM_ACCESS_TOKEN,"Authorization")},body:JSON.stringify({prompt,messages,language:"pt-BR",deep:!!body.deep,answerAnchor:context,sessionId:compact(body.sessionId,120)})},35000);
-      if(r.ok&&r.data?.content)return {ok:true,engine:"PredictLM",provider:r.data.provider||r.data.model||"Predict Auto",content:String(r.data.content),raw:r.data};
+      const r=await jsonFetch(urlAt(predict,"/api/chat"),{method:"POST",headers:{"Content-Type":"application/json",...authHeaders(predictKey(),"Authorization")},body:JSON.stringify({prompt,messages,language:"pt-BR",deep:!!body.deep,answerAnchor:context,sessionId:compact(body.sessionId,120)})},35000);
+      if(r.ok&&r.data?.content)return {ok:true,engine:"PredictLM",provider:"PredictLM",content:String(r.data.content)};
     }catch{}
   }
   const grey=configuredUrl("GREY_URL");
@@ -164,7 +167,7 @@ async function aiChat(body){
     try{
       const history=messages.filter(x=>x&&(x.role==="user"||x.role==="assistant")&&x.content).map(x=>({role:x.role,content:compact(x.content,6000)}));
       const r=await jsonFetch(urlAt(grey,"/v1/chat"),{method:"POST",headers:{"Content-Type":"application/json",...authHeaders(process.env.GREY_API_KEY,"x-brain-key")},body:JSON.stringify({system:contextSystem(context),messages:[...history,{role:"user",content:prompt}]})},30000);
-      const text=r.data?.text||r.data?.content;if(r.ok&&text)return {ok:true,engine:"GREY",provider:r.data.provider||r.data.model||"self-host",content:String(text),raw:r.data};
+      const text=r.data?.text||r.data?.content;if(r.ok&&text)return {ok:true,engine:"GREY",provider:"GREY",content:String(text)};
     }catch{}
   }
   let parsed={};try{parsed=JSON.parse(context||"{}")}catch{}
@@ -174,7 +177,7 @@ async function aiChat(body){
   if(metrics.vencidos!=null)facts.push("Retornos vencidos: "+metrics.vencidos+".");
   if(metrics.atencao!=null)facts.push("Em atenção: "+metrics.atencao+".");
   if(parsed.process?.cnj)facts.push("Processo selecionado: "+parsed.process.cnj+" — "+(parsed.process.cliente||"cliente não informado")+".");
-  return {ok:true,engine:"SheetsPredict Local",provider:"regras + contexto",content:"Os motores PredictLM/GREY não estão configurados neste deploy. Posso manter o diagnóstico operacional local sem inventar análise de IA. "+facts.join(" ")+" Configure PREDICTLM_URL ou GREY_URL para respostas generativas.",limited:true};
+  return {ok:true,engine:"SheetsPredict Local",provider:"local",content:"Nenhum motor remoto foi habilitado neste deploy. Posso manter o diagnóstico operacional local sem inventar análise de IA. "+facts.join(" "),limited:true};
 }
 async function waState(){
   const wa=configuredUrl("WA_AUTO_URL");if(!wa)return {ok:false,configured:false,error:"WA_AUTO_URL não configurada."};
@@ -204,6 +207,8 @@ async function leadDiscover(body){
 module.exports=async(req,res)=>{
   res.setHeader("Cache-Control","no-store");
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"POST only"});
+  if(!requireSameOrigin(req,res))return;
+  const auth=await requireSession(req,res);if(!auth)return;
   try{
     const body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{}),action=String(body.action||"status").toLowerCase();
     let result;
