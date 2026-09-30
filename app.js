@@ -301,10 +301,24 @@ function mergePending(rows,pending){
   return [...map.values()];
 }
 
+let cloudAuthFailureHandled=false;
+function handleCloudAuthFailure(message){
+  if(cloudAuthFailureHandled)return;
+  cloudAuthFailureHandled=true;
+  stopAutoSync();
+  saveSession(null);
+  state.rows=[];state.companyRows=[];state.syncing=false;
+  setLogged(false);
+  const status=$("#loginStatus");
+  if(status)status.textContent=message||"Sua sessão expirou. Entre novamente.";
+  updateSyncUi();
+}
 async function apiSheets(payload){
   const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload}),cache:"no-store"});
   const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));
+  const action=String(payload?.action||"").toLowerCase();
   if(!r.ok){
+    if(r.status===401&&!["login","auth"].includes(action))handleCloudAuthFailure(j.error);
     const e=new Error(j.error||"Falha ao acessar a planilha");
     e.status=r.status;e.data=j;throw e;
   }
@@ -312,6 +326,7 @@ async function apiSheets(payload){
     const e=new Error(j.error||"Falha ao acessar a planilha");
     e.status=r.status;e.data=j;throw e;
   }
+  if(["login","auth"].includes(action))cloudAuthFailureHandled=false;
   return j;
 }
 async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
@@ -879,7 +894,7 @@ function ensureGlobalXScroll(){
 }
 function horizontalScrollCandidates(){
   const root=$("#content");if(!root)return[];
-  return [...root.querySelectorAll(".table-wrap,.pipeline-board")].filter(el=>el.scrollWidth>el.clientWidth+4);
+  return [...root.querySelectorAll(".table-wrap:not(.process-table-wrap),.pipeline-board")].filter(el=>el.scrollWidth>el.clientWidth+4);
 }
 function clearGlobalXTarget(){
   if(globalXTarget)globalXTarget.classList.remove("global-scroll-target");
@@ -938,13 +953,49 @@ function processTable(rows,{company=false,total=rows.length,view=company?"empres
     :"Processos vinculados ao seu Assistente/perfil.";
   return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' de '+total+' registro(s)</span></div><div class="toolbar">'+searchFieldHtml("search","Pesquisar cliente, CNJ, advogado, assistente ou andamento…",state.query)+'<select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
   '<div class="company-note">'+esc(subtitle)+'</div>'+
-  '<div class="table-wrap crm-table"><table class="table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Última movimentação</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Retorno</th><th>Assistente</th><th>Atendido por</th><th></th></tr></thead><tbody>'+
+  '<div class="process-x-scroll" data-process-x="'+esc(view)+'" aria-label="Rolagem horizontal da tabela"><div></div></div>'+
+  '<div class="table-wrap crm-table process-table-wrap" data-process-table="'+esc(view)+'"><table class="table process-table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Última movimentação</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Retorno</th><th>Assistente</th><th>Atendido por</th><th class="process-actions-head">Ações</th></tr></thead><tbody>'+
   rows.map(r=>{
     const key=keyOf(r),move=String(latestMove(r)||"Sem movimentação em cache").slice(0,180);
     const moveDate=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data");
-    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="actions process-actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></td></tr>';
+    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="process-actions"><div class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></div></td></tr>';
   }).join("")+
   '</tbody></table></div>'+paginationHtml(view,rows.length,total,company?"processos da empresa":"processos");
+}
+function syncProcessScrollRails(){
+  document.querySelectorAll("[data-process-x]").forEach(rail=>{
+    const view=rail.getAttribute("data-process-x");
+    const wrap=document.querySelector('[data-process-table="'+view+'"]');
+    if(!wrap)return;
+    const inner=rail.firstElementChild;
+    if(inner)inner.style.width=Math.max(wrap.clientWidth,wrap.scrollWidth)+"px";
+    rail.classList.toggle("active",wrap.scrollWidth>wrap.clientWidth+4);
+    const max=Math.max(0,rail.scrollWidth-rail.clientWidth);
+    rail.scrollLeft=Math.min(max,wrap.scrollLeft);
+  });
+}
+function bindProcessTableScroll(view){
+  const rail=document.querySelector('[data-process-x="'+view+'"]');
+  const wrap=document.querySelector('[data-process-table="'+view+'"]');
+  if(!rail||!wrap)return;
+  let busy=false;
+  const syncSize=()=>{
+    const inner=rail.firstElementChild;
+    if(inner)inner.style.width=Math.max(wrap.clientWidth,wrap.scrollWidth)+"px";
+    rail.classList.toggle("active",wrap.scrollWidth>wrap.clientWidth+4);
+  };
+  rail.addEventListener("scroll",()=>{
+    if(busy)return;busy=true;
+    wrap.scrollLeft=rail.scrollLeft;
+    busy=false;
+  },{passive:true});
+  wrap.addEventListener("scroll",()=>{
+    if(busy)return;busy=true;
+    rail.scrollLeft=wrap.scrollLeft;
+    busy=false;
+  },{passive:true});
+  requestAnimationFrame(()=>{syncSize();rail.scrollLeft=wrap.scrollLeft});
+  setTimeout(syncSize,250);
 }
 function bindProcessList(renderFn,view){
   const status=$("#statusFilter"),qual=$("#qualityFilter");
@@ -962,12 +1013,12 @@ function bindProcessList(renderFn,view){
 function renderProcessos(){
   const all=filteredRows(state.rows),rows=all.slice(0,pageLimit("processos"));
   $("#content").innerHTML=processTable(rows,{company:false,total:all.length,view:"processos"});
-  bindProcessList(renderProcessos,"processos");bindPagination("processos",renderProcessos,all.length);
+  bindProcessList(renderProcessos,"processos");bindPagination("processos",renderProcessos,all.length);bindProcessTableScroll("processos");
 }
 function renderEmpresa(){
   const all=filteredRows(state.companyRows),rows=all.slice(0,pageLimit("empresa"));
   $("#content").innerHTML=processTable(rows,{company:true,total:all.length,view:"empresa"});
-  bindProcessList(renderEmpresa,"empresa");bindPagination("empresa",renderEmpresa,all.length);
+  bindProcessList(renderEmpresa,"empresa");bindPagination("empresa",renderEmpresa,all.length);bindProcessTableScroll("empresa");
 }
 function plainStatus(r){
   const blob=norm([latestMove(r),pick(r,"Diagnóstico Processual"),pick(r,"Tipo de Evento","Evento_Tipo")].join(" "));
@@ -1702,7 +1753,7 @@ function setupEvents(){
       scheduleGlobalXScroll();
     },true);
   }
-  window.addEventListener("resize",scheduleGlobalXScroll);
+  window.addEventListener("resize",()=>{scheduleGlobalXScroll();syncProcessScrollRails()});
   const savedSidebar=localStorage.getItem("lexis_sidebar_collapsed")==="1";
   document.body.classList.toggle("sidebar-collapsed",savedSidebar);
   const toggle=$("#sidebarToggle");
