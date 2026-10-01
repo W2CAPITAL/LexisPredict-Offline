@@ -17,7 +17,16 @@ const MONTHS=["janeiro","fevereiro","março","abril","maio","junho","julho","ago
 const BACEN_MONTHLY=25471;
 const BACEN_ANNUAL=20749;
 const BACEN_LABEL="Aquisição de veículos — PF — recursos livres (SGS 25471 mensal / 20749 anual)";
-const BACEN_FALLBACK={monthlyRate:1.97,annualRate:26.44,period:"junho de 2026",observedAt:"01/06/2026",seriesName:BACEN_LABEL,source:"cache"};
+const BACEN_LINKS=Object.freeze({
+  monthlyMeta:"https://www3.bcb.gov.br/sgspub/consultarmetadados/consultarMetadadosSeries.do?method=consultarMetadadosSeriesInternet&hdOidSerieSelecionada=25471",
+  annualMeta:"https://www3.bcb.gov.br/sgspub/consultarmetadados/consultarMetadadosSeries.do?method=consultarMetadadosSeriesInternet&hdOidSerieSelecionada=20749",
+  monthlyApi:"https://api.bcb.gov.br/dados/serie/bcdata.sgs.25471/dados?formato=json",
+  annualApi:"https://api.bcb.gov.br/dados/serie/bcdata.sgs.20749/dados?formato=json"
+});
+const BACEN_FALLBACKS=Object.freeze({
+  "2026-02":{monthlyRate:2.03,annualRate:27.28},
+  "2026-06":{monthlyRate:1.97,annualRate:26.44}
+});
 
 function privateHost(host){
   const h=String(host||"").toLowerCase();
@@ -152,17 +161,26 @@ function nearest(points,ym){if(!points.length)return null;return points.find(p=>
 function monthLabel(ym){const [y,m]=String(ym).split("-").map(Number);return y&&m?MONTHS[m-1]+" de "+y:ym}
 async function bacen(contractDate){
   if(!/^\d{4}-\d{2}$/.test(contractDate))throw new Error("Use o mês do contrato em AAAA-MM.");
+  const cached=()=>{
+    const item=BACEN_FALLBACKS[contractDate];if(!item)return null;
+    const implied=(Math.pow(1+Number(item.monthlyRate)/100,12)-1)*100;
+    return {...item,impliedAnnual:Number(implied.toFixed(4)),ratesConsistent:Math.abs(implied-Number(item.annualRate))/Math.max(Math.abs(implied),0.01)<=0.15,period:monthLabel(contractDate),observedAt:"01/"+contractDate.slice(5,7)+"/"+contractDate.slice(0,4),seriesName:BACEN_LABEL,source:"cache",warning:"Consulta ao BACEN indisponível; exibindo cache local do mesmo mês de referência.",officialLinks:BACEN_LINKS};
+  };
   async function series(code){
     const u="https://api.bcb.gov.br/dados/serie/bcdata.sgs."+code+"/dados?formato=json&dataInicial=01%2F01%2F2017&dataFinal=01%2F12%2F2030";
     const r=await jsonFetch(u,{headers:{Accept:"application/json"}},12000);if(!r.ok||!Array.isArray(r.data))throw new Error("Bacen indisponível");return r.data;
   }
   try{
     const [monthly,annual]=await Promise.all([series(BACEN_MONTHLY),series(BACEN_ANNUAL)]);
-    const mp=nearest(monthly,contractDate);if(!mp)return {...BACEN_FALLBACK,period:monthLabel(contractDate)};
-    const ym=parseYm(mp.data),ap=nearest(annual,ym),mr=Number(mp.valor),ar=ap?Number(ap.valor):null;
+    const mp=monthly.find(p=>parseYm(p.data)===contractDate);
+    if(!mp){const fallback=cached();if(fallback)return fallback;throw new Error("O BACEN não retornou dado para "+monthLabel(contractDate)+".");}
+    const ym=parseYm(mp.data),ap=annual.find(p=>parseYm(p.data)===ym)||null,mr=Number(mp.valor),ar=ap?Number(ap.valor):null;
     const implied=Number.isFinite(mr)?(Math.pow(1+mr/100,12)-1)*100:null;
-    return {monthlyRate:mr,annualRate:ar,impliedAnnual:implied==null?null:Number(implied.toFixed(4)),ratesConsistent:ar!=null&&implied!=null&&Math.abs(implied-ar)/Math.max(Math.abs(implied),0.01)<=0.15,period:monthLabel(ym),observedAt:mp.data,seriesName:BACEN_LABEL,history:monthly.map(p=>({month:parseYm(p.data),monthlyRate:Number(p.valor)})).filter(p=>Number.isFinite(p.monthlyRate)).slice(-12),source:"bacen"};
-  }catch{return {...BACEN_FALLBACK,period:monthLabel(contractDate)}}
+    return {monthlyRate:mr,annualRate:ar,impliedAnnual:implied==null?null:Number(implied.toFixed(4)),ratesConsistent:ar!=null&&implied!=null&&Math.abs(implied-ar)/Math.max(Math.abs(implied),0.01)<=0.15,period:monthLabel(ym),observedAt:mp.data,seriesName:BACEN_LABEL,history:monthly.map(p=>({month:parseYm(p.data),monthlyRate:Number(p.valor)})).filter(p=>Number.isFinite(p.monthlyRate)).slice(-12),source:"bacen",officialLinks:BACEN_LINKS};
+  }catch(e){
+    const fallback=cached();if(fallback)return fallback;
+    throw new Error(e?.message==="Bacen indisponível"?"BACEN indisponível para o mês solicitado. Tente novamente.":(e?.message||String(e)));
+  }
 }
 function healthLabel(code){
   if(code>=200&&code<300)return {ok:true,status:"online",reason:"healthy"};
