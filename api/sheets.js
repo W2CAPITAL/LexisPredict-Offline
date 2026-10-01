@@ -8,6 +8,8 @@ function safeUrl(raw){
   return u.toString();
 }
 const READ_ACTIONS=new Set(["session","auto","list","get","crm_list","judicial_history","ping","users","list_users"]);
+const REQUIRED_BRIDGE_VERSION="8.2";
+const REQUIRED_BRIDGE_CAPABILITIES=new Set(["list_compact","crm_list","crm_write"]);
 const TRANSIENT_STATUSES=new Set([408,425,429,500,502,503,504]);
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fetchBridge(url,body,action){
@@ -59,11 +61,12 @@ async function probeBridgeVersion(url,token){
       ok:!!(data&&data.ok),
       version:String(data?.v||"").trim(),
       pong:!!data?.pong,
+      capabilities:Array.isArray(data?.capabilities)?data.capabilities.map(x=>String(x)) : [],
       httpStatus:Number(probe?.up?.status)||0,
       error:String(data?.error||"").trim()
     };
   }catch(e){
-    return {ok:false,version:"",pong:false,httpStatus:0,error:e?.message||String(e)};
+    return {ok:false,version:"",pong:false,capabilities:[],httpStatus:0,error:e?.message||String(e)};
   }
 }
 module.exports=async(req,res)=>{
@@ -109,7 +112,7 @@ module.exports=async(req,res)=>{
       // Compatibilidade: instalações antigas (ex.: bridge 7.0) continuam
       // funcionais enquanto o projeto Apps Script é saneado. Isso evita zerar
       // a carteira apenas porque list_compact ainda não está no handler ativo.
-      if(probe.ok&&!/^8\.1(?:\b|$)/.test(probe.version)){
+      if(probe.ok&&probe.version!==REQUIRED_BRIDGE_VERSION){
         const legacy=await fetchBridge(url,{...payload,action:"list",limit:8000,token:fixedToken},"legacy_list");
         if(legacy?.data?.ok){
           data={...legacy.data,legacyBridge:true,detectedVersion:probe.version||String(legacy.data?.v||"legacy"),compatibilityMode:true};
@@ -129,12 +132,29 @@ module.exports=async(req,res)=>{
           bridgeMismatch:true,
           code:"APPS_SCRIPT_ROUTE_MISMATCH",
           detectedVersion:probe.version,
-          requiredVersion:"8.1",
-          error:"O endpoint /exec responde como installer 8.1, mas não expõe list_compact. Isso indica outro doPost/handler atendendo a implantação."
+          requiredVersion:REQUIRED_BRIDGE_VERSION,
+          requiredCapabilities:[...REQUIRED_BRIDGE_CAPABILITIES],
+          detectedCapabilities:probe.capabilities,
+          error:"O endpoint /exec responde como bridge "+(probe.version||"desconhecido")+", mas não expõe list_compact. Publique o installer "+REQUIRED_BRIDGE_VERSION+" como NOVA VERSÃO na implantação /exec ativa."
         });
       }else{
         return transientRead(res,action,"Não foi possível confirmar a versão publicada do Google Apps Script. O cache local foi preservado.",probe.httpStatus||503);
       }
+    }
+    if((action==="crm_write"||action==="crm_list")&&data&&data.ok===false&&/acao desconhecida:\s*crm_(?:write|list)/i.test(String(data.error||""))){
+      const probe=await probeBridgeVersion(url,fixedToken);
+      return res.status(200).json({
+        ok:false,
+        bridgeMismatch:true,
+        degraded:true,
+        code:"APPS_SCRIPT_CRM_ROUTE_MISSING",
+        action,
+        detectedVersion:probe.version||"legacy",
+        requiredVersion:REQUIRED_BRIDGE_VERSION,
+        detectedCapabilities:probe.capabilities||[],
+        requiredCapabilities:[...REQUIRED_BRIDGE_CAPABILITIES],
+        error:"O Apps Script publicado não possui a rota "+action+". Publique o installer "+REQUIRED_BRIDGE_VERSION+" em Gerenciar implantações > Editar > Nova versão. Alterações do CRM devem permanecer no cache/fila local até a atualização."
+      });
     }
     if(bridged.parseError){
       if(READ_ACTIONS.has(action))return transientRead(res,action,"Google Apps Script está trocando de versão ou respondeu temporariamente fora do formato esperado.",up.status);
