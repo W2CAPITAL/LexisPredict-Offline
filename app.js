@@ -318,12 +318,16 @@ function handleCloudAuthFailure(message){
   if(status)status.textContent=message||"Sua sessão expirou. Entre novamente.";
   updateSyncUi();
 }
+const SOFT_AUTH_ACTIONS=new Set(["crm_list","crm_write","crm_seed_clients"]);
 async function apiSheets(payload){
   const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload}),cache:"no-store"});
   const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));
   const action=String(payload?.action||"").toLowerCase();
   if(!r.ok){
-    if(r.status===401&&!["login","auth"].includes(action))handleCloudAuthFailure(j.error);
+    // Falhas 401 de recursos auxiliares não devem apagar a sessão principal.
+    // O CRM mantém a alteração em IndexedDB/outbox; uma operação principal
+    // (session/list/write) decide se a sessão realmente expirou.
+    if(r.status===401&&!["login","auth"].includes(action)&&!SOFT_AUTH_ACTIONS.has(action))handleCloudAuthFailure(j.error);
     const e=new Error(j.error||"Falha ao acessar a planilha");
     e.status=r.status;e.data=j;e.transient=!!j.transient||r.status>=500;throw e;
   }
