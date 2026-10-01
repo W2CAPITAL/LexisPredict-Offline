@@ -2026,7 +2026,7 @@ async function markContacted(key){
   if(clientId&&!pick(row,"ClienteId"))row.ClienteId=clientId;
   Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso});
   updateLocalRow(row);await saveRows(state.companyRows);
-  const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
+  const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"};
   await queueWrite(patch);
   if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
   if(clientId){
@@ -2078,6 +2078,7 @@ async function saveAttendance(){
   Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);
   if(statusEl)statusEl.textContent="Atendimento salvo localmente. Preparando sincronização…";
   await queueWrite(patch);if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
+  let crmPending=false;
   if(clientId){
     const interaction={
       InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),
@@ -2086,25 +2087,49 @@ async function saveAttendance(){
       Conteudo:note||("Resultado: "+result),Usuario:actor,DataHora:nowIso,Resultado:result,
       ProximoPasso:next?"Retorno em "+next:"",DataProximoPasso:next,OptOut:""
     };
-    await crmWrite("Interacoes",interaction,{quiet:true});
+    // O registro principal em Processos tem prioridade. O histórico CRM entra
+    // primeiro na fila local e só é enviado depois que Processos for confirmado.
+    crmUpsertLocal("Interacoes",interaction);
+    await saveCrmCache("Interacoes");
+    await queueCrmWrite("Interacoes",interaction);
+    crmPending=true;
   }
   render();
   try{
+    let crmError=null;
     if(navigator.onLine){
-      if(statusEl)statusEl.textContent="Sincronizando atendimento com a planilha…";
+      if(statusEl)statusEl.textContent="Sincronizando atendimento com a aba Processos…";
       await flushOutbox();
-      if(statusEl)statusEl.textContent="Confirmando histórico de atendimento…";
-      await flushCrmOutbox().catch(()=>{});
+      if(clientId){
+        if(statusEl)statusEl.textContent="Confirmando histórico de atendimento…";
+        try{await flushCrmOutbox();crmPending=false}
+        catch(e){crmError=e;crmPending=true}
+      }
     }
-    if(statusEl)statusEl.textContent=navigator.onLine?"Atendimento confirmado.":"Atendimento salvo offline.";
-    await updateSleep(260);
-    $("#attendanceDialog").close();
-    showBanner("Atendimento registrado por "+actor+" sem transferir o processo.","good");
+    if(crmError){
+      const needsBridge=!!(crmError?.upgradeRequired||crmError?.deploymentOutdated||crmError?.bridgeMismatch);
+      const detail=needsBridge
+        ?" O Apps Script publicado precisa ser atualizado para o bridge 8.2 e republicado como Nova versão na implantação /exec existente."
+        :" "+(crmError.message||String(crmError));
+      if(statusEl)statusEl.textContent="Processos atualizado; histórico CRM pendente."+detail;
+      await updateSleep(500);
+      $("#attendanceDialog").close();
+      showBanner("Atendimento gravado na aba Processos, mas o histórico em Interacoes ficou pendente."+detail,"bad");
+    }else{
+      if(statusEl)statusEl.textContent=navigator.onLine?"Atendimento confirmado na planilha.":"Atendimento salvo offline.";
+      await updateSleep(260);
+      $("#attendanceDialog").close();
+      showBanner((navigator.onLine?"Atendimento registrado na planilha por ":"Atendimento salvo offline por ")+actor+" sem transferir o processo.","good");
+    }
   }catch(e){
-    if(statusEl)statusEl.textContent="Salvo localmente; aguardando a planilha voltar.";
-    await updateSleep(350);
+    const needsBridge=!!(e?.upgradeRequired||e?.deploymentOutdated||e?.bridgeMismatch);
+    const detail=needsBridge
+      ?" O Apps Script publicado precisa ser atualizado para o bridge 8.2 e republicado como Nova versão na implantação /exec existente."
+      :" "+(e.message||String(e));
+    if(statusEl)statusEl.textContent="Salvo localmente; a aba Processos ainda não confirmou a gravação."+detail;
+    await updateSleep(500);
     $("#attendanceDialog").close();
-    showBanner("Atendimento salvo no cache e pendente para a planilha: "+(e.message||String(e)),"bad");
+    showBanner("Atendimento ficou pendente para a aba Processos."+detail,"bad");
     if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
   }finally{setOperationBusy(btn,{busy:false,doneLabel:"Registrar atendimento",statusEl})}
 }
