@@ -34,9 +34,8 @@ assert.doesNotMatch(app,/slice\(0,3000\)/,"Clientes não deve renderizar milhare
 assert.match(app,/calendar-grid/,"Agenda deve ser calendário e não apenas tabela");
 assert.match(app,/mode:djenWasPaused\?"datajud":"both"/,"DJEN pausado deve deixar DataJud continuar");
 
-console.log("frontend-selectors: ok");
+assert.doesNotMatch(app,/"atendido_em":nowIso/,"atendimento não deve exigir coluna técnica atendido_em para confirmar a escrita");
+assert.match(app,/Sincronizando atendimento com a aba Processos/,"atendimento deve priorizar a escrita principal");
+assert.match(app,/bridge 8\.2/,"falha de histórico deve orientar atualização explícita do Apps Script");
 
-const appText=fs.readFileSync(path.join(__dirname,"..","app.js"),"utf8");
-assert.doesNotMatch(appText,/"atendido_em":nowIso/,"atendimento não deve exigir coluna técnica atendido_em para confirmar a escrita");
-assert.match(appText,/Sincronizando atendimento com a aba Processos/,"atendimento deve priorizar a escrita principal");
-assert.match(appText,/bridge 8\.2/,"falha de histórico deve orientar atualização explícita do Apps Script");
+console.log("frontend-selectors: ok");
