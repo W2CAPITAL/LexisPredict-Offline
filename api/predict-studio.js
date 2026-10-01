@@ -3,6 +3,7 @@ const learning=require("../lib/predict-learning-pack");
 const {revisionalBankContext}=require("../lib/revisional-skill");
 const {scanJudicial}=require("../lib/judicial-intelligence");
 const {cnjFromText,summarizeJudicialScan,dossierHtml}=require("../lib/legal-chat-fallback");
+const khoj=require("../lib/khoj-bridge");
 
 const MAX_JSON=700_000;
 const TIMEOUTS={status:10000,chat:45000,work:45000,tutor:45000,legal:65000,build:90000,research:70000,imagine:90000,report:100000};
@@ -209,7 +210,7 @@ module.exports=async(req,res)=>{
   }
 
   const promptCnj=cnjFromText(body.prompt||body.context||body.request||"");
-  if(!base && !ashna && !["legal","legal_dossier"].includes(action) && !promptCnj){
+  if(!base && !ashna && !khoj.configured() && !["legal","legal_dossier"].includes(action) && !promptCnj){
     const payload={
       ok:false,configured:false,code:"PREDICTLM_NOT_CONFIGURED",
       error:"Nenhum chatbot remoto foi habilitado neste deploy."
@@ -224,12 +225,12 @@ module.exports=async(req,res)=>{
       if(base){
         try{
           out=await call(base,"/api/capabilities",{method:"GET",query:{surface:clean(body.surface||"chat",30),q:clean(body.q,400)},timeoutMs:TIMEOUTS.status});
-          return res.status(200).json({ok:true,configured:true,chatProvider:ashna?"PredictLM + fallback privado":"PredictLM",capabilities:out.data});
+          return res.status(200).json({ok:true,configured:true,chatProvider:ashna?"PredictLM + fallback privado":"PredictLM",khoj:{configured:khoj.configured(),mode:"external-rag"},capabilities:out.data});
         }catch(e){
           if(!ashna)throw e;
         }
       }
-      return res.status(200).json({ok:true,configured:true,chatProvider:ashna.name||"IA compatível",capabilities:{surfaces:["chat","work","tutor"],provider:ashna.name||"compatível",model:ashna.model,limitedToChat:true}});
+      return res.status(200).json({ok:true,configured:true,chatProvider:ashna?.name||(khoj.configured()?"Khoj Second Brain":"IA compatível"),khoj:{configured:khoj.configured(),mode:"external-rag"},capabilities:{surfaces:["chat","work","tutor"],provider:ashna?.name||(khoj.configured()?"khoj":"compatível"),model:ashna?.model||null,limitedToChat:true}});
     }
     if(["chat","work","tutor"].includes(action)){
       const payload=chatPayload(body,action);
@@ -252,6 +253,12 @@ module.exports=async(req,res)=>{
             provider:"SheetsPredict DataJud/DJEN",model:"deterministic-legal-fallback",
             fallback:true,legal:local.data
           });
+        }catch{}
+      }
+      if(khoj.configured()){
+        try{
+          const k=await khoj.ask(payload.prompt,{client:"sheetspredict",timeoutMs:TIMEOUTS.chat});
+          return res.status(200).json({ok:true,surface:action,content:k.content,provider:"Khoj Second Brain",model:"external-rag",references:k.references,fallback:true});
         }catch{}
       }
       if(ashna)return res.status(200).json(await callAshna(body,action,ashna));
