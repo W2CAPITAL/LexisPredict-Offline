@@ -34,7 +34,7 @@ function applyTheme(id,{persist=true}={}){
   if(persist)try{localStorage.setItem(THEME_KEY,theme.id)}catch(_){}
   return theme;
 }
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",dashboardDays:30,session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,autoEnriching:false,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",dashboardDays:30,session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,autoEnriching:false,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,remoteProcessRows:[],remoteProcessQuery:"",remoteProcessLoading:false,remoteProcessTimer:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -111,6 +111,9 @@ async function saveRows(rows){await idbClear("rows");const db=await openDb();ret
 function currentUser(){return state.session?.user||{}}
 function elevatedUser(){return /superadmin|supervisor|administrador|admin/i.test(String(currentUser().perfil||""))}
 function assistantSegments(v){return String(v??"").split(/[\\/|;,]+/).map(x=>String(x||"").trim()).filter(Boolean)}
+function ownerValue(r){
+  return pick(r,"Assistente","Responsável","Responsavel","Responsável Atual","Responsavel Atual","Operador","Dono","Owner");
+}
 function personKeys(v){
   const raw=String(v??"").trim();if(!raw)return[];
   const parts=raw.split(/\s+/).filter(Boolean);
@@ -121,7 +124,7 @@ function isMine(r){
   const u=currentUser();
   const userKeys=[...new Set([...personKeys(u.nome),...personKeys(u.usuario)])];
   if(!userKeys.length)return false;
-  return assistantSegments(pick(r,"Assistente")).some(seg=>personKeys(seg).some(k=>userKeys.includes(k)));
+  return assistantSegments(ownerValue(r)).some(seg=>personKeys(seg).some(k=>userKeys.includes(k)));
 }
 function refreshScopes(){state.rows=(state.companyRows||[]).filter(isMine)}
 async function loadLocal(){
@@ -1290,6 +1293,59 @@ function filteredRows(source=state.rows){
   const q=norm(state.query),st=state.status,qual=state.quality;
   return (source||[]).filter(r=>(!q||norm(Object.values(r).join(" ")).includes(q))&&(!st||statusRet(r)===st)&&(!qual||quality(r)===qual));
 }
+function mergeProcessRows(primary,extra){
+  const map=new Map();
+  for(const row of [...(primary||[]),...(extra||[])]){
+    const key=keyOf(row);
+    if(!map.has(key))map.set(key,row);
+    else map.set(key,{...map.get(key),...row});
+  }
+  return [...map.values()];
+}
+function remoteRowsForCurrentQuery(){
+  return state.remoteProcessQuery===norm(state.query)?filteredRows(state.remoteProcessRows):[];
+}
+function clearRemoteProcessSearch(){
+  if(state.remoteProcessTimer)clearTimeout(state.remoteProcessTimer);
+  state.remoteProcessTimer=null;
+  state.remoteProcessRows=[];
+  state.remoteProcessQuery="";
+  state.remoteProcessLoading=false;
+}
+function scheduleRemoteProcessSearch(view){
+  if(state.remoteProcessTimer)clearTimeout(state.remoteProcessTimer);
+  state.remoteProcessTimer=null;
+  const query=String(state.query||"").trim();
+  if(query.length<2){clearRemoteProcessSearch();return}
+  const localSource=view==="empresa"?state.companyRows:state.rows;
+  if(filteredRows(localSource).length){
+    state.remoteProcessRows=[];
+    state.remoteProcessQuery=norm(query);
+    state.remoteProcessLoading=false;
+    return;
+  }
+  const requested=query,requestedNorm=norm(query);
+  state.remoteProcessLoading=true;
+  state.remoteProcessTimer=setTimeout(async()=>{
+    try{
+      const j=await apiSheets({action:"search",query:requested,limit:150,scope:view==="empresa"?"company":"mine"});
+      if(norm(state.query)!==requestedNorm)return;
+      state.remoteProcessRows=Array.isArray(j.rows)?j.rows:[];
+      state.remoteProcessQuery=requestedNorm;
+    }catch(e){
+      if(norm(state.query)!==requestedNorm)return;
+      state.remoteProcessRows=[];
+      state.remoteProcessQuery=requestedNorm;
+      if(!e?.transient)showBanner("Busca direta na planilha falhou: "+(e.message||String(e)),"bad");
+    }finally{
+      if(norm(state.query)===requestedNorm){
+        state.remoteProcessLoading=false;
+        if(state.view==="processos")renderProcessos();
+        else if(state.view==="empresa")renderEmpresa();
+      }
+    }
+  },180);
+}
 function resetPage(view){if(state.pageSize[view]!=null)state.pageSize[view]=PAGE_DEFAULT}
 function pageLimit(view){return Math.max(1,Number(state.pageSize[view]||PAGE_DEFAULT))}
 function searchFieldHtml(id,placeholder,value){
@@ -1300,6 +1356,7 @@ function bindSearchInput(selector,view,renderFn){
   input.oninput=e=>{
     const pos=e.target.selectionStart??String(e.target.value||"").length;
     state.query=e.target.value;resetPage(view);renderFn();
+    if(view==="processos"||view==="empresa")scheduleRemoteProcessSearch(view);
     const next=$(selector);
     if(next){next.focus({preventScroll:true});try{next.setSelectionRange(pos,pos)}catch(_){}}
   };
@@ -1443,12 +1500,12 @@ function bindProcessList(renderFn,view){
   $$("[data-new-record]").forEach(b=>b.onclick=()=>openProcess(""));
 }
 function renderProcessos(){
-  const all=filteredRows(state.rows),rows=all.slice(0,pageLimit("processos"));
+  const local=filteredRows(state.rows),all=mergeProcessRows(local,remoteRowsForCurrentQuery()),rows=all.slice(0,pageLimit("processos"));
   $("#content").innerHTML=processTable(rows,{company:false,total:all.length,view:"processos"});
   bindProcessList(renderProcessos,"processos");bindPagination("processos",renderProcessos,all.length);bindProcessTableScroll("processos");
 }
 function renderEmpresa(){
-  const all=filteredRows(state.companyRows),rows=all.slice(0,pageLimit("empresa"));
+  const local=filteredRows(state.companyRows),all=mergeProcessRows(local,remoteRowsForCurrentQuery()),rows=all.slice(0,pageLimit("empresa"));
   $("#content").innerHTML=processTable(rows,{company:true,total:all.length,view:"empresa"});
   bindProcessList(renderEmpresa,"empresa");bindPagination("empresa",renderEmpresa,all.length);bindProcessTableScroll("empresa");
 }
