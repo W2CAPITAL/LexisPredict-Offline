@@ -63,6 +63,8 @@ var SESS_PREFIX = "lex_sess_";
 var MAX_WRITE_ROWS = 3600;
 
 var INDEX_SHEET = "__LEXIS_INDEX";
+var BRIDGE_VERSION = "8.2";
+var BRIDGE_CAPABILITIES = ["list_compact","crm_list","crm_write","crm_seed_clients","judicial_history","djen_fetch"];
 
 // Entradas públicas do Web App. Mantenha apenas uma definição de cada no projeto.
 function doPost(e) { return syncDoPost_(e); }
@@ -1735,7 +1737,7 @@ function syncDoGet_(e) {
 
       if (p.token && String(p.token).trim() !== getToken_()) return out_({ ok: false, error: "token invalido" });
 
-      return out_({ ok: true, pong: true, v: "8.1", via: "GET" });
+      return out_({ ok: true, pong: true, v: BRIDGE_VERSION, via: "GET" });
 
     }
 
@@ -1763,7 +1765,7 @@ function syncDoGet_(e) {
 
     }
 
-    return out_({ ok: true, app: "lexis-gabinete-sync", v: "8.0", ts: new Date().toISOString() });
+    return out_({ ok: true, app: "lexis-gabinete-sync", v: BRIDGE_VERSION, ts: new Date().toISOString() });
 
   } catch (err) {
 
@@ -1973,7 +1975,7 @@ function syncDoPost_(e) {
 
 
 
-    if (action === "ping") return out_({ ok: true, pong: true, v: "8.1" });
+    if (action === "ping") return out_({ ok: true, pong: true, v: BRIDGE_VERSION, capabilities: BRIDGE_CAPABILITIES.slice() });
 
     if (action === "auth" || action === "login") return out_(doAuth_(body));
 
@@ -2146,7 +2148,7 @@ function listCompactAction_(body) {
     hasMore:all.hasMore,
     totalRows:all.totalRows,
     user:publicUser_(vs.us),
-    v:"8.1"
+    v:BRIDGE_VERSION
   };
 }
 
@@ -2171,7 +2173,7 @@ function listAction_(body) {
     headers:all.headers,
     count:rows.length,
     user:publicUser_(user),
-    v:"8.1"
+    v:BRIDGE_VERSION
   };
 }
 
