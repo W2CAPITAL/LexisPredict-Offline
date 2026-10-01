@@ -34,7 +34,7 @@ function applyTheme(id,{persist=true}={}){
   if(persist)try{localStorage.setItem(THEME_KEY,theme.id)}catch(_){}
   return theme;
 }
-const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",dashboardDays:30,session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,autoEnriching:false,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,remoteProcessRows:[],remoteProcessQuery:"",remoteProcessLoading:false,remoteProcessTimer:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenBusy:false,selectedCnj:""}};
+const state={rows:[],companyRows:[],view:"dashboard",query:"",status:"",quality:"",dashboardDays:30,session:null,scanning:false,scanStop:false,lastScan:null,auditKey:null,auditScan:null,auditSuggest:false,auditAiSuggestion:null,auditAiBusy:false,historyKey:null,historyScan:null,historyLoading:false,serverCfg:{},djenBlockedUntil:0,syncing:false,autoSyncTimer:null,lastSync:null,lastSyncAt:0,autoEnriching:false,updateLock:false,updateTarget:"",updatePollTimer:null,swRegistration:null,crm:{Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]},crmLoaded:false,crmLoading:false,crmBridgeReady:true,clientId:null,remoteProcessRows:[],remoteProcessQuery:"",remoteProcessLoading:false,remoteProcessTimer:null,pageSize:{processos:PAGE_DEFAULT,empresa:PAGE_DEFAULT,clientes:PAGE_DEFAULT,tarefas:PAGE_DEFAULT},agendaMonth:"",agendaDay:"",hub:{tab:"overview",status:null,loading:false,ai:[],aiBusy:false,wa:null,waBusy:false,lead:null,leadDiscover:null,leadBusy:false,bacen:null,bacenEstimate:null,bacenComparison:null,bacenBusy:false,bacenForm:{contractDate:new Date().toISOString().slice(0,7),installment:"",months:48,spread:.4,contractMonthly:"",contractAnnual:""},selectedCnj:""}};
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
@@ -1176,10 +1176,42 @@ function hubLeadsHtml(){
 }
 function money(n){return Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}
 function hubRevisionalHtml(){
-  const b=state.hub.bacen,e=state.hub.bacenEstimate;
-  return '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">LEADCHECK + BACEN</span><h3>Simulação revisional</h3></div></div><div class="hub-form"><div class="grid-2"><label>Mês do contrato<input id="hubBacenDate" type="month" value="'+esc(new Date().toISOString().slice(0,7))+'"/></label><label>Parcela atual<input id="hubBacenInstallment" type="number" min="0" step="0.01" placeholder="1500"/></label><label>Prazo (meses)<input id="hubBacenMonths" type="number" min="1" value="48"/></label><label>Spread estimado (pp a.m.)<input id="hubBacenSpread" type="number" step="0.1" value="0.4"/></label></div><button class="btn primary" id="hubBacenRun">'+(state.hub.bacenBusy?"Consultando…":"Consultar Bacen e simular")+'</button></div></section>'+
+  const b=state.hub.bacen,e=state.hub.bacenEstimate,c=state.hub.bacenComparison,f=state.hub.bacenForm||{};
+  const val=v=>v==null?"":String(v);
+  const pct=(v,d=2)=>v==null||!Number.isFinite(Number(v))?"—":Number(v).toLocaleString("pt-BR",{minimumFractionDigits:d,maximumFractionDigits:d})+"%";
+  const multiple=v=>v==null||!Number.isFinite(Number(v))?"—":Number(v).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})+"x";
+  const ruleStatus=v=>v==null?"Sem taxa contratada":v?"Acima de 1,5x":"Até 1,5x";
+  const links=b?.officialLinks||{};
+  const sourceLinks=b?'<div class="row wrap gap-sm">'+
+    (links.monthlyMeta?'<a class="btn sm" href="'+esc(links.monthlyMeta)+'" target="_blank" rel="noopener noreferrer">BCB SGS 25471 · mensal</a>':'')+
+    (links.annualMeta?'<a class="btn sm" href="'+esc(links.annualMeta)+'" target="_blank" rel="noopener noreferrer">BCB SGS 20749 · anual</a>':'')+
+    (links.monthlyApi?'<a class="btn sm" href="'+esc(links.monthlyApi)+'" target="_blank" rel="noopener noreferrer">JSON oficial mensal</a>':'')+
+    (links.annualApi?'<a class="btn sm" href="'+esc(links.annualApi)+'" target="_blank" rel="noopener noreferrer">JSON oficial anual</a>':'')+
+  '</div>':'';
+  return '<div class="hub-grid two"><section class="card"><div class="card-head"><div><span class="eyebrow">BACEN · REVISÃO DE JUROS</span><h3>Comparador revisional</h3></div></div><div class="hub-form"><div class="grid-2">'+
+    '<label>Mês do contrato<input id="hubBacenDate" type="month" value="'+esc(f.contractDate||new Date().toISOString().slice(0,7))+'"/></label>'+
+    '<label>Parcela atual (opcional)<input id="hubBacenInstallment" type="number" min="0" step="0.01" placeholder="1500" value="'+esc(val(f.installment))+'"/></label>'+
+    '<label>Prazo (meses)<input id="hubBacenMonths" type="number" min="1" value="'+esc(val(f.months||48))+'"/></label>'+
+    '<label>Spread estimado (pp a.m.)<input id="hubBacenSpread" type="number" step="0.01" value="'+esc(val(f.spread??.4))+'"/></label>'+
+    '<label>Taxa contratada (% a.m.)<input id="hubBacenContractMonthly" type="number" min="0" step="0.001" placeholder="3,89" value="'+esc(val(f.contractMonthly))+'"/></label>'+
+    '<label>Taxa contratada (% a.a.)<input id="hubBacenContractAnnual" type="number" min="0" step="0.01" placeholder="58,20" value="'+esc(val(f.contractAnnual))+'"/></label>'+
+    '</div><button class="btn primary" id="hubBacenRun">'+(state.hub.bacenBusy?"Consultando…":"Consultar BACEN e comparar")+'</button><p class="hub-note">A data exata dentro do mês não altera a referência: a série é mensal. Informe a taxa mensal ou anual do contrato; se preencher apenas uma, o equivalente da outra periodicidade será calculado.</p></div></section>'+
   '<section class="card"><div class="card-head"><div><span class="eyebrow">PRÉ-ANÁLISE</span><h3>Resultado orientativo</h3></div></div><div class="card-body">'+
-  (b?'<div class="metric-list">'+metricRow("Bacen mensal",Number(b.monthlyRate).toFixed(2)+"% a.m.",b.period||"")+metricRow("Bacen anual",b.annualRate!=null?Number(b.annualRate).toFixed(2)+"% a.a.":"—",b.seriesName||"")+(e?metricRow("Parcela simulada",money(e.bacenInstallment),"Price · "+e.months+" meses")+metricRow("Economia estimada",money(e.monthlySavings)+"/mês",money(e.totalSavings)+" no prazo"):"")+'</div><p class="hub-note">Estimativa de triagem; não substitui CET oficial nem cálculo pericial do contrato.</p>':'<div class="empty">Informe mês e parcela para consultar a série SGS e simular.</div>')+
+  (b?'<div class="metric-list">'+
+    metricRow("BACEN mensal",pct(b.monthlyRate,2)+" a.m.",b.period||"")+
+    metricRow("BACEN anual",b.annualRate!=null?pct(b.annualRate,2)+" a.a.":"—",b.seriesName||"")+
+    (b.impliedAnnual!=null?metricRow("Equivalente anual da mensal",pct(b.impliedAnnual,4)+" a.a.","capitalização composta da taxa mensal"):"")+
+    (c?metricRow("Parâmetro 1,5x mensal",pct(c.thresholdMonthlyPercent,3)+" a.m.","1,5 × taxa média mensal")+
+       metricRow("Parâmetro 1,5x anual",pct(c.thresholdAnnualPercent,2)+" a.a.","1,5 × taxa média anual")+
+       (c.contractMonthlyPercent!=null?metricRow("Contrato mensal",pct(c.contractMonthlyPercent,3)+" a.m.",c.contractMonthlyDerived?"equivalente calculado da taxa anual":"taxa informada"):"")+
+       (c.monthlyMultiple!=null?metricRow("Múltiplo mensal",multiple(c.monthlyMultiple),pct(c.monthlyExcessPp,3)+" p.p. acima da média · "+ruleStatus(c.aboveMonthly15x)):"")+
+       (c.contractAnnualPercent!=null?metricRow("Contrato anual",pct(c.contractAnnualPercent,2)+" a.a.",c.contractAnnualDerived?"equivalente calculado da taxa mensal":"taxa informada"):"")+
+       (c.annualMultiple!=null?metricRow("Múltiplo anual",multiple(c.annualMultiple),pct(c.annualExcessPp,2)+" p.p. acima da média · "+ruleStatus(c.aboveAnnual15x)):""):"")+
+    (e?metricRow("Parcela simulada",money(e.bacenInstallment),"Price · "+e.months+" meses")+metricRow("Economia estimada",money(e.monthlySavings)+"/mês",money(e.totalSavings)+" no prazo"):"")+
+    '</div>'+
+    (b.warning?'<p class="hub-note warn">'+esc(b.warning)+'</p>':'')+
+    '<p class="hub-note"><strong>Regra de 1,5x:</strong> é uma régua quantitativa de triagem, não um teto legal automático nem conclusão isolada de abusividade. A comparação é feita na mesma periodicidade publicada pelo BACEN.</p>'+sourceLinks
+    :'<div class="empty">Informe o mês do contrato para consultar as séries oficiais. A parcela é opcional se você quiser apenas comparar as taxas.</div>')+
   '</div></section></div>';
 }
 function hubSheetsHtml(){
@@ -1279,14 +1311,43 @@ async function hubSaveLead(){
   showBanner("Lead salvo em Clientes + Pipeline CRM.","good");
 }
 async function hubRunBacen(){
-  if(state.hub.bacenBusy)return;const contractDate=String($("#hubBacenDate")?.value||""),installment=Number($("#hubBacenInstallment")?.value||0),months=Number($("#hubBacenMonths")?.value||48),spread=Number($("#hubBacenSpread")?.value||.4);
-  if(!contractDate||installment<50){showBanner("Informe mês do contrato e parcela atual.","bad");return}
+  if(state.hub.bacenBusy)return;
+  const contractDate=String($("#hubBacenDate")?.value||"");
+  const installmentRaw=String($("#hubBacenInstallment")?.value||"").trim();
+  const monthsRaw=String($("#hubBacenMonths")?.value||"48").trim();
+  const spreadRaw=String($("#hubBacenSpread")?.value||".4").trim();
+  const contractMonthlyRaw=String($("#hubBacenContractMonthly")?.value||"").trim().replace(",",".");
+  const contractAnnualRaw=String($("#hubBacenContractAnnual")?.value||"").trim().replace(",",".");
+  const installment=installmentRaw===""?0:Number(installmentRaw);
+  const months=Math.max(1,Number(monthsRaw)||48),spread=Number(spreadRaw)||0;
+  const contractMonthly=contractMonthlyRaw===""?null:Number(contractMonthlyRaw);
+  const contractAnnual=contractAnnualRaw===""?null:Number(contractAnnualRaw);
+  if(!contractDate){showBanner("Informe o mês do contrato.","bad");return}
+  if(contractMonthly!=null&&(!Number.isFinite(contractMonthly)||contractMonthly<0)){showBanner("Taxa mensal contratada inválida.","bad");return}
+  if(contractAnnual!=null&&(!Number.isFinite(contractAnnual)||contractAnnual<0)){showBanner("Taxa anual contratada inválida.","bad");return}
+  state.hub.bacenForm={contractDate,installment:installmentRaw,months,spread:spreadRaw,contractMonthly:contractMonthlyRaw,contractAnnual:contractAnnualRaw};
   state.hub.bacenBusy=true;renderHub();
   try{
     state.hub.bacen=await hubApi({action:"bacen",contractDate});
-    state.hub.bacenEstimate=window.SheetsHub?.revisionalEstimate?window.SheetsHub.revisionalEstimate({currentInstallment:installment,bacenMonthlyPercent:state.hub.bacen.monthlyRate,months,assumedSpreadPp:spread}):null;
-  }catch(e){showBanner(e.message||String(e),"bad")}
-  finally{state.hub.bacenBusy=false;if(state.view==="hub")renderHub()}
+    state.hub.bacenComparison=window.SheetsHub?.bacenComparison?window.SheetsHub.bacenComparison({
+      bacenMonthlyPercent:state.hub.bacen.monthlyRate,
+      bacenAnnualPercent:state.hub.bacen.annualRate,
+      contractMonthlyPercent:contractMonthly,
+      contractAnnualPercent:contractAnnual,
+      multiplier:1.5
+    }):null;
+    const effectiveContractMonthly=state.hub.bacenComparison?.contractMonthlyPercent;
+    const assumedSpread=effectiveContractMonthly!=null?effectiveContractMonthly-Number(state.hub.bacen.monthlyRate):spread;
+    state.hub.bacenEstimate=installment>=50&&window.SheetsHub?.revisionalEstimate?window.SheetsHub.revisionalEstimate({
+      currentInstallment:installment,
+      bacenMonthlyPercent:state.hub.bacen.monthlyRate,
+      months,
+      assumedSpreadPp:assumedSpread
+    }):null;
+  }catch(e){
+    state.hub.bacen=null;state.hub.bacenComparison=null;state.hub.bacenEstimate=null;
+    showBanner(e.message||String(e),"bad");
+  }finally{state.hub.bacenBusy=false;if(state.view==="hub")renderHub()}
 }
 function metricRow(label,value,sub){return '<div class="metric-row"><div><div class="cell-main">'+esc(label)+'</div><div class="cell-sub">'+esc(sub)+'</div></div><strong>'+esc(value)+'</strong></div>'}
 function filteredRows(source=state.rows){
