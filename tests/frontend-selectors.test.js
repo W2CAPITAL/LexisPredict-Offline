@@ -35,3 +35,8 @@ assert.match(app,/calendar-grid/,"Agenda deve ser calendário e não apenas tabe
 assert.match(app,/mode:djenWasPaused\?"datajud":"both"/,"DJEN pausado deve deixar DataJud continuar");
 
 console.log("frontend-selectors: ok");
+
+const appText=fs.readFileSync(path.join(__dirname,"..","app.js"),"utf8");
+assert.doesNotMatch(appText,/"atendido_em":nowIso/,"atendimento não deve exigir coluna técnica atendido_em para confirmar a escrita");
+assert.match(appText,/Sincronizando atendimento com a aba Processos/,"atendimento deve priorizar a escrita principal");
+assert.match(appText,/bridge 8\.2/,"falha de histórico deve orientar atualização explícita do Apps Script");
