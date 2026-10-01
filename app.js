@@ -2024,7 +2024,7 @@ async function markContacted(key){
   const retorno=todayBrazil(),nowIso=new Date().toISOString();
   const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
   if(clientId&&!pick(row,"ClienteId"))row.ClienteId=clientId;
-  Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso});
+  Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"});
   updateLocalRow(row);await saveRows(state.companyRows);
   const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"};
   await queueWrite(patch);
@@ -2070,7 +2070,7 @@ async function saveAttendance(){
   const next=brDateFromInput($("#attendanceNext").value);
   const note=$("#attendanceNote").value.trim();
   const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
-  const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO","atendido_em":nowIso};
+  const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"};
   if(next)patch["Próximo Retorno"]=next;
   if(result==="ENCERRADO"){patch["Status"]="Encerrado";patch["Situacao"]="ENCERRADO"}
   else if(result!=="SEM CONTATO"){patch["Situacao"]="EM ANDAMENTO"}
