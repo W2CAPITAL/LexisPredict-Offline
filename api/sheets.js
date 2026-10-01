@@ -7,11 +7,32 @@ function safeUrl(raw){
   if(u.hostname==="script.google.com"&&!/\/macros\/s\/.+\/exec\/?$/.test(u.pathname))throw new Error("LEXIS_APPS_SCRIPT_URL deve terminar em /exec.");
   return u.toString();
 }
-const READ_ACTIONS=new Set(["session","auto","list","get","crm_list","judicial_history","ping","users","list_users"]);
+const READ_ACTIONS=new Set(["session","auto","list","get","search","crm_list","judicial_history","ping","users","list_users"]);
 const REQUIRED_BRIDGE_VERSION="8.2";
 const REQUIRED_BRIDGE_CAPABILITIES=new Set(["list_compact","crm_list","crm_write"]);
 const TRANSIENT_STATUSES=new Set([408,425,429,500,502,503,504]);
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function searchNorm(v){
+  return String(v??"")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase().replace(/[^a-z0-9]/g,"");
+}
+function searchDigits(v){return String(v??"").replace(/\D/g,"")}
+function searchRows(rows,query,limit=100){
+  const q=String(query||"").trim(),qn=searchNorm(q),qd=searchDigits(q);
+  if(!qn&&!qd)return[];
+  const out=[];
+  for(const row of Array.isArray(rows)?rows:[]){
+    const values=Object.values(row||{});
+    const text=searchNorm(values.join(" "));
+    const numeric=qd.length>=5?searchDigits(values.join(" ")): "";
+    if((qn&&text.includes(qn))||(qd.length>=5&&numeric.includes(qd))){
+      out.push(row);
+      if(out.length>=Math.max(1,Math.min(250,Number(limit)||100)))break;
+    }
+  }
+  return out;
+}
 async function fetchBridge(url,body,action){
   const safeRead=READ_ACTIONS.has(action);
   // Não bloqueia a UI por quase um minuto em cold-start/update do Apps Script.
@@ -102,6 +123,33 @@ module.exports=async(req,res)=>{
         return res.status(200).json({ok:true,user:auth.user||null,local:!!auth.local,upgraded:!!auth.legacy});
       }
       payload.sess=auth.sess;
+    }
+
+    if(action==="search"){
+      const query=String(payload.query||payload.q||"").trim();
+      if(query.length<2)return res.status(200).json({ok:true,rows:[],count:0,query});
+      const qDigits=searchDigits(query);
+      let source=[];
+      let upstream=null;
+      if(qDigits.length===20){
+        upstream=await fetchBridge(url,{action:"get",protocolo:qDigits,sess:auth.sess,token:fixedToken},"get");
+        if(upstream?.parseError)return transientRead(res,action,"A planilha não respondeu corretamente à busca direta.",upstream?.up?.status||503);
+        if(upstream?.data?.error==="token invalido")return res.status(401).json({ok:false,error:"LEXIS_SHEETS_TOKEN da Vercel não corresponde ao Apps Script publicado."});
+        const row=upstream?.data?.row||(Array.isArray(upstream?.data?.data)?upstream.data.data[0]:null);
+        source=row?[row]:[];
+      }else{
+        upstream=await fetchBridge(url,{action:"list",limit:8000,sess:auth.sess,token:fixedToken},"legacy_list");
+        if(upstream?.parseError)return transientRead(res,action,"A planilha não respondeu corretamente à busca.",upstream?.up?.status||503);
+        if(upstream?.data?.error==="token invalido")return res.status(401).json({ok:false,error:"LEXIS_SHEETS_TOKEN da Vercel não corresponde ao Apps Script publicado."});
+        source=Array.isArray(upstream?.data?.rows)?upstream.data.rows:
+          (Array.isArray(upstream?.data?.todas)?upstream.data.todas:
+          (Array.isArray(upstream?.data?.data)?upstream.data.data:[]));
+      }
+      const requestedScope=String(payload.scope||"mine").toLowerCase()==="company"?"company":"mine";
+      const scoped=scopeRows(source,auth?.user||null,requestedScope);
+      const rows=searchRows(scoped,query,payload.limit||100);
+      res.setHeader("Cache-Control","no-store");
+      return res.status(200).json({ok:true,query,scope:requestedScope,rows,count:rows.length,direct:qDigits.length===20});
     }
 
     const bridgePayload={...payload,action:action==="list"?"list_compact":action,token:fixedToken};
