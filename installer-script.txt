@@ -1834,51 +1834,48 @@ function crmWriteTable_(name, rows, actor) {
 
 function crmSeedClients_() {
   ensureSheets_();
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var proc = ss.getSheetByName(PROC_SHEET);
-  var cli = ss.getSheetByName("Clientes");
-  var ph = headers_(proc), ch = headers_(cli);
-  var pmap = headerMap_(ph), cmap = headerMap_(ch);
-  var clienteIdx = findCol_(pmap, ["Cliente"]), phoneIdx = findCol_(pmap, ["Telefone"]), assistIdx = findCol_(pmap, ["Assistente"]), clientIdIdx = findCol_(pmap, ["ClienteId"]);
-  if (clienteIdx < 0 || clientIdIdx < 0) throw new Error("Processos precisa de Cliente e ClienteId");
-  var pdata = sheetValues_(proc, ph);
-  var cdata = sheetValues_(cli, ch);
-  var byName = {};
-  for (var c = HEADER_ROW; c < cdata.length; c++) {
-    var nm = norm(cdata[c][findCol_(cmap,["Nome"])] || "");
-    var id = String(cdata[c][findCol_(cmap,["ClienteId"])] || "");
-    if (nm && id) byName[nm] = id;
+  var primary=SpreadsheetApp.getActiveSpreadsheet();
+  var cli=primary.getSheetByName("Clientes");
+  var ch=headers_(cli),cmap=headerMap_(ch);
+  var cdata=sheetValues_(cli,ch),byName={};
+  var nomeCol=findCol_(cmap,["Nome"]),idCol=findCol_(cmap,["ClienteId"]);
+  for (var c=HEADER_ROW;c<cdata.length;c++) {
+    var nm=norm(cdata[c][nomeCol]||""),id=String(cdata[c][idCol]||"");
+    if (nm&&id) byName[nm]=id;
   }
-  var newClients = [], idByName = Object.assign({}, byName), linked = 0, skipped = 0;
-  var outIds = [];
-  for (var r = HEADER_ROW; r < pdata.length; r++) {
-    var nameRaw = String(pdata[r][clienteIdx] || "").trim();
-    var name = norm(nameRaw);
-    var existingId = String(pdata[r][clientIdIdx] || "").trim();
-    if (existingId) { outIds.push([existingId]); continue; }
-    if (!name || /^(NAOIDENTIFICADO|SEMNOME|NAOINFORMADO)$/.test(name)) { outIds.push([""]); skipped++; continue; }
-    var id = idByName[name];
-    if (!id) {
-      id = Utilities.getUuid(); idByName[name] = id;
-      var row = new Array(ch.length).fill("");
-      row[findCol_(cmap,["ClienteId"])] = id;
-      row[findCol_(cmap,["Tipo"])] = "Pessoa";
-      row[findCol_(cmap,["Nome"])] = nameRaw;
-      var phn = phoneIdx >= 0 ? String(pdata[r][phoneIdx] || "") : "";
-      row[findCol_(cmap,["Telefone_Principal"])] = phn;
-      row[findCol_(cmap,["Status"])] = "ATIVO";
-      row[findCol_(cmap,["Responsavel"])] = assistIdx >= 0 ? String(pdata[r][assistIdx] || "") : "";
-      row[findCol_(cmap,["Origem"])] = "Processos";
-      row[findCol_(cmap,["CriadoEm"])] = new Date().toISOString();
-      row[findCol_(cmap,["AtualizadoEm"])] = new Date().toISOString();
-      newClients.push(row);
+
+  var newClients=[],idByName=Object.assign({},byName),linked=0,skipped=0,descriptors=processShardDescriptors_();
+  descriptors.forEach(function(desc){
+    var proc=openProcessShard_(desc),ph=headers_(proc),pmap=headerMap_(ph);
+    var clienteIdx=findCol_(pmap,["Cliente"]),phoneIdx=findCol_(pmap,["Telefone"]),assistIdx=findCol_(pmap,["Assistente"]),clientIdIdx=findCol_(pmap,["ClienteId"]);
+    if (clienteIdx<0||clientIdIdx<0) throw new Error("Processos precisa de Cliente e ClienteId na partição "+String(desc.partitionId||""));
+    var pdata=sheetValues_(proc,ph),outIds=[];
+    for (var r=HEADER_ROW;r<pdata.length;r++) {
+      var nameRaw=String(pdata[r][clienteIdx]||"").trim(),name=norm(nameRaw),existingId=String(pdata[r][clientIdIdx]||"").trim();
+      if (existingId){outIds.push([existingId]);continue;}
+      if (!name||/^(NAOIDENTIFICADO|SEMNOME|NAOINFORMADO)$/.test(name)){outIds.push([""]);skipped++;continue;}
+      var id=idByName[name];
+      if (!id) {
+        id=Utilities.getUuid();idByName[name]=id;
+        var row=new Array(ch.length).fill("");
+        row[findCol_(cmap,["ClienteId"])]=id;
+        row[findCol_(cmap,["Tipo"])]="Pessoa";
+        row[findCol_(cmap,["Nome"])]=nameRaw;
+        row[findCol_(cmap,["Telefone_Principal"])]=phoneIdx>=0?String(pdata[r][phoneIdx]||""):"";
+        row[findCol_(cmap,["Status"])]="ATIVO";
+        row[findCol_(cmap,["Responsavel"])]=assistIdx>=0?String(pdata[r][assistIdx]||""):"";
+        row[findCol_(cmap,["Origem"])]="Processos";
+        row[findCol_(cmap,["CriadoEm"])]=new Date().toISOString();
+        row[findCol_(cmap,["AtualizadoEm"])]=new Date().toISOString();
+        newClients.push(row);
+      }
+      outIds.push([id]);linked++;
     }
-    outIds.push([id]); linked++;
-  }
-  if (newClients.length) cli.getRange(cli.getLastRow() + 1, 1, newClients.length, ch.length).setValues(newClients);
-  if (outIds.length) proc.getRange(HEADER_ROW + 1, clientIdIdx + 1, outIds.length, 1).setValues(outIds);
+    if (outIds.length) proc.getRange(HEADER_ROW+1,clientIdIdx+1,outIds.length,1).setValues(outIds);
+  });
+  if (newClients.length) cli.getRange(cli.getLastRow()+1,1,newClients.length,ch.length).setValues(newClients);
   SpreadsheetApp.flush();
-  return { ok:true, clientes_criados:newClients.length, processos_vinculados:linked, ignorados:skipped };
+  return {ok:true,clientes_criados:newClients.length,processos_vinculados:linked,ignorados:skipped,partition_count:descriptors.length};
 }
 
 function syncDoPost_(e) {
