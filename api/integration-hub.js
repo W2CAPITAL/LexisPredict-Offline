@@ -192,10 +192,16 @@ function healthLabel(code){
   if(code>=500)return {ok:false,status:"serviço respondeu erro "+code,reason:"server_error"};
   return {ok:false,status:"HTTP "+code,reason:"http_error"};
 }
-async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requiresToken=true}){
+async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requiresToken=true,optional=false}){
   const checkedAt=new Date().toISOString();
-  if(!base)return {id,name,configured:false,ok:false,status:(urlEnv||"URL")+" ausente ou inválida",reason:"missing_url",missing:[urlEnv].filter(Boolean),checkedAt};
-  if(requiresToken&&!String(token||"").trim())return {id,name,configured:false,ok:false,status:(keyEnv||"chave")+" ausente",reason:"missing_key",missing:[keyEnv].filter(Boolean),checkedAt};
+  if(!base){
+    if(optional)return {id,name,configured:false,ok:false,optional:true,excludedFromAvailability:true,status:"não configurado (opcional)",reason:"optional_not_configured",missing:[urlEnv].filter(Boolean),checkedAt};
+    return {id,name,configured:false,ok:false,status:(urlEnv||"URL")+" ausente ou inválida",reason:"missing_url",missing:[urlEnv].filter(Boolean),checkedAt};
+  }
+  if(requiresToken&&!String(token||"").trim()){
+    if(optional)return {id,name,configured:false,ok:false,optional:true,excludedFromAvailability:true,status:"não configurado (opcional)",reason:"optional_not_configured",missing:[keyEnv].filter(Boolean),checkedAt};
+    return {id,name,configured:false,ok:false,status:(keyEnv||"chave")+" ausente",reason:"missing_key",missing:[keyEnv].filter(Boolean),checkedAt};
+  }
   const started=Date.now();
   try{
     const r=await jsonFetch(urlAt(base,path),{headers:{Accept:"application/json",...authHeaders(token,header)}},8000);
@@ -205,19 +211,26 @@ async function serviceStatus({id,name,base,path,token,header,urlEnv,keyEnv,requi
     const payloadUnhealthy=r.ok&&(r.data?.ok===false||r.data?.healthy===false||r.data?.available===false||/^(error|failed|offline|unhealthy)$/i.test(String(r.data?.status||"")));
     const message=compact(r.data?.error||r.data?.message||r.data?.detail||r.data?.raw||"",220);
     const remoteMissing=remoteConfigured===false;
-    const authMismatch=requiresToken&&remoteConfigured!==false&&remoteAuthorized===false;
-    const ok=httpHealth.ok&&!payloadUnhealthy&&!remoteMissing&&!authMismatch;
+    const authMismatch=requiresToken&&remoteConfigured===true&&remoteAuthorized===false;
+    const authUnverified=requiresToken&&httpHealth.ok&&remoteMissing;
+    const ok=httpHealth.ok&&!payloadUnhealthy&&!authMismatch;
     let status=ok?"online":httpHealth.status,reason=ok?"healthy":httpHealth.reason,detail=message||undefined;
-    if(remoteMissing){status="serviço online; chave ausente no destino";reason="remote_missing_key";detail=detail||("O SheetsPredict enviou a credencial, mas o projeto remoto ainda não expôs uma chave compatível. Configure "+(keyEnv||"a chave de integração")+" também no projeto de destino e faça um novo deployment; definir a variável somente no SheetsPredict não autentica o serviço remoto.")}
+    if(authUnverified){
+      status="online";
+      reason="reachable_auth_unverified";
+      detail="Serviço acessível e respondendo HTTP "+r.status+". O endpoint de diagnóstico remoto não confirma a chave de integração, então isso não é tratado como falha. A autenticação real continua sendo validada nas chamadas de uso.";
+    }
     else if(authMismatch){status="credencial não reconhecida pelo destino";reason="remote_key_mismatch";detail=detail||"A chave do SheetsPredict não corresponde à chave configurada no serviço remoto."}
     else if(/service has been suspended|suspended by its owner|service suspended/i.test(message)){
       status="host suspenso no Render";reason="host_suspended";detail="O serviço WA.Auto está suspenso na hospedagem. O código não consegue reativar um serviço bloqueado por billing; use outro runtime persistente ou regularize o workspace do Render.";
     }
     else if(payloadUnhealthy){status=message||"serviço respondeu não saudável";reason="unhealthy_payload"}
     return {
-      id,name,configured:!remoteMissing,reachable:r.ok||r.status>0,ok,status,reason,
+      id,name,configured:true,reachable:r.ok||r.status>0,ok,status,reason,
       httpStatus:r.status,latencyMs:Date.now()-started,checkedAt,
       detail,credentialSent:requiresToken?!!token:false,
+      authVerified:remoteAuthorized===true,
+      diagnosticWarning:authUnverified?"remote_health_reports_unconfigured":undefined,
       remoteConfigured:remoteConfigured===undefined?undefined:!!remoteConfigured,
       remoteAuthorized:remoteAuthorized===undefined?undefined:!!remoteAuthorized
     };
@@ -231,7 +244,7 @@ async function status(){
   const remote=await Promise.all([
     serviceStatus({id:"predictlm",name:"PredictLM",base:predict,path:"/api/integration/sheetspredict",token:predictKey(),header:"Authorization",urlEnv:"PREDICTLM_URL",keyEnv:"PREDICTLM_API_KEY"}),
     serviceStatus({id:"waauto",name:"WA.Auto",base:wa,path:"/api/health",token:null,urlEnv:"WA_AUTO_URL",requiresToken:false}),
-    serviceStatus({id:"grey",name:"GREY",base:grey,path:"/health",token:process.env.GREY_API_KEY,header:"x-brain-key",urlEnv:"GREY_URL",keyEnv:"GREY_API_KEY"}),
+    serviceStatus({id:"grey",name:"GREY",base:grey,path:"/health",token:process.env.GREY_API_KEY,header:"x-brain-key",urlEnv:"GREY_URL",keyEnv:"GREY_API_KEY",optional:true}),
     serviceStatus({id:"lexispredict",name:"LexisPredict",base:lexis,path:"/api/integration/sheetspredict",token:lexisKey(),header:"Authorization",urlEnv:"LEXISPREDICT_URL",keyEnv:"LEXISPREDICT_API_KEY"})
   ]);
   return {ok:true,checkedAt:new Date().toISOString(),repositories:REPOSITORIES,services:remote,builtins:[
