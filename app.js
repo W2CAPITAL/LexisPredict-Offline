@@ -314,8 +314,10 @@ function handleCloudAuthFailure(message){
   if(cloudAuthFailureHandled)return;
   cloudAuthFailureHandled=true;
   stopAutoSync();
+  // 401 encerra a sessão, mas não apaga a réplica local. Após novo login,
+  // refreshScopes() recompõe a carteira sem depender de um novo download completo.
   saveSession(null);
-  state.rows=[];state.companyRows=[];state.syncing=false;
+  state.syncing=false;
   setLogged(false);
   const status=$("#loginStatus");
   if(status)status.textContent=message||"Sua sessão expirou. Entre novamente.";
@@ -332,7 +334,7 @@ async function apiSheets(payload){
     // (session/list/write) decide se a sessão realmente expirou.
     if(r.status===401&&!["login","auth"].includes(action)&&!SOFT_AUTH_ACTIONS.has(action))handleCloudAuthFailure(j.error);
     const e=new Error(j.error||"Falha ao acessar a planilha");
-    e.status=r.status;e.data=j;e.transient=!!j.transient||r.status>=500;throw e;
+    e.status=r.status;e.data=j;e.reason=j.reason||"";e.transient=!!j.transient||r.status>=500;throw e;
   }
   if(j.upgradeRequired||j.deploymentOutdated||j.bridgeMismatch){
     const e=new Error(j.error||"A implantação do Google Apps Script não corresponde ao bridge esperado.");
@@ -706,10 +708,20 @@ async function flushOutbox(opts={}){
   }
 
   const confirmed=[],failed=[];
-  for(const item of unique){
-    const verify=await verifySheetWrite(item.row).catch(e=>({ok:false,error:e.message||String(e)}));
-    if(verify.ok)confirmed.push(item);
-    else failed.push({item,error:verify.error||j.error||j.warning||"Gravação não confirmada"});
+  // Needle-style: uma ferramenta por ação. Se o próprio write confirmou todos os
+  // registros após SpreadsheetApp.flush(), não fazemos um GET redundante por linha.
+  // Bridges legados/ambíguos continuam usando verificação individual como fallback.
+  const bridgeConfirmed=window.SheetsNeedle?.bridgeConfirmedWrite
+    ?window.SheetsNeedle.bridgeConfirmedWrite(j,rows)
+    :(j?.ok!==false&&!j?.conflict&&Number(j?.rejected_count||0)===0&&Number(j?.written??j?.updated??j?.added??0)>=rows.length);
+  if(bridgeConfirmed){
+    confirmed.push(...unique);
+  }else{
+    for(const item of unique){
+      const verify=await verifySheetWrite(item.row).catch(e=>({ok:false,error:e.message||String(e)}));
+      if(verify.ok)confirmed.push(item);
+      else failed.push({item,error:verify.error||j.error||j.warning||"Gravação não confirmada"});
+    }
   }
 
   const db=await openDb();
@@ -1379,7 +1391,11 @@ function scheduleRemoteProcessSearch(view){
   const query=String(state.query||"").trim();
   if(query.length<2){clearRemoteProcessSearch();return}
   const localSource=view==="empresa"?state.companyRows:state.rows;
-  if(filteredRows(localSource).length){
+  const localMatches=filteredRows(localSource);
+  const shouldRemote=window.SheetsNeedle?.shouldRemoteSearch
+    ?window.SheetsNeedle.shouldRemoteSearch(query,localMatches,{cacheFresh:cacheFresh(),syncing:state.syncing})
+    :!localMatches.length;
+  if(!shouldRemote){
     state.remoteProcessRows=[];
     state.remoteProcessQuery=norm(query);
     state.remoteProcessLoading=false;
@@ -2500,7 +2516,7 @@ function setupEvents(){
       await syncFromCloud();
       setLogged(true);applyUser();render();startAutoSync();$("#loginStatus").textContent="";
     }catch(e){
-      saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
+      // Falha de sessão não destrói a réplica IndexedDB já carregada.\n    saveSession(null);setLogged(false);
       $("#loginStatus").textContent=e.message||String(e);
     }
   };
