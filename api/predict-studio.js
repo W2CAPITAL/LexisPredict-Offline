@@ -1,6 +1,7 @@
 const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
 const learning=require("../lib/predict-learning-pack");
 const {revisionalBankContext}=require("../lib/revisional-skill");
+const {bpmnContext}=require("../lib/bpmn-skill");
 const {scanJudicial}=require("../lib/judicial-intelligence");
 const {cnjFromText,summarizeJudicialScan,dossierHtml}=require("../lib/legal-chat-fallback");
 const khoj=require("../lib/khoj-bridge");
@@ -128,7 +129,7 @@ function chatPayload(body,surface){
   return {
     prompt,messages:history,useHistory:true,language:"pt-BR",deep:!!body.deep,
     answerAnchor:clean(body.context,16000),
-    instructions:[contracts[surface]||contracts.chat,revisionalBankContext(prompt)].filter(Boolean).join(' '),
+    instructions:[contracts[surface]||contracts.chat,revisionalBankContext(prompt),bpmnContext(prompt)].filter(Boolean).join(' '),
     sessionId:clean(body.sessionId||"sheetspredict",160)
   };
 }
