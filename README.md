@@ -28,7 +28,7 @@
 
 ---
 
-**Versão atual: 4.2.0**
+**Versão atual: 4.3.0**
 
 SheetsPredict mantém o **Google Sheets como fonte operacional de verdade**, usa IndexedDB como réplica local/offline e concentra integrações externas atrás de funções server-side. O navegador não precisa conhecer chaves de PredictLM, LexisPredict, WA.Auto ou provedores de IA.
 
@@ -75,8 +75,10 @@ Atender != transferir carteira
 ## Arquitetura
 
 ```text
-Google Sheets
+Google Sheets principal
   ├─ Processos
+  ├─ __LEXIS_INDEX
+  ├─ __LEXIS_PROCESS_SHARDS
   ├─ Clientes
   ├─ Interacoes
   ├─ PipelineCRM
@@ -86,8 +88,12 @@ Google Sheets
   ├─ Honorarios
   ├─ Movimentações_DataJud
   └─ Publicações_DJEN
+          │
+          ├── Processos (partição 2)
+          ├── Processos (partição 3)
+          └── ... criadas automaticamente quando necessário
           ↕
-Apps Script privado
+Apps Script privado · bridge 8.3
           ↕
 Vercel Functions
   ├─ /api/sheets
@@ -98,14 +104,33 @@ Vercel Functions
           ↕
 SheetsPredict
           ↕
-IndexedDB + outbox + PWA
+IndexedDB por gerações + outbox + PWA
 ```
 
-O Google Sheets é persistência operacional. IndexedDB é cache/réplica e não substitui a planilha.
+O Google Sheets continua sendo a persistência operacional. Não há banco SQL, Firebase ou Supabase obrigatório. O IndexedDB funciona como réplica local e fila durável; cada sincronização monta uma nova geração do cache em blocos e só troca a geração ativa depois que ela está completa.
+
+### Escala sem banco pago
+
+A versão 4.3 adiciona particionamento automático da carteira de **Processos**:
+
+- a planilha principal continua sendo o ponto de controle;
+- `__LEXIS_INDEX` mantém CNJ → planilha/aba/linha para busca e gravação diretas;
+- `__LEXIS_PROCESS_SHARDS` registra as partições existentes;
+- quando a partição ativa atinge o limite conservador calculado por células/linhas, o Apps Script cria outra planilha de Processos no Drive do proprietário do bridge;
+- leitura, pesquisa por CNJ, atendimento e edição continuam aparecendo como uma única carteira no SheetsPredict;
+- as abas de CRM permanecem na planilha principal, enquanto a tabela de maior volume pode crescer horizontalmente em várias planilhas.
+
+O limite padrão por partição é propositalmente conservador e pode ser ajustado pela Script Property `LEXIS_SHARD_TARGET_CELLS`. Isso evita depender de um plano de banco pago, mas **não transforma serviços do Google em recursos literalmente ilimitados**: cotas de Apps Script, Drive e da conta Google continuam existindo.
+
+### PCs fracos e qualquer navegador
+
+O navegador detecta aproximadamente memória, número de núcleos e modo de economia de dados. Em dispositivos mais fracos, o app reduz automaticamente o número de registros renderizados por página, o tamanho das páginas de sincronização e o tamanho dos blocos gravados no IndexedDB. Em máquinas mais fortes, mantém os valores maiores.
+
+Não há instalação de banco local nem processo pesado em segundo plano. Em um computador novo, o usuário abre o SheetsPredict, autentica-se e recebe a carteira da nuvem; o IndexedDB daquele navegador passa a servir apenas como cache/offline.
 
 ## Navegação e grandes listas
 
-As telas de Processos, Processos da empresa, Clientes e Tarefas começam com **200 registros**. A busca é aplicada antes da paginação e permite localizar cliente, CNJ, advogado, assistente e outros campos relevantes.
+As telas de Processos, Processos da empresa, Clientes e Tarefas usam paginação adaptativa: **60 registros em dispositivos muito limitados, 100 em dispositivos modestos e 200 no perfil normal**. A busca é aplicada antes da paginação e permite localizar cliente, CNJ, advogado, assistente e outros campos relevantes.
 
 Para listas largas:
 
