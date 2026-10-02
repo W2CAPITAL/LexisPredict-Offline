@@ -353,7 +353,7 @@ function handleCloudAuthFailure(message,reason){
   updateSyncUi();
 }
 const SOFT_AUTH_ACTIONS=new Set(["crm_list","crm_write","crm_seed_clients"]);
-const AUTH_FAILURE_REASONS=new Set(["missing_cookie","expired_session","invalid_signature","auth_failed"]);
+const AUTH_FAILURE_REASONS=new Set(["missing_cookie","missing_session","expired_session","invalid_signature","auth_failed"]);
 async function apiSheets(payload){
   const action=String(payload?.action||"").toLowerCase();
   if(cloudAuthBlocked&&!["login","auth","logout","session","ping"].includes(action)){
@@ -398,6 +398,7 @@ async function apiSheets(payload){
 async function loginCloud(user,pass){
   cloudAuthBlocked=false;
   cloudAuthFailureHandled=false;
+  setSessionFallback("");
   return apiSheets({action:"login",usuario:user,login:user,senha:pass});
 }
 async function syncFromCloud(opts={}){
@@ -2649,7 +2650,7 @@ async function boot(){
     refreshScopes();setLogged(true);applyUser();render();startAutoSync();
     void syncFromCloud({quiet:true}).catch(()=>{});
   }catch(e){
-    saveSession(null);state.rows=[];state.companyRows=[];setLogged(false);
+    saveSession(null);setLogged(false);
   }
   updateSyncUi();
 }
