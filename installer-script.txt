@@ -1477,7 +1477,43 @@ function findProcessByProtocol_(raw,retry) {
   return obj;
 }
 
+function mergeProcessWriteRows_(rows) {
+  var order=[],byKey={},invalid=[];
+  (Array.isArray(rows)?rows:[]).forEach(function(record){
+    record=record||{};
+    var key=digits(protocolFromRecord_(record));
+    if (!key){invalid.push(record);return;}
+    if (!byKey[key]) {
+      order.push(key);
+      byKey[key]=record;
+      return;
+    }
+    var previous=byKey[key],merged=Object.assign({},previous,record);
+    if ((previous.dados&&typeof previous.dados==="object")||(record.dados&&typeof record.dados==="object")) {
+      merged.dados=Object.assign({},previous.dados||{},record.dados||{});
+    }
+    var histories=[previous._JudicialHistory,record._JudicialHistory].filter(Boolean);
+    if (histories.length) {
+      merged._JudicialHistory={};
+      ["datajud","djen"].forEach(function(source){
+        var seen={},events=[];
+        histories.forEach(function(history){
+          (history[source]||[]).forEach(function(event){
+            var k=JSON.stringify(event||{});
+            if (seen[k]) return;
+            seen[k]=true;events.push(event);
+          });
+        });
+        if (events.length) merged._JudicialHistory[source]=events;
+      });
+    }
+    byKey[key]=merged;
+  });
+  return order.map(function(key){return byKey[key];}).concat(invalid);
+}
+
 function writeRecordsLocked_(rows,actor,allowInsert) {
+  rows=mergeProcessWriteRows_(rows);
   var index=loadIndex_(),descriptors=processShardDescriptors_(),groups={},rejected=[],active=null,missing=false;
   rows.forEach(function(record){
     var key=digits(protocolFromRecord_(record||{}));
