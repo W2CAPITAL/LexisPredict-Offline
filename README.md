@@ -28,7 +28,7 @@
 
 ---
 
-**Versão atual: 4.4.1**
+**Versão atual: 4.5.0**
 
 SheetsPredict mantém o **Google Sheets como fonte operacional de verdade**, usa IndexedDB como réplica local/offline e concentra integrações externas atrás de funções server-side. O navegador não precisa conhecer chaves de PredictLM, LexisPredict, WA.Auto ou provedores de IA.
 
@@ -612,3 +612,23 @@ Foco da versão:
 ## Licença
 
 SheetsPredict é open source sob a licença [MIT](LICENSE). Integrações, APIs, datasets e componentes de terceiros permanecem sujeitos aos respectivos termos.
+
+## BPMN 2.0 — fluxos jurídicos e operacionais
+
+A versão 4.5 integra modelagem BPMN 2.0 adaptada de `architawr/claude-bpmn-skill` (MIT). A skill é roteada automaticamente quando a Central Integrada ou o Predict Studio recebe pedidos sobre BPMN, Camunda, swimlanes, gateways, As-Is/To-Be ou modelagem de processos.
+
+Ela pode ser usada para documentar fluxos como DataJud/DJEN → triagem → tarefa → atendimento, publicação → prazo → responsável, revisão documental, retorno de cliente e outros processos internos.
+
+Tooling determinístico versionado em `skills/bpmn`:
+
+```bash
+npm install --prefix skills/bpmn
+node skills/bpmn/scripts/bpmn-tool.mjs summarize processo.bpmn
+node skills/bpmn/scripts/bpmn-tool.mjs layout entrada.bpmn saida.bpmn
+node skills/bpmn/scripts/bpmn-tool.mjs validate processo.bpmn
+node skills/bpmn/scripts/bpmn-tool.mjs lint processo.bpmn
+node skills/bpmn/scripts/bpmn-tool.mjs diff as-is.bpmn to-be.bpmn
+node skills/bpmn/scripts/bpmn-tool.mjs find processo.bpmn "prazo"
+```
+
+O layout existente é preservado por padrão. `--rebuild` só deve ser usado quando a reconstrução total do diagrama for desejada. A licença original está em `skills/bpmn/THIRD_PARTY_LICENSE.md`.
