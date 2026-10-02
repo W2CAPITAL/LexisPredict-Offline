@@ -285,8 +285,8 @@ module.exports=async(req,res)=>{
     if((action==="login"||action==="auth")&&data&&data.ok){
       const sessionToken=String(data.token||data.sess||data.session||"").trim();
       if(!sessionToken)return res.status(502).json({ok:false,error:"Apps Script autenticou, mas não retornou uma sessão."});
-      setSessionCookie(res,sessionToken,data.user||null);
-      const clean={...data};delete clean.token;delete clean.sess;delete clean.session;
+      const sessionFallback=setSessionCookie(res,sessionToken,data.user||null);
+      const clean={...data,sessionFallback};delete clean.token;delete clean.sess;delete clean.session;
       return res.status(up.ok?200:up.status).json(clean);
     }
 
