@@ -43,3 +43,6 @@ const authFailure=(app.match(/function handleCloudAuthFailure\(message\)\{([\s\S
 assert.doesNotMatch(authFailure,/state\.companyRows\s*=\s*\[\]/,"401 não pode apagar a réplica local de Processos");
 
 console.log("frontend-selectors: ok");
+
+assert.match(app,/AUTH_FAILURE_REASONS/,"frontend deve reconhecer motivos de autenticação retornados pelo backend");
+assert.match(app,/handleCloudAuthFailure\(j\.error,j\.reason\)/,"frontend deve propagar o motivo real do 401");
