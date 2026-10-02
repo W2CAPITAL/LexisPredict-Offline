@@ -1209,11 +1209,12 @@ function hubStatusDetail(st){
   return parts.filter(Boolean).join(" · ");
 }
 function hubSourceCard(src){
-  const st=hubSourceStatus(src.id),ok=!!st?.ok,configured=st?st.configured!==false:false,meta=hubSourceMeta(src.id);
-  const label=!st?"Verificando":ok?"Online":st?.reason==="unauthorized"?"Credencial recusada":configured?"Indisponível":"Configuração incompleta";
-  const cls=ok?"good":configured?"warn":"gray";
+  const st=hubSourceStatus(src.id),ok=!!st?.ok,optionalMissing=st?.reason==="optional_not_configured",configured=st?st.configured!==false:false,meta=hubSourceMeta(src.id);
+  const label=!st?"Verificando":ok?"Online":optionalMissing?"Opcional":st?.reason==="unauthorized"||st?.reason==="remote_key_mismatch"?"Credencial recusada":configured?"Indisponível":"Configuração incompleta";
+  const cls=ok?"good":optionalMissing?"gray":configured?"warn":"gray";
   const detail=hubStatusDetail(st);
-  return '<article class="hub-source-card reference-service-card"><div class="reference-service-title"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><div><strong>'+esc(src.name)+'</strong><small>'+esc(src.feature||meta.feature)+'</small></div></div><div>'+badge(label,cls)+'</div><p title="'+esc(detail)+'">'+esc(detail)+'</p><button class="btn sm" data-hub-open="'+esc(ok?meta.open:"integrations")+'">'+(ok?"Abrir":"Diagnosticar")+'</button></article>';
+  const action=ok?"Abrir":optionalMissing?"Configurar":"Diagnosticar";
+  return '<article class="hub-source-card reference-service-card"><div class="reference-service-title"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><div><strong>'+esc(src.name)+'</strong><small>'+esc(src.feature||meta.feature)+'</small></div></div><div>'+badge(label,cls)+'</div><p title="'+esc(detail)+'">'+esc(detail)+'</p><button class="btn sm" data-hub-open="'+esc(ok?meta.open:"integrations")+'">'+action+'</button></article>';
 }
 function hubTabs(){
   const tabs=[["overview","Visão geral"],["ai","IA"],["whatsapp","WhatsApp"],["leads","Leads"],["revisional","Revisional"],["sheets","Planilha"],["integrations","Integrações"]];
@@ -1231,16 +1232,19 @@ function hubOverviewHtml(){
   const useCards=wanted.map(id=>sources.find(x=>x.id===id)||fallbackFor(id));
   const h=state.hub.status||{},services=[...(h.services||[]),...(h.builtins||[])];
   const serviceBy=id=>services.find(x=>x.id===id)||null;
+  const rowState=st=>st?.ok?"success":st?.reason==="optional_not_configured"?"neutral":"warning";
   const rows=[
-    {time:state.lastSync||"—",service:"Google Sheets",event:"Sincronização",details:state.companyRows.length+" registros em cache",ok:!!state.lastSync},
-    {time:"agora",service:"PredictLM",event:"Motor principal",details:hubStatusDetail(serviceBy("predictlm")),ok:!!serviceBy("predictlm")?.ok},
-    {time:"agora",service:"LexisPredict",event:"Motor jurídico",details:hubStatusDetail(serviceBy("lexispredict")),ok:!!serviceBy("lexispredict")?.ok},
-    {time:"agora",service:"WA.Auto",event:"Mensageria",details:hubStatusDetail(serviceBy("waauto")),ok:!!serviceBy("waauto")?.ok},
-    {time:"agora",service:"GREY",event:"Motor privado",details:hubStatusDetail(serviceBy("grey")),ok:!!serviceBy("grey")?.ok}
+    {time:state.lastSync||"—",service:"Google Sheets",event:"Sincronização",details:state.companyRows.length+" registros em cache",state:state.lastSync?"success":"warning"},
+    {time:"agora",service:"PredictLM",event:"Motor principal",details:hubStatusDetail(serviceBy("predictlm")),state:rowState(serviceBy("predictlm"))},
+    {time:"agora",service:"LexisPredict",event:"Motor jurídico",details:hubStatusDetail(serviceBy("lexispredict")),state:rowState(serviceBy("lexispredict"))},
+    {time:"agora",service:"WA.Auto",event:"Mensageria",details:hubStatusDetail(serviceBy("waauto")),state:rowState(serviceBy("waauto"))},
+    {time:"agora",service:"GREY",event:"Motor privado",details:hubStatusDetail(serviceBy("grey")),state:rowState(serviceBy("grey"))}
   ];
+  const counted=wanted.filter(id=>serviceBy(id)&&!serviceBy(id)?.excludedFromAvailability);
+  const online=counted.filter(id=>serviceBy(id)?.ok).length;
   return '<div class="reference-hub-services">'+useCards.map(hubSourceCard).join("")+'</div>'+
   '<div class="reference-hub-lower"><section class="card reference-card"><div class="reference-card-head"><div><h3>Fila de eventos e logs</h3><small>Estado operacional das integrações</small></div><button class="link-btn" data-hub-open="integrations">Ver todos os logs →</button></div><div class="table-wrap flat"><table class="table reference-table"><thead><tr><th>Horário</th><th>Serviço</th><th>Evento</th><th>Detalhes</th><th>Status</th></tr></thead><tbody>'+
-    rows.map(x=>'<tr><td>'+esc(x.time)+'</td><td><strong>'+esc(x.service)+'</strong></td><td>'+esc(x.event)+'</td><td>'+esc(x.details)+'</td><td>'+badge(x.ok?"Sucesso":"Atenção",x.ok?"good":"warn")+'</td></tr>').join("")+
+    rows.map(x=>'<tr><td>'+esc(x.time)+'</td><td><strong>'+esc(x.service)+'</strong></td><td>'+esc(x.event)+'</td><td>'+esc(x.details)+'</td><td>'+badge(x.state==="success"?"Sucesso":x.state==="neutral"?"Opcional":"Atenção",x.state==="success"?"good":x.state==="neutral"?"gray":"warn")+'</td></tr>').join("")+
   '</tbody></table></div></section>'+
   '<aside class="reference-hub-side"><section class="card reference-card"><div class="reference-card-head"><h3>Ações rápidas</h3></div><div class="reference-quick-grid">'+
     '<button data-hub-open="sheets"><b>↻</b><span><strong>Sincronizar agora</strong><small>Forçar atualização de dados</small></span></button>'+
@@ -1248,8 +1252,8 @@ function hubOverviewHtml(){
     '<button data-hub-open="ai"><b>✦</b><span><strong>Chat AI</strong><small>PredictLM + Lexis jurídico</small></span></button>'+
     '<button data-hub-open="whatsapp"><b>◉</b><span><strong>WA.Auto</strong><small>Mensagens e monitor jurídico</small></span></button>'+
   '</div></section>'+
-  '<section class="card reference-card"><div class="reference-card-head"><h3>Status dos serviços</h3><span>'+wanted.filter(id=>serviceBy(id)?.ok).length+' de '+wanted.length+' online</span></div><div class="reference-status-list">'+
-    wanted.map(id=>{const st=serviceBy(id),meta=hubSourceMeta(id),name=id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY";const label=st?.ok?"Online":st?.status||"Verificando";return '<div title="'+esc(hubStatusDetail(st))+'"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><strong>'+name+'</strong><em class="'+(st?.ok?"online":"offline")+'">'+esc(label)+'</em></div>'}).join("")+
+  '<section class="card reference-card"><div class="reference-card-head"><h3>Status dos serviços</h3><span>'+online+' de '+counted.length+' configurados online</span></div><div class="reference-status-list">'+
+    wanted.map(id=>{const st=serviceBy(id),meta=hubSourceMeta(id),name=id==="synccrm"?"Google Sheets":id==="waauto"?"WA.Auto":id==="lexispredict"?"LexisPredict":id==="predictlm"?"PredictLM":"GREY";const optionalMissing=st?.reason==="optional_not_configured";const label=st?.ok?"Online":optionalMissing?"Não configurado (opcional)":st?.status||"Verificando";return '<div title="'+esc(hubStatusDetail(st))+'"><span class="reference-service-icon '+meta.tone+'">'+meta.icon+'</span><strong>'+name+'</strong><em class="'+(st?.ok?"online":optionalMissing?"neutral":"offline")+'">'+esc(label)+'</em></div>'}).join("")+
   '</div></section></aside></div>';
 }
 function hubAiHtml(){

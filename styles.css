@@ -1475,7 +1475,7 @@ body{background:var(--bg);font-size:12px}
 .reference-status-list>div{display:grid;grid-template-columns:20px 1fr auto;gap:6px;align-items:center}
 .reference-status-list .reference-service-icon{width:18px;height:18px;border-radius:5px;font-size:8px}
 .reference-status-list strong{font-size:7px}.reference-status-list em{font-size:6.5px;font-style:normal;font-weight:800}
-.reference-status-list em.online{color:var(--green)}.reference-status-list em.offline{color:var(--amber)}
+.reference-status-list em.online{color:var(--green)}.reference-status-list em.offline{color:var(--amber)}.reference-status-list em.neutral{color:var(--muted)}
 .hub-shell.reference-page .hub-tabs{margin:0!important}
 
 /* Predict Studio inspirado exatamente na estrutura da referência. */

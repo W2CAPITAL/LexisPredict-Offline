@@ -23,6 +23,6 @@ assert.match(gen,/PDF timbrado baixado com sucesso/,"UI deve confirmar download"
 assert.match(gen,/rtfDocument\(/,"RTF também deve receber timbre textual");
 assert.match(css,/\.legalgen-letterhead-preview/,"editor deve exibir prévia do timbre");
 assert.match(css,/\.legalgen-paper-foot-preview/,"editor deve exibir rodapé da peça");
-assert.match(sw,/sheetspredict-v58/,"cache PWA deve avançar para a versão do PDF timbrado");
+assert.match(sw,/sheetspredict-v59/,"cache PWA deve avançar para a versão do PDF timbrado");
 
 console.log("legal-pdf-export: ok");
