@@ -63,8 +63,11 @@ var SESS_PREFIX = "lex_sess_";
 var MAX_WRITE_ROWS = 3600;
 
 var INDEX_SHEET = "__LEXIS_INDEX";
-var BRIDGE_VERSION = "8.2";
-var BRIDGE_CAPABILITIES = ["list_compact","crm_list","crm_write","crm_seed_clients","judicial_history","djen_fetch"];
+var PROCESS_SHARDS_SHEET = "__LEXIS_PROCESS_SHARDS";
+var PROCESS_SHARD_TARGET_CELLS = 2500000;
+var PROCESS_SHARD_MAX_ROWS = 50000;
+var BRIDGE_VERSION = "8.3";
+var BRIDGE_CAPABILITIES = ["list_compact","crm_list","crm_write","crm_seed_clients","judicial_history","djen_fetch","process_shards"];
 
 // Entradas públicas do Web App. Mantenha apenas uma definição de cada no projeto.
 function doPost(e) { return syncDoPost_(e); }
@@ -1169,540 +1172,501 @@ function protocolFromRecord_(r) {
 
 
 
-function readRows_(opts) {
-
-  opts = opts || {};
-
-  var sh = getProcSheet_();
-
-  var headers = headers_(sh);
-
-  var data = sheetValues_(sh, headers);
-
-  var map = headerMap_(headers);
-
-  var keyIdx = findCol_(map, ["Protocolo", "protocolo", "cnj", "processo", "numero"]);
-
-  var ownerIdx = findCol_(map, ["Responsavel", "CreatedBy", "created_by", "criado_por"]);
-
-  var user = norm(opts.responsavel || "");
-
-  var isAdmin = !!opts.admin;
-
-
-
-  var rows = [];
-
-  for (var r = HEADER_ROW; r < data.length; r++) {
-
-    var values = data[r];
-
-    var has = values.some(function (v) { return String(v == null ? "" : v).trim() !== ""; });
-
-    if (!has) continue;
-
-
-
-    var owner = ownerIdx >= 0 ? String(values[ownerIdx] || "").trim() : "";
-
-    if (user && !isAdmin && owner && norm(owner) !== user) continue;
-
-
-
-    var obj = {};
-
-    headers.forEach(function (h, i) { obj[h] = values[i]; });
-
-    if (keyIdx >= 0) obj.Protocolo = values[keyIdx];
-
-    rows.push(obj);
-
-    if (opts.limit && rows.length >= Number(opts.limit)) break;
-
+function ensureShardRegistry_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(PROCESS_SHARDS_SHEET);
+  var headers = ["partition_id","spreadsheet_id","sheet_name","status","created_at","updated_at","row_limit"];
+  if (!sh) {
+    sh = ss.insertSheet(PROCESS_SHARDS_SHEET);
+    sh.getRange(1,1,1,headers.length).setValues([headers]);
+    sh.hideSheet();
+  } else {
+    var current = sh.getRange(1,1,1,Math.max(headers.length,sh.getLastColumn())).getValues()[0];
+    var mismatch = headers.some(function(h,i){return norm(current[i] || "") !== norm(h);});
+    if (mismatch) {
+      sh.clearContents();
+      sh.getRange(1,1,1,headers.length).setValues([headers]);
+    }
+    try { sh.hideSheet(); } catch (_) {}
   }
+  return sh;
+}
 
-  return { headers: headers, rows: rows };
+function processShardCapacityRows_(headerCount) {
+  var props = PropertiesService.getScriptProperties();
+  var configured = Number(props.getProperty("LEXIS_SHARD_TARGET_CELLS") || PROCESS_SHARD_TARGET_CELLS);
+  var target = Math.max(500000,Math.min(5000000,configured || PROCESS_SHARD_TARGET_CELLS));
+  var width = Math.max(1,Number(headerCount)||1);
+  return Math.max(5000,Math.min(PROCESS_SHARD_MAX_ROWS,Math.floor(target/width)));
+}
 
+function processShardDescriptors_() {
+  var primary = SpreadsheetApp.getActiveSpreadsheet();
+  var out = [{
+    partitionId:"primary",
+    spreadsheetId:primary.getId(),
+    sheetName:PROC_SHEET,
+    status:"ACTIVE",
+    primary:true
+  }];
+  var reg = ensureShardRegistry_();
+  var last = reg.getLastRow();
+  if (last < 2) return out;
+  var values = reg.getRange(2,1,last-1,7).getValues();
+  var seen = {};
+  seen[primary.getId()+"|"+PROC_SHEET] = true;
+  values.forEach(function(row){
+    var spreadsheetId=String(row[1]||"").trim();
+    var sheetName=String(row[2]||PROC_SHEET).trim()||PROC_SHEET;
+    var status=String(row[3]||"ACTIVE").trim().toUpperCase();
+    if (!spreadsheetId || status === "DISABLED") return;
+    var k=spreadsheetId+"|"+sheetName;
+    if (seen[k]) return;
+    seen[k]=true;
+    out.push({
+      partitionId:String(row[0]||("shard-"+out.length)),
+      spreadsheetId:spreadsheetId,
+      sheetName:sheetName,
+      status:status,
+      primary:false,
+      rowLimit:Number(row[6]||0)
+    });
+  });
+  return out;
+}
+
+function openProcessShard_(desc) {
+  desc = desc || {};
+  var primary = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = desc.primary || desc.spreadsheetId === primary.getId()
+    ? primary
+    : SpreadsheetApp.openById(String(desc.spreadsheetId));
+  var sh = ss.getSheetByName(String(desc.sheetName || PROC_SHEET));
+  if (!sh) throw new Error("Partição de Processos indisponível: "+String(desc.partitionId||desc.sheetName||"desconhecida"));
+  return sh;
+}
+
+function processDescriptorKey_(desc) {
+  return String(desc.spreadsheetId||"")+"|"+String(desc.sheetName||PROC_SHEET);
+}
+
+function descriptorForLocation_(loc,descriptors) {
+  descriptors = descriptors || processShardDescriptors_();
+  var sid=String(loc && loc.spreadsheetId || "");
+  var sheetName=String(loc && loc.sheetName || PROC_SHEET);
+  for (var i=0;i<descriptors.length;i++) {
+    if (String(descriptors[i].spreadsheetId)===sid && String(descriptors[i].sheetName||PROC_SHEET)===sheetName) return descriptors[i];
+  }
+  return null;
+}
+
+function canonicalProjection_(sourceHeaders,canonicalHeaders) {
+  var map=headerMap_(sourceHeaders), out=[];
+  canonicalHeaders.forEach(function(h){var idx=map[norm(h)];out.push(idx==null?-1:idx);});
+  return out;
+}
+
+function projectValues_(values,projection) {
+  return projection.map(function(idx){return idx>=0?values[idx]:"";});
+}
+
+function createProcessShard_() {
+  var primary=SpreadsheetApp.getActiveSpreadsheet();
+  var base=getProcSheet_();
+  var headers=headers_(base);
+  var capacity=processShardCapacityRows_(headers.length);
+  var stamp=Utilities.formatDate(new Date(),Session.getScriptTimeZone()||"America/Sao_Paulo","yyyyMMdd-HHmmss");
+  var name="SheetsPredict Processos "+stamp;
+  var ss=SpreadsheetApp.create(name,1000,Math.max(26,headers.length));
+  var first=ss.getSheets()[0];
+  first.setName(PROC_SHEET);
+  first.getRange(1,1,1,headers.length).setValues([headers]);
+  first.setFrozenRows(1);
+  var id="p-"+new Date().getTime().toString(36)+"-"+Utilities.getUuid().slice(0,8);
+  var now=new Date().toISOString();
+  var reg=ensureShardRegistry_();
+  reg.getRange(reg.getLastRow()+1,1,1,7).setValues([[id,ss.getId(),PROC_SHEET,"ACTIVE",now,now,capacity]]);
+  SpreadsheetApp.flush();
+  return {partitionId:id,spreadsheetId:ss.getId(),sheetName:PROC_SHEET,status:"ACTIVE",primary:false,rowLimit:capacity};
+}
+
+function activeProcessShard_() {
+  var descriptors=processShardDescriptors_();
+  for (var i=descriptors.length-1;i>=0;i--) {
+    var desc=descriptors[i];
+    if (String(desc.status||"ACTIVE").toUpperCase()!=="ACTIVE") continue;
+    var sh=openProcessShard_(desc);
+    var capacity=Number(desc.rowLimit||0)||processShardCapacityRows_(headers_(sh).length);
+    var rows=Math.max(0,sh.getLastRow()-HEADER_ROW);
+    if (rows < capacity) return desc;
+  }
+  return createProcessShard_();
+}
+
+function processShardStatus_() {
+  var descriptors=processShardDescriptors_(), parts=[],total=0;
+  descriptors.forEach(function(desc){
+    try {
+      var sh=openProcessShard_(desc), rows=Math.max(0,sh.getLastRow()-HEADER_ROW);
+      var capacity=Number(desc.rowLimit||0)||processShardCapacityRows_(headers_(sh).length);
+      total+=rows;
+      parts.push({partitionId:desc.partitionId||"",name:desc.primary?"Principal":("Partição "+String(desc.partitionId||"")),status:desc.status||"ACTIVE",rows:rows,capacity:capacity,primary:!!desc.primary});
+    } catch (e) {
+      parts.push({partitionId:desc.partitionId||"",name:"Partição "+String(desc.partitionId||""),status:"UNAVAILABLE",rows:0,capacity:0,primary:!!desc.primary,error:String(e).slice(0,180)});
+    }
+  });
+  return {ok:true,partitioned:parts.length>1,partitionCount:parts.length,totalRows:total,partitions:parts};
+}
+
+function readRows_(opts) {
+  opts=opts||{};
+  var canonical=headers_(getProcSheet_());
+  var descriptors=processShardDescriptors_();
+  var user=norm(opts.responsavel||"");
+  var isAdmin=!!opts.admin;
+  var limit=Math.max(1,Number(opts.limit||8000));
+  var rows=[];
+  for (var d=0;d<descriptors.length && rows.length<limit;d++) {
+    var sh=openProcessShard_(descriptors[d]);
+    var sourceHeaders=headers_(sh), projection=canonicalProjection_(sourceHeaders,canonical);
+    var hmap=headerMap_(sourceHeaders);
+    var ownerIdx=findCol_(hmap,["Responsavel","CreatedBy","created_by","criado_por","Assistente"]);
+    var keyIdx=findCol_(hmap,["Protocolo","protocolo","cnj","processo","numero"]);
+    var last=sh.getLastRow();
+    for (var start=HEADER_ROW+1;start<=last && rows.length<limit;start+=600) {
+      var count=Math.min(600,last-start+1);
+      var data=sh.getRange(start,1,count,sourceHeaders.length).getValues();
+      for (var r=0;r<data.length && rows.length<limit;r++) {
+        var values=data[r];
+        if (!values.some(function(v){return String(v==null?"":v).trim()!=="";})) continue;
+        var owner=ownerIdx>=0?String(values[ownerIdx]||"").trim():"";
+        if (user&&!isAdmin&&owner&&norm(owner)!==user) continue;
+        var projected=projectValues_(values,projection), obj={};
+        canonical.forEach(function(h,i){obj[h]=projected[i];});
+        if (keyIdx>=0) obj.Protocolo=values[keyIdx];
+        rows.push(obj);
+      }
+    }
+  }
+  return {headers:canonical,rows:rows,partitionCount:descriptors.length};
 }
 
 function readRowsCompact_(opts) {
-  opts = opts || {};
-  var sh = getProcSheet_();
-  var headers = headers_(sh);
-  var lastRow = sh.getLastRow();
-  var totalPhysical = Math.max(0, lastRow - HEADER_ROW);
-  var offset = Math.max(0, Math.min(totalPhysical, Number(opts.offset || 0)));
-  var limit = Math.min(800, Math.max(100, Number(opts.limit || 600)));
-  var startRow = HEADER_ROW + 1 + offset;
-  var count = Math.max(0, Math.min(limit, lastRow - startRow + 1));
-  var matrix = count > 0 ? sh.getRange(startRow, 1, count, headers.length).getValues() : [];
-  matrix = matrix.filter(function(values){
-    return values.some(function(v){ return String(v == null ? "" : v).trim() !== ""; });
+  opts=opts||{};
+  var canonical=headers_(getProcSheet_());
+  var descriptors=processShardDescriptors_();
+  var totalPhysical=0, counts=[];
+  descriptors.forEach(function(desc){
+    var sh=openProcessShard_(desc), count=Math.max(0,sh.getLastRow()-HEADER_ROW);
+    counts.push(count);totalPhysical+=count;
   });
-  var nextOffset = offset + count;
-  return {
-    headers: headers,
-    matrix: matrix,
-    offset: offset,
-    nextOffset: nextOffset,
-    hasMore: nextOffset < totalPhysical,
-    totalRows: totalPhysical
-  };
-}
-
-
-
-function findRowMap_(sh, headers, data) {
-
-  var map = headerMap_(headers);
-
-  var keyIdx = findCol_(map, ["Protocolo", "protocolo", "cnj", "processo", "numero"]);
-
-  if (keyIdx < 0) throw new Error("Aba Processos sem coluna Protocolo/CNJ.");
-
-  var out = {};
-
-  for (var r = HEADER_ROW; r < data.length; r++) {
-
-    var key = digits(data[r][keyIdx]);
-
-    if (key) out[key] = r + 1;
-
+  var offset=Math.max(0,Math.min(totalPhysical,Number(opts.offset||0)));
+  var limit=Math.min(800,Math.max(100,Number(opts.limit||600)));
+  var skip=offset,consumed=0,matrix=[];
+  for (var d=0;d<descriptors.length && consumed<limit;d++) {
+    var physical=counts[d];
+    if (skip>=physical){skip-=physical;continue;}
+    var sh=openProcessShard_(descriptors[d]), sourceHeaders=headers_(sh), projection=canonicalProjection_(sourceHeaders,canonical);
+    var available=physical-skip, take=Math.min(limit-consumed,available);
+    if (take>0) {
+      var values=sh.getRange(HEADER_ROW+1+skip,1,take,sourceHeaders.length).getValues();
+      values.forEach(function(row){
+        if (!row.some(function(v){return String(v==null?"":v).trim()!=="";})) return;
+        matrix.push(projectValues_(row,projection));
+      });
+      consumed+=take;
+    }
+    skip=0;
   }
-
-  return { byProtocol: out, keyIdx: keyIdx };
-
+  var nextOffset=offset+consumed;
+  return {headers:canonical,matrix:matrix,offset:offset,nextOffset:nextOffset,hasMore:nextOffset<totalPhysical,totalRows:totalPhysical,partitionCount:descriptors.length};
 }
 
-
+function findRowMap_(sh,headers,data) {
+  var map=headerMap_(headers);
+  var keyIdx=findCol_(map,["Protocolo","protocolo","cnj","processo","numero"]);
+  if (keyIdx<0) throw new Error("Aba Processos sem coluna Protocolo/CNJ.");
+  var out={};
+  for (var r=HEADER_ROW;r<data.length;r++) {
+    var key=digits(data[r][keyIdx]);
+    if (key) out[key]=r+1;
+  }
+  return {byProtocol:out,keyIdx:keyIdx};
+}
 
 function ensureIndexSheet_() {
-
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  var sh = ss.getSheetByName(INDEX_SHEET);
-
+  var ss=SpreadsheetApp.getActiveSpreadsheet();
+  var sh=ss.getSheetByName(INDEX_SHEET);
+  var expected=["protocolo_key","spreadsheet_id","sheet_name","sheet_row","updated_at"];
   if (!sh) {
-
-    sh = ss.insertSheet(INDEX_SHEET);
-
-    sh.getRange(1, 1, 1, 3).setValues([["protocolo_key", "sheet_row", "updated_at"]]);
-
+    sh=ss.insertSheet(INDEX_SHEET);
+    sh.getRange(1,1,1,expected.length).setValues([expected]);
     sh.hideSheet();
-
+    return sh;
   }
-
+  var current=sh.getRange(1,1,1,Math.max(expected.length,sh.getLastColumn())).getValues()[0];
+  var mismatch=expected.some(function(h,i){return norm(current[i]||"")!==norm(h);});
+  if (mismatch) {
+    sh.clearContents();
+    sh.getRange(1,1,1,expected.length).setValues([expected]);
+  }
+  try { sh.hideSheet(); } catch (_) {}
   return sh;
-
 }
-
-
 
 function rebuildIndex_() {
-
-  var proc = getProcSheet_();
-
-  var idx = ensureIndexSheet_();
-
-  var headers = headers_(proc);
-
-  var hmap = headerMap_(headers);
-
-  var keyIdx = findCol_(hmap, ["Protocolo", "protocolo", "cnj", "processo", "numero"]);
-
-  if (keyIdx < 0) throw new Error("Aba Processos sem coluna Protocolo/CNJ.");
-
-  var lastRow = proc.getLastRow();
-
-  var out = [];
-
-  if (lastRow >= HEADER_ROW + 1) {
-
-    var values = proc.getRange(HEADER_ROW + 1, keyIdx + 1, lastRow - HEADER_ROW, 1).getValues();
-
-    for (var i = 0; i < values.length; i++) {
-
-      var key = digits(values[i][0]);
-
-      if (key) out.push([key, i + HEADER_ROW + 1, new Date().toISOString()]);
-
+  var idx=ensureIndexSheet_();
+  var out=[],now=new Date().toISOString(),descriptors=processShardDescriptors_();
+  descriptors.forEach(function(desc){
+    var sh=openProcessShard_(desc), hs=headers_(sh), map=headerMap_(hs);
+    var keyIdx=findCol_(map,["Protocolo","protocolo","cnj","processo","numero"]);
+    if (keyIdx<0) throw new Error("Aba Processos sem coluna Protocolo/CNJ na partição "+String(desc.partitionId||""));
+    var last=sh.getLastRow();
+    if (last<HEADER_ROW+1) return;
+    var values=sh.getRange(HEADER_ROW+1,keyIdx+1,last-HEADER_ROW,1).getValues();
+    for (var i=0;i<values.length;i++) {
+      var key=digits(values[i][0]);
+      if (key) out.push([key,desc.spreadsheetId,desc.sheetName||PROC_SHEET,i+HEADER_ROW+1,now]);
     }
-
-  }
-
+  });
   idx.clearContents();
-
-  idx.getRange(1, 1, 1, 3).setValues([["protocolo_key", "sheet_row", "updated_at"]]);
-
-  if (out.length) idx.getRange(2, 1, out.length, 3).setValues(out);
-
+  idx.getRange(1,1,1,5).setValues([["protocolo_key","spreadsheet_id","sheet_name","sheet_row","updated_at"]]);
+  if (out.length) idx.getRange(2,1,out.length,5).setValues(out);
   return idx;
-
 }
-
-
 
 function loadIndex_() {
-
-  var idx = ensureIndexSheet_();
-
-  var last = idx.getLastRow();
-
-  if (last < 2) {
-
-    rebuildIndex_();
-
-    last = idx.getLastRow();
-
+  var idx=ensureIndexSheet_(),last=idx.getLastRow();
+  if (last<2){rebuildIndex_();last=idx.getLastRow();}
+  var values=last>=2?idx.getRange(2,1,last-1,5).getValues():[],map={};
+  for (var i=0;i<values.length;i++) {
+    var key=String(values[i][0]||"").trim(),row=Number(values[i][3]||0);
+    if (key&&row) map[key]={spreadsheetId:String(values[i][1]||""),sheetName:String(values[i][2]||PROC_SHEET),row:row};
   }
-
-  var values = last >= 2 ? idx.getRange(2, 1, last - 1, 2).getValues() : [];
-
-  var map = {};
-
-  for (var i = 0; i < values.length; i++) {
-
-    var key = String(values[i][0] || "").trim();
-
-    var row = Number(values[i][1] || 0);
-
-    if (key && row) map[key] = row;
-
-  }
-
-  return { sheet: idx, map: map };
-
+  return {sheet:idx,map:map};
 }
 
-
-
-function appendIndexRows_(idx, rows) {
-
+function appendIndexRows_(idx,rows) {
   if (!rows.length) return;
-
-  var start = idx.getLastRow() + 1;
-
-  idx.getRange(start, 1, rows.length, 3).setValues(rows);
-
+  idx.getRange(idx.getLastRow()+1,1,rows.length,5).setValues(rows);
 }
 
-
-
-function writeRecords_(rows, actor, allowInsert) {
-
-  if (!Array.isArray(rows)) rows = [];
-
-  if (rows.length > MAX_WRITE_ROWS) throw new Error("Lote acima do limite de " + MAX_WRITE_ROWS + " linhas.");
-
-  if (!rows.length) return { ok: true, updated: 0, added: 0, written: 0, rejected: [], rejected_count: 0 };
-
-
-
-  var lock = LockService.getDocumentLock();
-
-  lock.waitLock(5000);
-
-  try {
-
-    var sh = getProcSheet_();
-
-    var headers = headers_(sh);
-
-    var hmap = headerMap_(headers);
-
-    var protoIdx = findCol_(hmap, ["Protocolo", "protocolo", "cnj", "processo", "numero"]);
-
-    if (protoIdx < 0) throw new Error("coluna-chave (Protocolo/CNJ) não encontrada");
-
-
-
-    var ownerIdx = findCol_(hmap, ["Responsavel", "CreatedBy", "created_by", "criado_por"]);
-
-    var assistantIdx = findCol_(hmap, ["Assistente", "assistente"]);
-
-    var empresaIdx = findCol_(hmap, ["EmpresaId", "empresa_id", "empresaId"]);
-
-    var updatedIdx = findCol_(hmap, ["updated_at", "updatedAt"]);
-    var statusIdx = findCol_(hmap, ["Status"]);
-    var situacaoIdx = findCol_(hmap, ["Situacao", "Situação"]);
-    var automationIdx = findCol_(hmap, ["Automação", "Automacao"]);
-    var nextSyncIdx = findCol_(hmap, ["Próxima Sincronização", "Proxima Sincronizacao"]);
-
-    var editedByIdx = findCol_(hmap, ["edited_by", "editado_por"]);
-
-    var editedNameIdx = findCol_(hmap, ["edited_by_name", "editado_por_nome"]);
-
-    var editedAtIdx = findCol_(hmap, ["edited_at", "editado_em"]);
-
-    var createdIdx = findCol_(hmap, ["CreatedBy", "created_by", "createdBy", "criado_por"]);
-
-    var isAdmin = roleAccess(actor && actor.perfil) >= 20;
-
-    var me = norm(actor && (actor.u || actor.login || actor.nome) || "");
-
-    var meName = norm(actor && actor.nome || "");
-
-    var now = new Date().toISOString();
-
-    var index = loadIndex_();
-
-    var map = index.map;
-
-
-
-    var touched = {};
-
-    var appended = [];
-
-    var indexAdds = [];
-
-    var updates = 0;
-
-    var added = 0;
-
-    var rejected = [];
-    var processAudit = [];
-    var judicialRecords = [];
-
-
-
-    // Lemos somente as linhas que realmente serão alteradas.
-
-    var existingRows = [];
-
-    rows.forEach(function(record) {
-
-      var protocol = protocolFromRecord_(record || {});
-
-      var key = digits(protocol);
-
-      if (!key) { rejected.push({ protocolo: "", motivo: "sem Protocolo/CNJ" }); return; }
-
-      var target = map[key] || 0;
-
-      if (target) existingRows.push(target);
-
-    });
-
-
-
-    var currentByRow = {};
-    if (existingRows.length) {
-
-      var wantedRows = Array.from(new Set(existingRows)).sort(function(a, b) { return a - b; });
-
-      var minRow = wantedRows[0];
-
-      var maxRow = wantedRows[wantedRows.length - 1];
-
-      // Uma única leitura quando o conjunto é relativamente compacto; isso é muito mais rápido
-
-      // que dezenas/centenas de getRangeList em lotes de seed.
-
-      if (maxRow - minRow <= 6000) {
-
-        var block = sh.getRange(minRow, 1, maxRow - minRow + 1, headers.length).getValues();
-
-        wantedRows.forEach(function(rowNum) { currentByRow[rowNum] = block[rowNum - minRow]; });
-
-      } else {
-
-        var addresses = wantedRows.map(function(r) { return r + ":" + r; });
-
-        var ranges = sh.getRangeList(addresses).getRanges();
-
-        for (var gr = 0; gr < ranges.length; gr++) currentByRow[wantedRows[gr]] = ranges[gr].getValues()[0];
-
-      }
-
-    }
-
-
-
-    var nextRow = Math.max(sh.getLastRow() + 1, HEADER_ROW + 1);
-
-    rows.forEach(function(record) {
-
-      record = record || {};
-
-      var protocol = protocolFromRecord_(record);
-
-      var pkey = digits(protocol);
-
-      if (!pkey) return;
-
-
-
-      var targetRow = map[pkey] || 0;
-
-      var current;
-
-      var isExisting = !!targetRow;
-
-      if (targetRow) {
-
-        // Processos da empresa são colaborativos: qualquer usuário autenticado pode
-        // editar conteúdo operacional. A carteira, porém, não muda por edição/atendimento.
-        current = currentByRow[targetRow].slice();
-
-      } else {
-
-        if (!allowInsert) { rejected.push({ protocolo: protocol, motivo: "processo não encontrado" }); return; }
-
-        targetRow = nextRow++;
-
-        current = new Array(headers.length).fill("");
-
-        if (ownerIdx >= 0 && actor && actor.u) current[ownerIdx] = actor.u;
-
-        if (assistantIdx >= 0 && actor) current[assistantIdx] = actor.nome || actor.u || "";
-
-        map[pkey] = targetRow;
-
-        added++;
-
-      }
-
-
-
-      var before = current.slice();
-      var dados = record.dados && typeof record.dados === "object" ? record.dados : {};
-
-      headers.forEach(function(header, i) {
-
-        // Em processo existente, edição comum não pode trocar dono/carteira.
-        // Supervisor+ continua podendo fazer transferência deliberada por ferramenta própria.
-        if (isExisting && !isAdmin && (i === ownerIdx || i === createdIdx || i === assistantIdx)) return;
-
-        var value = valueForField_(record, header, dados);
-
-        // NUNCA apaga valor antigo porque uma coluna não veio no payload.
-
-        if (value === undefined || value === null || String(value) === "") return;
-
-        current[i] = toCell_(value);
-
-      });
-
-      current[protoIdx] = protocol;
-
-      if (createdIdx >= 0 && !current[createdIdx] && actor && actor.u) current[createdIdx] = actor.u;
-
-      if (empresaIdx >= 0 && record.empresa_id) current[empresaIdx] = String(record.empresa_id);
-
-      if (updatedIdx >= 0) current[updatedIdx] = now;
-
-      if (editedByIdx >= 0 && actor && actor.u) current[editedByIdx] = actor.u;
-
-      if (editedNameIdx >= 0 && actor) current[editedNameIdx] = actor.nome || actor.u || "";
-
-      if (editedAtIdx >= 0) current[editedAtIdx] = now;
-      if (!isExisting) {
-        if (statusIdx >= 0 && !String(current[statusIdx] || "").trim()) current[statusIdx] = "Em andamento";
-        if (situacaoIdx >= 0 && !String(current[situacaoIdx] || "").trim()) current[situacaoIdx] = "EM ANDAMENTO";
-        if (automationIdx >= 0 && !String(current[automationIdx] || "").trim()) current[automationIdx] = "PENDENTE";
-        if (nextSyncIdx >= 0 && !String(current[nextSyncIdx] || "").trim()) current[nextSyncIdx] = now;
-      }
-
-      for (var ac = 0; ac < headers.length; ac++) {
-        var oldV = before[ac] == null ? "" : before[ac];
-        var newV = current[ac] == null ? "" : current[ac];
-        if (String(oldV) === String(newV)) continue;
-        processAudit.push({
-          acao: isExisting ? "update" : "create",
-          protocolo: protocol,
-          usuario: actor && (actor.nome || actor.u) || "",
-          entidade: "Processos",
-          entidade_id: protocol,
-          campo: headers[ac],
-          valor_anterior: oldV,
-          valor_novo: newV,
-          detalhe: "Processos " + protocol
-        });
-      }
-
-
-
-      touched[targetRow] = current;
-      if (record._JudicialHistory) judicialRecords.push(record);
-
-      if (!index.sheet) return;
-
-      if (!existingRows.includes(targetRow)) indexAdds.push([pkey, targetRow, now]);
-
-      updates++;
-
-    });
-
-
-
-    var rowNums = Object.keys(touched).map(Number).sort(function(a,b){ return a-b; });
-
-    if (rowNums.length) {
-
-      var runStart = rowNums[0], runEnd = rowNums[0];
-
-      for (var x = 1; x < rowNums.length; x++) {
-
-        if (rowNums[x] === runEnd + 1) { runEnd = rowNums[x]; continue; }
-
-        var block = [];
-
-        for (var rr = runStart; rr <= runEnd; rr++) block.push(touched[rr]);
-
-        sh.getRange(runStart, 1, block.length, headers.length).setValues(block);
-
-        runStart = runEnd = rowNums[x];
-
-      }
-
-      var lastBlock = [];
-
-      for (var rr2 = runStart; rr2 <= runEnd; rr2++) lastBlock.push(touched[rr2]);
-
-      sh.getRange(runStart, 1, lastBlock.length, headers.length).setValues(lastBlock);
-
-    }
-
-
-
-    appendIndexRows_(index.sheet, indexAdds);
-    if (processAudit.length) auditRows_(processAudit.slice(0, 5000));
-    var historyCounts = appendJudicialHistory_(judicialRecords);
-
-    SpreadsheetApp.flush();
-
-    // updates já conta somente registros efetivamente processados.
-    // rejected é contabilizado separadamente; subtrair novamente gerava falso 409 no bridge.
-    var written = updates;
-
-    return {
-
-      ok: true,
-
-      history_saved: true,
-      history_counts: historyCounts,
-
-      updated: updates,
-
-      added: added,
-
-      written: written,
-
-      rejected: rejected,
-
-      rejected_count: rejected.length
-
-    };
-
-  } finally {
-
-    try { lock.releaseLock(); } catch (_) {}
-
+function findProcessByProtocol_(raw,retry) {
+  var key=digits(raw||"");
+  if (!key) return null;
+  var index=loadIndex_(),loc=index.map[key];
+  if (!loc&&!retry){rebuildIndex_();return findProcessByProtocol_(raw,true);}
+  if (!loc) return null;
+  var descriptors=processShardDescriptors_(),desc=descriptorForLocation_(loc,descriptors);
+  if (!desc&&!retry){rebuildIndex_();return findProcessByProtocol_(raw,true);}
+  if (!desc) return null;
+  var sh=openProcessShard_(desc),hs=headers_(sh);
+  if (loc.row<=HEADER_ROW||loc.row>sh.getLastRow()) {
+    if (!retry){rebuildIndex_();return findProcessByProtocol_(raw,true);}
+    return null;
   }
-
+  var values=sh.getRange(loc.row,1,1,hs.length).getValues()[0],map=headerMap_(hs);
+  var keyIdx=findCol_(map,["Protocolo","protocolo","cnj","processo","numero"]);
+  if (keyIdx<0||digits(values[keyIdx])!==key) {
+    if (!retry){rebuildIndex_();return findProcessByProtocol_(raw,true);}
+    return null;
+  }
+  var canonical=headers_(getProcSheet_()),projection=canonicalProjection_(hs,canonical),projected=projectValues_(values,projection),obj={};
+  canonical.forEach(function(h,i){obj[h]=projected[i];});
+  obj.Protocolo=values[keyIdx];
+  return obj;
 }
 
+function mergeProcessWriteRows_(rows) {
+  var order=[],byKey={},invalid=[];
+  (Array.isArray(rows)?rows:[]).forEach(function(record){
+    record=record||{};
+    var key=digits(protocolFromRecord_(record));
+    if (!key){invalid.push(record);return;}
+    if (!byKey[key]) {
+      order.push(key);
+      byKey[key]=record;
+      return;
+    }
+    var previous=byKey[key],merged=Object.assign({},previous,record);
+    if ((previous.dados&&typeof previous.dados==="object")||(record.dados&&typeof record.dados==="object")) {
+      merged.dados=Object.assign({},previous.dados||{},record.dados||{});
+    }
+    var histories=[previous._JudicialHistory,record._JudicialHistory].filter(Boolean);
+    if (histories.length) {
+      merged._JudicialHistory={};
+      ["datajud","djen"].forEach(function(source){
+        var seen={},events=[];
+        histories.forEach(function(history){
+          (history[source]||[]).forEach(function(event){
+            var k=JSON.stringify(event||{});
+            if (seen[k]) return;
+            seen[k]=true;events.push(event);
+          });
+        });
+        if (events.length) merged._JudicialHistory[source]=events;
+      });
+    }
+    byKey[key]=merged;
+  });
+  return order.map(function(key){return byKey[key];}).concat(invalid);
+}
+
+function writeRecordsLocked_(rows,actor,allowInsert) {
+  rows=mergeProcessWriteRows_(rows);
+  var index=loadIndex_(),descriptors=processShardDescriptors_(),groups={},rejected=[],active=null,missing=false;
+  rows.forEach(function(record){
+    var key=digits(protocolFromRecord_(record||{}));
+    if (key&&!index.map[key]) missing=true;
+  });
+  if (missing){rebuildIndex_();index=loadIndex_();descriptors=processShardDescriptors_();}
+
+  rows.forEach(function(record){
+    record=record||{};
+    var protocol=protocolFromRecord_(record),key=digits(protocol);
+    if (!key){rejected.push({protocolo:"",motivo:"sem Protocolo/CNJ"});return;}
+    var loc=index.map[key]||null,desc=null,targetRow=0;
+    if (loc) {
+      desc=descriptorForLocation_(loc,descriptors);
+      if (!desc) throw new Error("LEXIS_INDEX_STALE: partição não localizada");
+      targetRow=Number(loc.row||0);
+    } else {
+      if (!allowInsert){rejected.push({protocolo:protocol,motivo:"processo não encontrado"});return;}
+      if (!active){active=activeProcessShard_();descriptors=processShardDescriptors_();}
+      desc=active;
+    }
+    var gkey=processDescriptorKey_(desc);
+    if (!groups[gkey]) groups[gkey]={desc:desc,entries:[]};
+    groups[gkey].entries.push({record:record,key:key,targetRow:targetRow,protocol:protocol});
+  });
+
+  var total=0,added=0,indexAdds=[],processAudit=[],judicialRecords=[],now=new Date().toISOString();
+  Object.keys(groups).forEach(function(gkey){
+    var group=groups[gkey],desc=group.desc,sh=openProcessShard_(desc),headers=headers_(sh),hmap=headerMap_(headers);
+    var protoIdx=findCol_(hmap,["Protocolo","protocolo","cnj","processo","numero"]);
+    if (protoIdx<0) throw new Error("coluna-chave (Protocolo/CNJ) não encontrada");
+    var ownerIdx=findCol_(hmap,["Responsavel","CreatedBy","created_by","criado_por"]);
+    var assistantIdx=findCol_(hmap,["Assistente","assistente"]);
+    var empresaIdx=findCol_(hmap,["EmpresaId","empresa_id","empresaId"]);
+    var updatedIdx=findCol_(hmap,["updated_at","updatedAt"]);
+    var statusIdx=findCol_(hmap,["Status"]);
+    var situacaoIdx=findCol_(hmap,["Situacao","Situação"]);
+    var automationIdx=findCol_(hmap,["Automação","Automacao"]);
+    var nextSyncIdx=findCol_(hmap,["Próxima Sincronização","Proxima Sincronizacao"]);
+    var editedByIdx=findCol_(hmap,["edited_by","editado_por"]);
+    var editedNameIdx=findCol_(hmap,["edited_by_name","editado_por_nome"]);
+    var editedAtIdx=findCol_(hmap,["edited_at","editado_em"]);
+    var createdIdx=findCol_(hmap,["CreatedBy","created_by","createdBy","criado_por"]);
+    var isAdmin=roleAccess(actor&&actor.perfil)>=20;
+
+    var wanted=group.entries.filter(function(e){return e.targetRow>0;}).map(function(e){return e.targetRow;});
+    var currentByRow={};
+    if (wanted.length) {
+      wanted=Array.from(new Set(wanted)).sort(function(a,b){return a-b;});
+      var minRow=wanted[0],maxRow=wanted[wanted.length-1];
+      if (maxRow-minRow<=6000) {
+        var dataBlock=sh.getRange(minRow,1,maxRow-minRow+1,headers.length).getValues();
+        wanted.forEach(function(rowNum){currentByRow[rowNum]=dataBlock[rowNum-minRow];});
+      } else {
+        var ranges=sh.getRangeList(wanted.map(function(v){return v+":"+v;})).getRanges();
+        for (var rr=0;rr<ranges.length;rr++) currentByRow[wanted[rr]]=ranges[rr].getValues()[0];
+      }
+    }
+
+    var newCount=group.entries.filter(function(e){return !e.targetRow;}).length;
+    var nextRow=Math.max(sh.getLastRow()+1,HEADER_ROW+1);
+    var required=nextRow+newCount-1;
+    if (required>sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(),required-sh.getMaxRows());
+
+    var touched={};
+    group.entries.forEach(function(entry){
+      var record=entry.record,current,isExisting=!!entry.targetRow,targetRow=entry.targetRow;
+      if (isExisting) {
+        current=currentByRow[targetRow];
+        if (!current||digits(current[protoIdx])!==entry.key) throw new Error("LEXIS_INDEX_STALE: linha não corresponde ao protocolo");
+        current=current.slice();
+      } else {
+        targetRow=nextRow++;
+        current=new Array(headers.length).fill("");
+        if (ownerIdx>=0&&actor&&actor.u) current[ownerIdx]=actor.u;
+        if (assistantIdx>=0&&actor) current[assistantIdx]=actor.nome||actor.u||"";
+      }
+      var before=current.slice(),dados=record.dados&&typeof record.dados==="object"?record.dados:{};
+      headers.forEach(function(header,i){
+        if (isExisting&&!isAdmin&&(i===ownerIdx||i===createdIdx||i===assistantIdx)) return;
+        var value=valueForField_(record,header,dados);
+        if (value===undefined||value===null||String(value)==="") return;
+        current[i]=toCell_(value);
+      });
+      current[protoIdx]=entry.protocol;
+      if (createdIdx>=0&&!current[createdIdx]&&actor&&actor.u) current[createdIdx]=actor.u;
+      if (empresaIdx>=0&&record.empresa_id) current[empresaIdx]=String(record.empresa_id);
+      if (updatedIdx>=0) current[updatedIdx]=now;
+      if (editedByIdx>=0&&actor&&actor.u) current[editedByIdx]=actor.u;
+      if (editedNameIdx>=0&&actor) current[editedNameIdx]=actor.nome||actor.u||"";
+      if (editedAtIdx>=0) current[editedAtIdx]=now;
+      if (!isExisting) {
+        if (statusIdx>=0&&!String(current[statusIdx]||"").trim()) current[statusIdx]="Em andamento";
+        if (situacaoIdx>=0&&!String(current[situacaoIdx]||"").trim()) current[situacaoIdx]="EM ANDAMENTO";
+        if (automationIdx>=0&&!String(current[automationIdx]||"").trim()) current[automationIdx]="PENDENTE";
+        if (nextSyncIdx>=0&&!String(current[nextSyncIdx]||"").trim()) current[nextSyncIdx]=now;
+      }
+      for (var ac=0;ac<headers.length;ac++) {
+        var oldV=before[ac]==null?"":before[ac],newV=current[ac]==null?"":current[ac];
+        if (String(oldV)===String(newV)) continue;
+        processAudit.push({acao:isExisting?"update":"create",protocolo:entry.protocol,usuario:actor&&(actor.nome||actor.u)||"",entidade:"Processos",entidade_id:entry.protocol,campo:headers[ac],valor_anterior:oldV,valor_novo:newV,detalhe:"Processos "+entry.protocol});
+      }
+      touched[targetRow]=current;
+      if (record._JudicialHistory) judicialRecords.push(record);
+      if (!isExisting) {
+        indexAdds.push([entry.key,desc.spreadsheetId,desc.sheetName||PROC_SHEET,targetRow,now]);
+        added++;
+      }
+      total++;
+    });
+
+    var rowNums=Object.keys(touched).map(Number).sort(function(a,b){return a-b;});
+    if (rowNums.length) {
+      var runStart=rowNums[0],runEnd=rowNums[0];
+      for (var x=1;x<rowNums.length;x++) {
+        if (rowNums[x]===runEnd+1){runEnd=rowNums[x];continue;}
+        var values=[];
+        for (var line=runStart;line<=runEnd;line++) values.push(touched[line]);
+        sh.getRange(runStart,1,values.length,headers.length).setValues(values);
+        runStart=runEnd=rowNums[x];
+      }
+      var tail=[];
+      for (var line2=runStart;line2<=runEnd;line2++) tail.push(touched[line2]);
+      sh.getRange(runStart,1,tail.length,headers.length).setValues(tail);
+    }
+  });
+
+  appendIndexRows_(index.sheet,indexAdds);
+  if (processAudit.length) auditRows_(processAudit.slice(0,5000));
+  var historyCounts=appendJudicialHistory_(judicialRecords);
+  SpreadsheetApp.flush();
+  return {ok:true,history_saved:true,history_counts:historyCounts,updated:total,added:added,written:total,rejected:rejected,rejected_count:rejected.length,partitioned:processShardDescriptors_().length>1,partition_count:processShardDescriptors_().length};
+}
+
+function writeRecords_(rows,actor,allowInsert) {
+  if (!Array.isArray(rows)) rows=[];
+  if (rows.length>MAX_WRITE_ROWS) throw new Error("Lote acima do limite de "+MAX_WRITE_ROWS+" linhas.");
+  if (!rows.length) return {ok:true,updated:0,added:0,written:0,rejected:[],rejected_count:0};
+  var lock=LockService.getDocumentLock();
+  lock.waitLock(5000);
+  try {
+    try { return writeRecordsLocked_(rows,actor,allowInsert); }
+    catch (err) {
+      if (String(err).indexOf("LEXIS_INDEX_STALE")>=0) {
+        rebuildIndex_();
+        return writeRecordsLocked_(rows,actor,allowInsert);
+      }
+      throw err;
+    }
+  } finally {
+    try { lock.releaseLock(); } catch (_) {}
+  }
+}
 
 
 function upsertBatch_(body) {
@@ -1745,23 +1709,13 @@ function syncDoGet_(e) {
 
       if (!validToken_(p, e)) return out_({ ok: false, error: "token invalido" });
 
-      var all = readRows_({ limit: p.limit || 8000 });
-
       if (action === "get") {
-
-        var target = digits(p.protocolo || p.cnj || "");
-
-        var found = all.rows.find(function (r) {
-
-          return digits(r.Protocolo || r.protocolo || r.protocolo_ref || r.CNJ || "") === target;
-
-        });
-
+        var found = findProcessByProtocol_(p.protocolo || p.cnj || "");
         return out_({ ok: true, row: found || null, data: found ? [found] : [] });
-
       }
 
-      return out_({ ok: true, rows: all.rows, headers: all.headers, data: all.rows, count: all.rows.length });
+      var all = readRows_({ limit: p.limit || 8000 });
+      return out_({ ok: true, rows: all.rows, headers: all.headers, data: all.rows, count: all.rows.length, partitionCount: all.partitionCount || 1 });
 
     }
 
@@ -1916,51 +1870,48 @@ function crmWriteTable_(name, rows, actor) {
 
 function crmSeedClients_() {
   ensureSheets_();
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var proc = ss.getSheetByName(PROC_SHEET);
-  var cli = ss.getSheetByName("Clientes");
-  var ph = headers_(proc), ch = headers_(cli);
-  var pmap = headerMap_(ph), cmap = headerMap_(ch);
-  var clienteIdx = findCol_(pmap, ["Cliente"]), phoneIdx = findCol_(pmap, ["Telefone"]), assistIdx = findCol_(pmap, ["Assistente"]), clientIdIdx = findCol_(pmap, ["ClienteId"]);
-  if (clienteIdx < 0 || clientIdIdx < 0) throw new Error("Processos precisa de Cliente e ClienteId");
-  var pdata = sheetValues_(proc, ph);
-  var cdata = sheetValues_(cli, ch);
-  var byName = {};
-  for (var c = HEADER_ROW; c < cdata.length; c++) {
-    var nm = norm(cdata[c][findCol_(cmap,["Nome"])] || "");
-    var id = String(cdata[c][findCol_(cmap,["ClienteId"])] || "");
-    if (nm && id) byName[nm] = id;
+  var primary=SpreadsheetApp.getActiveSpreadsheet();
+  var cli=primary.getSheetByName("Clientes");
+  var ch=headers_(cli),cmap=headerMap_(ch);
+  var cdata=sheetValues_(cli,ch),byName={};
+  var nomeCol=findCol_(cmap,["Nome"]),idCol=findCol_(cmap,["ClienteId"]);
+  for (var c=HEADER_ROW;c<cdata.length;c++) {
+    var nm=norm(cdata[c][nomeCol]||""),id=String(cdata[c][idCol]||"");
+    if (nm&&id) byName[nm]=id;
   }
-  var newClients = [], idByName = Object.assign({}, byName), linked = 0, skipped = 0;
-  var outIds = [];
-  for (var r = HEADER_ROW; r < pdata.length; r++) {
-    var nameRaw = String(pdata[r][clienteIdx] || "").trim();
-    var name = norm(nameRaw);
-    var existingId = String(pdata[r][clientIdIdx] || "").trim();
-    if (existingId) { outIds.push([existingId]); continue; }
-    if (!name || /^(NAOIDENTIFICADO|SEMNOME|NAOINFORMADO)$/.test(name)) { outIds.push([""]); skipped++; continue; }
-    var id = idByName[name];
-    if (!id) {
-      id = Utilities.getUuid(); idByName[name] = id;
-      var row = new Array(ch.length).fill("");
-      row[findCol_(cmap,["ClienteId"])] = id;
-      row[findCol_(cmap,["Tipo"])] = "Pessoa";
-      row[findCol_(cmap,["Nome"])] = nameRaw;
-      var phn = phoneIdx >= 0 ? String(pdata[r][phoneIdx] || "") : "";
-      row[findCol_(cmap,["Telefone_Principal"])] = phn;
-      row[findCol_(cmap,["Status"])] = "ATIVO";
-      row[findCol_(cmap,["Responsavel"])] = assistIdx >= 0 ? String(pdata[r][assistIdx] || "") : "";
-      row[findCol_(cmap,["Origem"])] = "Processos";
-      row[findCol_(cmap,["CriadoEm"])] = new Date().toISOString();
-      row[findCol_(cmap,["AtualizadoEm"])] = new Date().toISOString();
-      newClients.push(row);
+
+  var newClients=[],idByName=Object.assign({},byName),linked=0,skipped=0,descriptors=processShardDescriptors_();
+  descriptors.forEach(function(desc){
+    var proc=openProcessShard_(desc),ph=headers_(proc),pmap=headerMap_(ph);
+    var clienteIdx=findCol_(pmap,["Cliente"]),phoneIdx=findCol_(pmap,["Telefone"]),assistIdx=findCol_(pmap,["Assistente"]),clientIdIdx=findCol_(pmap,["ClienteId"]);
+    if (clienteIdx<0||clientIdIdx<0) throw new Error("Processos precisa de Cliente e ClienteId na partição "+String(desc.partitionId||""));
+    var pdata=sheetValues_(proc,ph),outIds=[];
+    for (var r=HEADER_ROW;r<pdata.length;r++) {
+      var nameRaw=String(pdata[r][clienteIdx]||"").trim(),name=norm(nameRaw),existingId=String(pdata[r][clientIdIdx]||"").trim();
+      if (existingId){outIds.push([existingId]);continue;}
+      if (!name||/^(NAOIDENTIFICADO|SEMNOME|NAOINFORMADO)$/.test(name)){outIds.push([""]);skipped++;continue;}
+      var id=idByName[name];
+      if (!id) {
+        id=Utilities.getUuid();idByName[name]=id;
+        var row=new Array(ch.length).fill("");
+        row[findCol_(cmap,["ClienteId"])]=id;
+        row[findCol_(cmap,["Tipo"])]="Pessoa";
+        row[findCol_(cmap,["Nome"])]=nameRaw;
+        row[findCol_(cmap,["Telefone_Principal"])]=phoneIdx>=0?String(pdata[r][phoneIdx]||""):"";
+        row[findCol_(cmap,["Status"])]="ATIVO";
+        row[findCol_(cmap,["Responsavel"])]=assistIdx>=0?String(pdata[r][assistIdx]||""):"";
+        row[findCol_(cmap,["Origem"])]="Processos";
+        row[findCol_(cmap,["CriadoEm"])]=new Date().toISOString();
+        row[findCol_(cmap,["AtualizadoEm"])]=new Date().toISOString();
+        newClients.push(row);
+      }
+      outIds.push([id]);linked++;
     }
-    outIds.push([id]); linked++;
-  }
-  if (newClients.length) cli.getRange(cli.getLastRow() + 1, 1, newClients.length, ch.length).setValues(newClients);
-  if (outIds.length) proc.getRange(HEADER_ROW + 1, clientIdIdx + 1, outIds.length, 1).setValues(outIds);
+    if (outIds.length) proc.getRange(HEADER_ROW+1,clientIdIdx+1,outIds.length,1).setValues(outIds);
+  });
+  if (newClients.length) cli.getRange(cli.getLastRow()+1,1,newClients.length,ch.length).setValues(newClients);
   SpreadsheetApp.flush();
-  return { ok:true, clientes_criados:newClients.length, processos_vinculados:linked, ignorados:skipped };
+  return {ok:true,clientes_criados:newClients.length,processos_vinculados:linked,ignorados:skipped,partition_count:descriptors.length};
 }
 
 function syncDoPost_(e) {
@@ -2031,10 +1982,15 @@ function syncDoPost_(e) {
     if (action === "get") {
       var vg = validSess_(body.sess);
       if (vg.err) return out_({ ok: false, error: vg.err });
-      var rows = readRows_({ limit: 8000 }).rows;
-      var target = digits(body.protocolo || body.cnj || "");
-      var found = rows.find(function (r) { return digits(r.Protocolo || r.protocolo || r.protocolo_ref || "") === target; });
+      var found = findProcessByProtocol_(body.protocolo || body.cnj || "");
       return out_({ ok: true, row: found || null, data: found ? [found] : [] });
+    }
+
+    if (action === "shard_status") {
+      var vsh = validSess_(body.sess);
+      if (vsh.err) return out_({ ok:false, error:vsh.err });
+      if (roleAccess(vsh.us.perfil) < 20) return out_({ ok:false, error:"sem permissao (supervisor+)" });
+      return out_(processShardStatus_());
     }
 
     if (action === "write") {
@@ -2147,6 +2103,7 @@ function listCompactAction_(body) {
     nextOffset:all.nextOffset,
     hasMore:all.hasMore,
     totalRows:all.totalRows,
+    partitionCount:all.partitionCount||1,
     user:publicUser_(vs.us),
     v:BRIDGE_VERSION
   };
