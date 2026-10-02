@@ -4,6 +4,7 @@
 const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnBDPltc0Ziphdn2yx11QKOnchc/edit";
 const DB_NAME="lexispredict-secure-cache-v3";
 const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
+const SESSION_FALLBACK_KEY="lexis_session_fallback_v1";
 const CACHE_TTL_MS=5*60*1000;
 const DEVICE_PROFILE=(typeof window!=="undefined"&&window.SheetsDeviceProfile?.detect)?window.SheetsDeviceProfile.detect():{renderPageSize:200,syncPageSize:600,idbChunkSize:320,yieldMs:0,lowMemory:false,constrained:false};
 const PAGE_DEFAULT=Number(DEVICE_PROFILE.renderPageSize)||200;
@@ -331,10 +332,13 @@ function mergePending(rows,pending){
 
 let cloudAuthFailureHandled=false;
 let cloudAuthBlocked=false;
+function getSessionFallback(){try{return sessionStorage.getItem(SESSION_FALLBACK_KEY)||""}catch(_){return""}}
+function setSessionFallback(value){try{if(value)sessionStorage.setItem(SESSION_FALLBACK_KEY,String(value));else sessionStorage.removeItem(SESSION_FALLBACK_KEY)}catch(_){}}
 function handleCloudAuthFailure(message,reason){
   if(cloudAuthFailureHandled)return;
   cloudAuthFailureHandled=true;
   cloudAuthBlocked=true;
+  setSessionFallback("");
   stopAutoSync();
   // 401 encerra a sessão, mas não apaga a réplica local. Após novo login,
   // refreshScopes() recompõe a carteira sem depender de um novo download completo.
@@ -356,7 +360,10 @@ async function apiSheets(payload){
     const e=new Error("Sessão encerrada. Entre novamente.");
     e.status=401;e.reason="auth_blocked";e.data={ok:false,reason:"auth_blocked"};throw e;
   }
-  const r=await fetch("/api/sheets",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload}),cache:"no-store"});
+  const headers={"Content-Type":"application/json"};
+  const fallback=getSessionFallback();
+  if(fallback)headers["X-Lexis-Session"]=fallback;
+  const r=await fetch("/api/sheets",{method:"POST",credentials:"same-origin",headers,body:JSON.stringify({payload}),cache:"no-store"});
   const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));
   if(!r.ok){
     // Falhas 401 de recursos auxiliares não devem apagar a sessão principal.
@@ -384,6 +391,7 @@ async function apiSheets(payload){
   if(["login","auth"].includes(action)){
     cloudAuthFailureHandled=false;
     cloudAuthBlocked=false;
+    if(j.sessionFallback)setSessionFallback(j.sessionFallback);
   }
   return j;
 }
@@ -2540,6 +2548,7 @@ function setupEvents(){
   $("#historyAttendanceBtn").onclick=()=>{const key=state.historyKey;$("#historyDialog").close();if(key)openAttendance(key)};
   $("#logoutBtn").onclick=async()=>{
     stopAutoSync();try{await apiSheets({action:"logout"})}catch(_){}
+    setSessionFallback("");
     saveSession(null);state.rows=[];state.companyRows=[];state.crm={Clientes:[],Interacoes:[],PipelineCRM:[],AgendaCRM:[],TarefasCRM:[],DocumentosCRM:[],Honorarios:[]};invalidateCrmIndexes();state.lastSync=null;state.lastSyncAt=0;state.clientId=null;
     await Promise.all([idbClear("rows").catch(()=>{}),idbClear("meta").catch(()=>{}),idbClear("outbox").catch(()=>{}),idbClear("crm").catch(()=>{}),idbClear("crmOutbox").catch(()=>{})]);
     setLogged(false);updateSyncUi();
