@@ -74,10 +74,23 @@ function daysTo(v){const d=parseDate(v);if(!d)return null;const t=new Date();t.s
 function isClosed(r){return /encerrad|arquivad|baixa definitiva|cancelamento de distribui|transito em julgado/i.test([pick(r,"Status"),pick(r,"Diagnóstico Processual"),pick(r,"DataJud • Último Movimento")].join(" "))}
 function quality(r){return String(pick(r,"Qualidade")||"").toUpperCase()}
 function score(r){const n=Number(String(pick(r,"Score 0–100","Score")).replace(",","."));return Number.isFinite(n)?n:50}
+function returnStatusForDate(value){
+  const d=daysTo(value);
+  if(d===null)return"";
+  if(d<0)return"VENCIDO";
+  if(d===0)return"ATENÇÃO";
+  return"NO PRAZO";
+}
 function statusRet(r){
+  // Próximo Retorno é a fonte de verdade; o texto salvo na planilha pode estar
+  // atrasado enquanto uma edição local ainda está sincronizando.
+  const byDate=returnStatusForDate(pick(r,"Próximo Retorno"));
+  if(byDate)return byDate;
   const st=String(pick(r,"Situação do Retorno","Status")).toUpperCase();
-  if(st.includes("VENC"))return"VENCIDO";if(st.includes("ATEN"))return"ATENÇÃO";if(st.includes("EM DIA")||st.includes("NO PRAZO"))return"EM DIA";
-  const d=daysTo(pick(r,"Próximo Retorno"));if(d===null)return"SEM DATA";if(d<0)return"VENCIDO";if(d<=0)return"ATENÇÃO";return"EM DIA";
+  if(st.includes("VENC"))return"VENCIDO";
+  if(st.includes("ATEN"))return"ATENÇÃO";
+  if(st.includes("EM DIA")||st.includes("NO PRAZO"))return"NO PRAZO";
+  return"SEM DATA";
 }
 function latestMove(r){return pick(r,"DataJud • Último Movimento","Último Andamento","Andamento","ultimo_movimento","Diagnóstico Processual")}
 function cnjFormatted(v){const d=digits(v);return d.length===20?d.slice(0,7)+"-"+d.slice(7,9)+"."+d.slice(9,13)+"."+d.slice(13,14)+"."+d.slice(14,16)+"."+d.slice(16):v}
@@ -151,6 +164,8 @@ async function loadLocal(){
   }else{
     state.companyRows=(await idbAll("rows")).map(({_key,...r})=>r);
   }
+  const pending=await idbAll("outbox").catch(()=>[]);
+  if(pending.length)state.companyRows=mergePending(state.companyRows,pending);
   const sync=metas.find(x=>x.key==="lastSync"),at=metas.find(x=>x.key==="lastSyncAt");
   if(sync)state.lastSync=sync.value;
   if(at)state.lastSyncAt=Number(at.value||0);
@@ -168,7 +183,9 @@ function invalidateCrmIndexes(){
 async function loadCrmCache(){
   const items=await idbAll("crm").catch(()=>[]);
   for(const item of items||[])if(item?.key&&Array.isArray(item.rows))state.crm[item.key]=item.rows;
-  state.crmLoaded=items.length>0;
+  const pending=await idbAll("crmOutbox").catch(()=>[]);
+  for(const item of pending||[])if(item?.table&&item?.row)crmUpsertLocal(item.table,item.row);
+  state.crmLoaded=items.length>0||pending.length>0;
   return state.crm;
 }
 async function saveCrmCache(table){
@@ -200,16 +217,11 @@ async function flushCrmOutbox(){
 }
 async function crmWrite(table,row,{quiet=false}={}){
   if(state.updateLock)return {ok:false,blocked:true,error:"Atualização em andamento."};
-  crmUpsertLocal(table,row);await saveCrmCache(table);
-  if(!navigator.onLine){await queueCrmWrite(table,row);if(!quiet)showBanner("CRM salvo offline; será enviado quando a conexão voltar.","good");return {ok:true,queued:true}}
-  try{
-    const j=await apiSheets({action:"crm_write",table,rows:[row]});
-    state.crmBridgeReady=true;return j;
-  }catch(e){
-    state.crmBridgeReady=false;await queueCrmWrite(table,row);
-    if(!quiet)showBanner("CRM preservado no cache. Bridge da planilha ainda precisa da versão CRM: "+(e.message||String(e)),"bad");
-    return {ok:false,queued:true,error:e.message||String(e)};
-  }
+  crmUpsertLocal(table,row);
+  await queueCrmWrite(table,row);
+  if(!quiet)showBanner(navigator.onLine?"CRM salvo. Sincronizando em segundo plano…":"CRM salvo offline; será enviado quando a conexão voltar.","good");
+  scheduleBackgroundFlush();
+  return {ok:true,queued:true,local:true};
 }
 async function syncCRM({quiet=true}={}){
   if(state.crmLoading||!state.session||!navigator.onLine)return;
@@ -324,6 +336,25 @@ async function queueWrite(row){
   updateSyncUi();
 }
 async function outboxCount(){return (await idbAll("outbox")).length}
+let backgroundFlushTimer=null,backgroundFlushRunning=false;
+function scheduleBackgroundFlush(delay=350){
+  clearTimeout(backgroundFlushTimer);
+  if(!navigator.onLine||!state.session||cloudAuthBlocked)return;
+  backgroundFlushTimer=setTimeout(async()=>{
+    if(backgroundFlushRunning||state.syncing||!navigator.onLine||!state.session||cloudAuthBlocked){
+      if(state.session&&!cloudAuthBlocked)scheduleBackgroundFlush(1200);
+      return;
+    }
+    backgroundFlushRunning=true;
+    try{
+      await flushOutbox();
+      await flushCrmOutbox().catch(()=>{});
+      updateSyncUi();
+    }catch(e){
+      if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
+    }finally{backgroundFlushRunning=false}
+  },Math.max(100,Number(delay)||350));
+}
 function mergePending(rows,pending){
   const map=new Map(rows.map(r=>[keyOf(r),r]));
   pending.forEach(x=>map.set(keyOf(x.row),{...(map.get(keyOf(x.row))||{}),...x.row}));
@@ -893,8 +924,7 @@ function setView(v,push=true){
   if(push&&(location.pathname+location.hash)!==target)history.pushState({view:v},"",target);
   render();
 }
-function render(){
-  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navClientes").textContent=crmClients().length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
+function renderCurrentView(){
   if(state.view==="dashboard")renderDashboard();
   else if(state.view==="hub")renderHub();
   else if(state.view==="studio")renderPredictStudio();
@@ -913,6 +943,11 @@ function render(){
   else if(state.view==="settings")renderSettings();
   else setView("dashboard",false);
   scheduleGlobalXScroll();
+}
+function render(){
+  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navClientes").textContent=crmClients().length;$("#navTarefas").textContent=tasks().length;
+  updateSyncUi();
+  renderCurrentView();
 }
 function renderPredictStudio(){
   const root=$("#content");
@@ -959,8 +994,19 @@ async function updateSyncUi(){
   const text=(state.lastSync?state.lastSync:"Aguardando autenticação")+(pending?" • "+pending+" pendente(s)":"");
   $("#syncText").textContent=text;
   const label=$("#syncLabel");if(label)label.textContent=authenticated&&online?(pending?"Pendente":"Sincronizado"):(online?"Autenticação":"Offline");
-  const notice=$("#topNotifCount"),n=tasks().filter(x=>x.w>=800||statusRet(x.r)==="VENCIDO").length;
-  if(notice){notice.textContent=String(Math.min(n,99));notice.classList.toggle("hidden",!n)}
+  scheduleNotificationRefresh();
+}
+let notificationRefreshTimer=null;
+function scheduleNotificationRefresh(){
+  clearTimeout(notificationRefreshTimer);
+  const run=()=>{
+    notificationRefreshTimer=null;
+    const notice=$("#topNotifCount");if(!notice)return;
+    const n=tasks().filter(x=>x.w>=800||statusRet(x.r)==="VENCIDO").length;
+    notice.textContent=String(Math.min(n,99));notice.classList.toggle("hidden",!n);
+  };
+  if(typeof requestIdleCallback==="function")requestIdleCallback(run,{timeout:1200});
+  else notificationRefreshTimer=setTimeout(run,450);
 }
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function isRecentDate(v,days=7){
@@ -1567,14 +1613,14 @@ function processTable(rows,{company=false,total=rows.length,view=company?"empres
   const subtitle=company
     ?"Todos os usuários autenticados podem consultar e editar. Editar ou atender não transfere a carteira."
     :"Processos vinculados ao seu Assistente/perfil.";
-  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' de '+total+' registro(s)</span></div><div class="toolbar">'+searchFieldHtml("search","Pesquisar cliente, CNJ, advogado, assistente ou andamento…",state.query)+'<select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
+  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' de '+total+' registro(s)</span></div><div class="toolbar">'+searchFieldHtml("search","Pesquisar cliente, CNJ, advogado, assistente ou andamento…",state.query)+'<select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","NO PRAZO","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
   '<div class="company-note">'+esc(subtitle)+'</div>'+
   '<div class="process-x-scroll" data-process-x="'+esc(view)+'" aria-label="Rolagem horizontal da tabela"><div></div></div>'+
   '<div class="table-wrap crm-table process-table-wrap" data-process-table="'+esc(view)+'"><table class="table process-table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Última movimentação</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Retorno</th><th>Assistente</th><th>Atendido por</th><th class="process-actions-head">Ações</th></tr></thead><tbody>'+
   rows.map(r=>{
     const key=keyOf(r),move=String(latestMove(r)||"Sem movimentação em cache").slice(0,180);
     const moveDate=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data");
-    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="process-actions"><div class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></div></td></tr>';
+    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="NO PRAZO"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="process-actions"><div class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></div></td></tr>';
   }).join("")+
   '</tbody></table></div>'+paginationHtml(view,rows.length,total,company?"processos da empresa":"processos");
 }
