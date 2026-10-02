@@ -5,7 +5,8 @@ const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnB
 const DB_NAME="lexispredict-secure-cache-v3";
 const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
 const CACHE_TTL_MS=5*60*1000;
-const PAGE_DEFAULT=200;
+const DEVICE_PROFILE=window.SheetsDeviceProfile?.detect?window.SheetsDeviceProfile.detect():{renderPageSize:200,syncPageSize:600,idbChunkSize:320,yieldMs:0,lowMemory:false,constrained:false};
+const PAGE_DEFAULT=Number(DEVICE_PROFILE.renderPageSize)||200;
 const DJEN_GEO_BLOCK_MS=10*60*1000;
 const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
 const THEME_KEY="sheetspredict_theme_v1";
@@ -103,11 +104,24 @@ function execHtml(r){
   return badge(pick(r,"Cumprimento")==="SIM"?"CUMPRIMENTO":"—",pick(r,"Cumprimento")==="SIM"?"blue":"gray");
 }
 
-function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,2);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("rows"))db.createObjectStore("rows",{keyPath:"_key"});if(!db.objectStoreNames.contains("meta"))db.createObjectStore("meta",{keyPath:"key"});if(!db.objectStoreNames.contains("outbox"))db.createObjectStore("outbox",{keyPath:"id",autoIncrement:true});if(!db.objectStoreNames.contains("crm"))db.createObjectStore("crm",{keyPath:"key"});if(!db.objectStoreNames.contains("crmOutbox"))db.createObjectStore("crmOutbox",{keyPath:"id",autoIncrement:true})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
+function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,3);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("rows"))db.createObjectStore("rows",{keyPath:"_key"});if(!db.objectStoreNames.contains("rowChunks"))db.createObjectStore("rowChunks",{keyPath:"key"});if(!db.objectStoreNames.contains("meta"))db.createObjectStore("meta",{keyPath:"key"});if(!db.objectStoreNames.contains("outbox"))db.createObjectStore("outbox",{keyPath:"id",autoIncrement:true});if(!db.objectStoreNames.contains("crm"))db.createObjectStore("crm",{keyPath:"key"});if(!db.objectStoreNames.contains("crmOutbox"))db.createObjectStore("crmOutbox",{keyPath:"id",autoIncrement:true})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
 async function idbAll(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly"),rq=tx.objectStore(store).getAll();rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error)})}
 async function idbPut(store,value){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).put(value);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
+async function idbDelete(store,key){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).delete(key);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
 async function idbClear(store){const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");tx.objectStore(store).clear();tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
-async function saveRows(rows){await idbClear("rows");const db=await openDb();return new Promise((res,rej)=>{const tx=db.transaction("rows","readwrite"),st=tx.objectStore("rows");rows.forEach(r=>st.put({...r,_key:keyOf(r)}));tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
+function idbYield(){const ms=Math.max(0,Number(DEVICE_PROFILE.yieldMs)||0);return new Promise(resolve=>setTimeout(resolve,ms))}
+async function saveRows(rows){
+  const generation=Date.now().toString(36)+"-"+hash(String(rows.length)+"|"+String(state.lastSyncAt||0)+"|"+String(performance?.now?.()||0));
+  const chunkSize=Math.max(60,Number(DEVICE_PROFILE.idbChunkSize)||320);
+  for(let i=0,part=0;i<rows.length;i+=chunkSize,part++){
+    await idbPut("rowChunks",{key:generation+":"+part,gen:generation,part,rows:rows.slice(i,i+chunkSize)});
+    if(i+chunkSize<rows.length)await idbYield();
+  }
+  await idbPut("meta",{key:"activeRowGeneration",value:generation});
+  const chunks=await idbAll("rowChunks").catch(()=>[]);
+  for(const chunk of chunks)if(chunk?.gen!==generation)await idbDelete("rowChunks",chunk.key).catch(()=>{});
+  await idbClear("rows").catch(()=>{});
+}
 function currentUser(){return state.session?.user||{}}
 function elevatedUser(){return /superadmin|supervisor|administrador|admin/i.test(String(currentUser().perfil||""))}
 function assistantSegments(v){return String(v??"").split(/[\\/|;,]+/).map(x=>String(x||"").trim()).filter(Boolean)}
@@ -128,8 +142,14 @@ function isMine(r){
 }
 function refreshScopes(){state.rows=(state.companyRows||[]).filter(isMine)}
 async function loadLocal(){
-  state.companyRows=(await idbAll("rows")).map(({_key,...r})=>r);
   const metas=await idbAll("meta");
+  const active=metas.find(x=>x.key==="activeRowGeneration")?.value||"";
+  if(active){
+    const chunks=(await idbAll("rowChunks").catch(()=>[])).filter(x=>x?.gen===active).sort((a,b)=>Number(a.part||0)-Number(b.part||0));
+    state.companyRows=chunks.flatMap(x=>Array.isArray(x.rows)?x.rows:[]);
+  }else{
+    state.companyRows=(await idbAll("rows")).map(({_key,...r})=>r);
+  }
   const sync=metas.find(x=>x.key==="lastSync"),at=metas.find(x=>x.key==="lastSyncAt");
   if(sync)state.lastSync=sync.value;
   if(at)state.lastSyncAt=Number(at.value||0);
@@ -362,9 +382,10 @@ async function syncFromCloud(opts={}){
     try{await flushOutbox({force:!opts.quiet})}catch(e){if(!opts.quiet)showBanner("Há edição pendente: "+(e.message||String(e)),"bad")}
     try{await flushCrmOutbox()}catch(_){}
     const pending=await idbAll("outbox");
-    const pageSize=600,collected=[];
+    const pageSize=Math.max(100,Number(DEVICE_PROFILE.syncPageSize)||600),collected=[];
     let offset=0,hasMore=true,totalRows=0,pages=0;
-    while(hasMore&&pages<20){
+    const hardPageLimit=5000;
+    while(hasMore&&pages<hardPageLimit){
       const j=await apiSheets({action:"list",limit:pageSize,offset,scope:"company"});
       if(j.legacyBridge&&pages===0){
         showBanner("Bridge Apps Script "+esc(j.detectedVersion||"legado")+" em modo de compatibilidade. A carteira será carregada normalmente enquanto o handler antigo é corrigido.","bad");
@@ -383,7 +404,7 @@ async function syncFromCloud(opts={}){
       if(!opts.quiet&&hasMore)showBanner("Carregando carteira… "+collected.length+(totalRows?" de "+totalRows:"")+" registros recebidos.","good");
       if(hasMore)await updateSleep(60);
     }
-    if(hasMore)throw Object.assign(new Error("A carteira excedeu o limite de paginação desta sincronização."),{transient:true,retryAfterMs:5000});
+    if(hasMore)throw Object.assign(new Error("A carteira excedeu o limite de segurança desta sincronização. Nenhum dado local foi descartado."),{transient:true,retryAfterMs:5000});
     let rows=mergePending(collected,pending);
     enrichCandidates=autoEnrichCandidates(rows,previousKeys);
     state.companyRows=rows;refreshScopes();await saveRows(rows);
