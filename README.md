@@ -28,7 +28,7 @@
 
 ---
 
-**Versão atual: 4.4.0**
+**Versão atual: 4.4.1**
 
 SheetsPredict mantém o **Google Sheets como fonte operacional de verdade**, usa IndexedDB como réplica local/offline e concentra integrações externas atrás de funções server-side. O navegador não precisa conhecer chaves de PredictLM, LexisPredict, WA.Auto ou provedores de IA.
 
@@ -255,8 +255,9 @@ A Central não trata toda integração ausente como erro. Os cards distinguem:
 | Estado | Significado |
 |---|---|
 | **ativo** | integração configurada e respondendo |
+| **ativo · autenticação não confirmada pelo diagnóstico** | o serviço responde normalmente, mas o endpoint de health não consegue confirmar a credencial; o painel não trata isso como falha sem um 401/403 real |
 | **indisponível** | integração configurada, mas sem resposta válida naquele momento |
-| **requer API** | PredictLM disponível apenas após configuração de uma chave dedicada |
+| **requer API** | integração obrigatória sem credencial local |
 | **opcional** | integração não habilitada neste deploy e não necessária ao núcleo do SheetsPredict |
 
 Esse modelo evita exibir “não configurado” como se fosse falha do aplicativo.
