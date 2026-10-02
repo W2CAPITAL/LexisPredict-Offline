@@ -56,3 +56,7 @@ assert.match(sheetsApi,/legacy_list/,"bridge antigo deve ter fallback de compati
 assert.match(sheetsApi,/legacyBridge:true/,"fallback deve sinalizar modo legado");
 assert.match(app,/modo de compatibilidade/,"UI deve informar compatibilidade sem bloquear a carteira");
 console.log("routes-f5: ok");
+
+assert.match(sheetsApi,/if\(action==="session"\)[\s\S]*authenticated:false/,"sondagem de sessão sem cookie deve responder estado, não 401");
+assert.match(app,/credentials:"same-origin"/,"fetch do Sheets deve enviar cookie explicitamente");
+assert.match(app,/cloudAuthBlocked/,"cliente deve bloquear novas chamadas após falha de autenticação");
