@@ -26,7 +26,7 @@ for(const count of [0,3]){
   assert.equal(context.test.mergeQueuedWrite([merged],patch)._JudicialHistory.datajud.length,1);
 }
 
-assert.match(app,/PAGE_DEFAULT=200/,"listas grandes devem iniciar em 200 registros");
+assert.match(app,/PAGE_DEFAULT=Number\(DEVICE_PROFILE\.renderPageSize\)\|\|200/,"listas grandes devem adaptar a paginação ao dispositivo");
 assert.match(app,/data-load-more/,"deve existir controle Ver +200");
 assert.match(app,/data-page-input/,"deve aceitar quantidade explícita para carregar");
 assert.doesNotMatch(app,/slice\(0,1800\)/,"Processos da empresa não pode voltar ao corte fixo de 1800");
