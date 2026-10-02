@@ -8,9 +8,9 @@ function safeUrl(raw){
   if(u.hostname==="script.google.com"&&!/\/macros\/s\/.+\/exec\/?$/.test(u.pathname))throw new Error("LEXIS_APPS_SCRIPT_URL deve terminar em /exec.");
   return u.toString();
 }
-const READ_ACTIONS=new Set(["session","auto","list","get","search","crm_list","judicial_history","ping","users","list_users"]);
-const REQUIRED_BRIDGE_VERSION="8.2";
-const REQUIRED_BRIDGE_CAPABILITIES=new Set(["list_compact","crm_list","crm_write"]);
+const READ_ACTIONS=new Set(["session","auto","list","get","search","crm_list","judicial_history","shard_status","ping","users","list_users"]);
+const REQUIRED_BRIDGE_VERSION="8.3";
+const REQUIRED_BRIDGE_CAPABILITIES=new Set(["list_compact","crm_list","crm_write","process_shards"]);
 const TRANSIENT_STATUSES=new Set([408,425,429,500,502,503,504]);
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function searchNorm(v){
