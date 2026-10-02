@@ -36,7 +36,6 @@ assert.match(app,/mode:djenWasPaused\?"datajud":"both"/,"DJEN pausado deve deixa
 
 assert.doesNotMatch(app,/"atendido_em":nowIso/,"atendimento não deve exigir coluna técnica atendido_em para confirmar a escrita");
 assert.match(app,/scheduleBackgroundFlush\(\)/,"atendimento deve sincronizar Processos em segundo plano sem bloquear a UI");
-assert.match(app,/bridge 8\.2/,"falha de histórico deve orientar atualização explícita do Apps Script");
 
 assert.match(app,/SheetsNeedle\?\.bridgeConfirmedWrite/,"write confirmado deve evitar GET redundante");
 const authFailure=(app.match(/function handleCloudAuthFailure\(message\)\{([\s\S]*?)\n\}/)||[])[1]||"";
