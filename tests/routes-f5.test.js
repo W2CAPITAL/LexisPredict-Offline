@@ -31,7 +31,7 @@ const installer=fs.readFileSync(path.join(__dirname,"..","installer-script.txt")
 assert.match(bridgeAuth2,/createHmac\("sha256"/,"sessão deve ser validável localmente sem roundtrip ao Apps Script");
 assert.match(sheetsApi,/action==="session"/,"api/sheets deve expor validação local de sessão");
 assert.match(sheetsApi,/list_compact/,"listagem deve usar transporte compacto");
-assert.match(app,/pageSize=600/,"carteira deve carregar em páginas menores");
+assert.match(app,/DEVICE_PROFILE\.syncPageSize/,"carteira deve adaptar páginas de sincronização ao dispositivo");
 assert.match(installer,/function listCompactAction_/,"installer deve oferecer listagem compacta");
 assert.match(installer,/function readRowsCompact_/,"installer deve ler apenas a página necessária");
 
