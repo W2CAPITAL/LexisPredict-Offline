@@ -129,6 +129,20 @@ module.exports=async(req,res)=>{
         if(auth.transient||Number(auth.status)>=500){
           return transientRead(res,action,auth.error||"Google Apps Script está temporariamente indisponível durante a validação da sessão.",auth.status||503);
         }
+        // "session" é uma sondagem de estado usada no boot. Não deve gerar
+        // ruído de HTTP 401 quando o usuário simplesmente ainda não entrou ou
+        // quando existe um cookie antigo. Limpamos o cookie inválido e
+        // devolvemos um estado autenticado=false em HTTP 200.
+        if(action==="session"){
+          clearSessionCookie(res);
+          res.setHeader("Cache-Control","no-store");
+          return res.status(200).json({
+            ok:false,
+            authenticated:false,
+            error:auth.error||"Não autenticado",
+            reason:auth.reason||"auth_failed"
+          });
+        }
         return res.status(auth.status||401).json({ok:false,error:auth.error||"Não autenticado",reason:auth.reason||"auth_failed"});
       }
       if(auth.legacy)setSessionCookie(res,auth.sess,auth.user||null);
@@ -256,7 +270,16 @@ module.exports=async(req,res)=>{
     res.setHeader("Cache-Control","no-store");
 
     if(data&&data.error==="token invalido"){
-      return res.status(401).json({ok:false,error:"LEXIS_SHEETS_TOKEN da Vercel não corresponde à Script Property LEXIS_SHEETS_TOKEN do Apps Script publicado.",reason:"token_mismatch"});
+      const payload={
+        ok:false,
+        authenticated:false,
+        error:"LEXIS_SHEETS_TOKEN da Vercel não corresponde à Script Property LEXIS_SHEETS_TOKEN do Apps Script publicado.",
+        reason:"token_mismatch"
+      };
+      // Ping é diagnóstico/configuração, então responde 200 para que a UI
+      // consiga mostrar a causa sem produzir um erro de recurso no console.
+      if(action==="ping")return res.status(200).json(payload);
+      return res.status(401).json(payload);
     }
 
     if((action==="login"||action==="auth")&&data&&data.ok){
