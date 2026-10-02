@@ -2477,35 +2477,28 @@ async function saveProcess(){
   setOperationBusy(saveBtn,{busy:true,label:isNew?"Criando processo…":"Salvando alterações…",doneLabel:"Salvar",statusEl,status:"Salvando no dispositivo…"});
   try{
   next["ClienteId"]=clientId;
+  next["Situação do Retorno"]=returnStatusForDate(next["Próximo Retorno"])||pick(next,"Situação do Retorno");
   if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
-  updateLocalRow(next);await saveRows(state.companyRows);
-  if(statusEl)statusEl.textContent="Processo salvo localmente. Preparando sincronização…";
+  updateLocalRow(next);
+  if(statusEl)statusEl.textContent="Processo salvo no dispositivo.";
   if(clientId){
     const clientRecord={ClienteId:clientId,Tipo:"Pessoa",Nome:next["Cliente"],Telefone_Principal:next["Telefone"],Origem:"App",Status:"ATIVO",Responsavel:next["Assistente"],OptOutWhatsApp:"NÃO",AtualizadoEm:new Date().toISOString()};
     await crmWrite("Clientes",clientRecord,{quiet:true});
   }
   const writePayload={
-    "Protocolo":next["Protocolo"],"ClienteId":clientId,"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
+    "Protocolo":next["Protocolo"],"ClienteId":clientId,"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Situação do Retorno":next["Situação do Retorno"]||"","Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
   };
   if(isNew)writePayload["Assistente"]=next["Assistente"];
-  await queueWrite(writePayload);render();
-  $("#processStatus").textContent="Salvo neste dispositivo. Enviando para a planilha…";
-  if(!navigator.onLine){
-    if(statusEl)statusEl.textContent="Salvo offline; será sincronizado quando a conexão voltar.";
-    await updateSleep(250);$("#processDialog").close();showBanner("Cadastro salvo no cache e aguardando conexão.","good");return
-  }
-  if(statusEl)statusEl.textContent="Sincronizando com a planilha…";
-  try{
-    const j=await flushOutbox();if(Number(j.rejected_count||0)>0)throw new Error("A planilha recusou a alteração.");
-    if(statusEl)statusEl.textContent="Processo confirmado na planilha.";
-    await updateSleep(260);
-    $("#processDialog").close();showBanner((isNew?"Cadastro criado":"Alteração salva")+" sem transferir a carteira.","good");
+  await queueWrite(writePayload);
+  renderCurrentView();
+  if(statusEl)statusEl.textContent=navigator.onLine?"Salvo. Sincronizando em segundo plano…":"Salvo offline; será sincronizado quando a conexão voltar.";
+  $("#processDialog").close();
+  showBanner((isNew?"Cadastro criado":"Alteração salva")+" imediatamente no app"+(navigator.onLine?"; sincronizando com a planilha em segundo plano.":".")+"","good");
+  setOperationBusy(saveBtn,{busy:false,doneLabel:"Salvar",statusEl});
+  scheduleBackgroundFlush();
   }catch(e){
-    if(statusEl)statusEl.textContent="Salvo localmente; aguardando a planilha voltar.";
-    await updateSleep(350);$("#processDialog").close();showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad");
-    if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
-  }
-  }finally{
+    if(statusEl)statusEl.textContent="Não foi possível salvar no dispositivo.";
+    showBanner("Não foi possível preservar a alteração localmente: "+(e.message||String(e)),"bad");
     setOperationBusy(saveBtn,{busy:false,doneLabel:"Salvar",statusEl});
   }
 }
