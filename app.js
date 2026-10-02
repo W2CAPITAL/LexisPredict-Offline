@@ -330,9 +330,11 @@ function mergePending(rows,pending){
 }
 
 let cloudAuthFailureHandled=false;
-function handleCloudAuthFailure(message){
+let cloudAuthBlocked=false;
+function handleCloudAuthFailure(message,reason){
   if(cloudAuthFailureHandled)return;
   cloudAuthFailureHandled=true;
+  cloudAuthBlocked=true;
   stopAutoSync();
   // 401 encerra a sessão, mas não apaga a réplica local. Após novo login,
   // refreshScopes() recompõe a carteira sem depender de um novo download completo.
@@ -340,19 +342,27 @@ function handleCloudAuthFailure(message){
   state.syncing=false;
   setLogged(false);
   const status=$("#loginStatus");
-  if(status)status.textContent=message||"Sua sessão expirou. Entre novamente.";
+  if(status){
+    if(reason==="token_mismatch")status.textContent="Configuração divergente: o token da Vercel não corresponde ao token do Apps Script. Isso não é erro da sua senha.";
+    else status.textContent=message||"Sua sessão expirou. Entre novamente.";
+  }
   updateSyncUi();
 }
 const SOFT_AUTH_ACTIONS=new Set(["crm_list","crm_write","crm_seed_clients"]);
+const AUTH_FAILURE_REASONS=new Set(["missing_cookie","expired_session","invalid_signature","auth_failed"]);
 async function apiSheets(payload){
-  const r=await fetch("/api/sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload}),cache:"no-store"});
-  const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));
   const action=String(payload?.action||"").toLowerCase();
+  if(cloudAuthBlocked&&!["login","auth","logout","session","ping"].includes(action)){
+    const e=new Error("Sessão encerrada. Entre novamente.");
+    e.status=401;e.reason="auth_blocked";e.data={ok:false,reason:"auth_blocked"};throw e;
+  }
+  const r=await fetch("/api/sheets",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload}),cache:"no-store"});
+  const j=await r.json().catch(()=>({ok:false,error:"Resposta inválida"}));
   if(!r.ok){
     // Falhas 401 de recursos auxiliares não devem apagar a sessão principal.
     // O CRM mantém a alteração em IndexedDB/outbox; uma operação principal
     // (session/list/write) decide se a sessão realmente expirou.
-    if(r.status===401&&!["login","auth"].includes(action)&&!SOFT_AUTH_ACTIONS.has(action))handleCloudAuthFailure(j.error);
+    if(r.status===401&&!["login","auth"].includes(action)&&!SOFT_AUTH_ACTIONS.has(action))handleCloudAuthFailure(j.error,j.reason);
     const e=new Error(j.error||"Falha ao acessar a planilha");
     e.status=r.status;e.data=j;e.reason=j.reason||"";e.transient=!!j.transient||r.status>=500;throw e;
   }
@@ -365,13 +375,23 @@ async function apiSheets(payload){
     e.status=Number(j.upstreamStatus)||503;e.data=j;e.transient=true;e.retryAfterMs=Number(j.retryAfterMs)||4000;throw e;
   }
   if(j.ok===false&&!j.conflict){
+    if(AUTH_FAILURE_REASONS.has(String(j.reason||""))&&!["login","auth"].includes(action)){
+      handleCloudAuthFailure(j.error,j.reason);
+    }
     const e=new Error(j.error||"Falha ao acessar a planilha");
-    e.status=r.status;e.data=j;throw e;
+    e.status=r.status;e.data=j;e.reason=j.reason||"";throw e;
   }
-  if(["login","auth"].includes(action))cloudAuthFailureHandled=false;
+  if(["login","auth"].includes(action)){
+    cloudAuthFailureHandled=false;
+    cloudAuthBlocked=false;
+  }
   return j;
 }
-async function loginCloud(user,pass){return apiSheets({action:"login",usuario:user,login:user,senha:pass})}
+async function loginCloud(user,pass){
+  cloudAuthBlocked=false;
+  cloudAuthFailureHandled=false;
+  return apiSheets({action:"login",usuario:user,login:user,senha:pass});
+}
 async function syncFromCloud(opts={}){
   if(state.syncing)return;
   const previousKeys=new Set((state.companyRows||[]).map(r=>digits(pick(r,"Protocolo"))).filter(x=>x.length===20));
