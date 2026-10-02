@@ -2207,48 +2207,15 @@ async function saveAttendance(){
     // O registro principal em Processos tem prioridade. O histórico CRM entra
     // primeiro na fila local e só é enviado depois que Processos for confirmado.
     crmUpsertLocal("Interacoes",interaction);
-    await saveCrmCache("Interacoes");
     await queueCrmWrite("Interacoes",interaction);
     crmPending=true;
   }
-  render();
-  try{
-    let crmError=null;
-    if(navigator.onLine){
-      if(statusEl)statusEl.textContent="Sincronizando atendimento com a aba Processos…";
-      await flushOutbox();
-      if(clientId){
-        if(statusEl)statusEl.textContent="Confirmando histórico de atendimento…";
-        try{await flushCrmOutbox();crmPending=false}
-        catch(e){crmError=e;crmPending=true}
-      }
-    }
-    if(crmError){
-      const needsBridge=!!(crmError?.upgradeRequired||crmError?.deploymentOutdated||crmError?.bridgeMismatch);
-      const detail=needsBridge
-        ?" O Apps Script publicado precisa ser atualizado para o bridge 8.2 e republicado como Nova versão na implantação /exec existente."
-        :" "+(crmError.message||String(crmError));
-      if(statusEl)statusEl.textContent="Processos atualizado; histórico CRM pendente."+detail;
-      await updateSleep(500);
-      $("#attendanceDialog").close();
-      showBanner("Atendimento gravado na aba Processos, mas o histórico em Interacoes ficou pendente."+detail,"bad");
-    }else{
-      if(statusEl)statusEl.textContent=navigator.onLine?"Atendimento confirmado na planilha.":"Atendimento salvo offline.";
-      await updateSleep(260);
-      $("#attendanceDialog").close();
-      showBanner((navigator.onLine?"Atendimento registrado na planilha por ":"Atendimento salvo offline por ")+actor+" sem transferir o processo.","good");
-    }
-  }catch(e){
-    const needsBridge=!!(e?.upgradeRequired||e?.deploymentOutdated||e?.bridgeMismatch);
-    const detail=needsBridge
-      ?" O Apps Script publicado precisa ser atualizado para o bridge 8.2 e republicado como Nova versão na implantação /exec existente."
-      :" "+(e.message||String(e));
-    if(statusEl)statusEl.textContent="Salvo localmente; a aba Processos ainda não confirmou a gravação."+detail;
-    await updateSleep(500);
-    $("#attendanceDialog").close();
-    showBanner("Atendimento ficou pendente para a aba Processos."+detail,"bad");
-    if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
-  }finally{setOperationBusy(btn,{busy:false,doneLabel:"Registrar atendimento",statusEl})}
+  renderCurrentView();
+  if(statusEl)statusEl.textContent=navigator.onLine?"Salvo. Sincronizando em segundo plano…":"Salvo offline.";
+  $("#attendanceDialog").close();
+  showBanner((navigator.onLine?"Atendimento salvo imediatamente por ":"Atendimento salvo offline por ")+actor+" sem transferir o processo.","good");
+  setOperationBusy(btn,{busy:false,doneLabel:"Registrar atendimento",statusEl});
+  scheduleBackgroundFlush();
 }
 function historyDate(raw){
   const d=parseDate(raw);return d&&!Number.isNaN(d.getTime())?d:new Date(0);
