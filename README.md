@@ -28,7 +28,7 @@
 
 ---
 
-**Versão atual: 4.3.0**
+**Versão atual: 4.3.1**
 
 SheetsPredict mantém o **Google Sheets como fonte operacional de verdade**, usa IndexedDB como réplica local/offline e concentra integrações externas atrás de funções server-side. O navegador não precisa conhecer chaves de PredictLM, LexisPredict, WA.Auto ou provedores de IA.
 
