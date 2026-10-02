@@ -35,8 +35,7 @@ assert.match(app,/calendar-grid/,"Agenda deve ser calendário e não apenas tabe
 assert.match(app,/mode:djenWasPaused\?"datajud":"both"/,"DJEN pausado deve deixar DataJud continuar");
 
 assert.doesNotMatch(app,/"atendido_em":nowIso/,"atendimento não deve exigir coluna técnica atendido_em para confirmar a escrita");
-assert.match(app,/Sincronizando atendimento com a aba Processos/,"atendimento deve priorizar a escrita principal");
-assert.match(app,/bridge 8\.2/,"falha de histórico deve orientar atualização explícita do Apps Script");
+assert.match(app,/scheduleBackgroundFlush\(\)/,"atendimento deve sincronizar Processos em segundo plano sem bloquear a UI");
 
 assert.match(app,/SheetsNeedle\?\.bridgeConfirmedWrite/,"write confirmado deve evitar GET redundante");
 const authFailure=(app.match(/function handleCloudAuthFailure\(message\)\{([\s\S]*?)\n\}/)||[])[1]||"";

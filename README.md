@@ -28,7 +28,7 @@
 
 ---
 
-**Versão atual: 4.3.2**
+**Versão atual: 4.4.0**
 
 SheetsPredict mantém o **Google Sheets como fonte operacional de verdade**, usa IndexedDB como réplica local/offline e concentra integrações externas atrás de funções server-side. O navegador não precisa conhecer chaves de PredictLM, LexisPredict, WA.Auto ou provedores de IA.
 
@@ -121,6 +121,12 @@ A versão 4.3 adiciona particionamento automático da carteira de **Processos**:
 - as abas de CRM permanecem na planilha principal, enquanto a tabela de maior volume pode crescer horizontalmente em várias planilhas.
 
 O limite padrão por partição é propositalmente conservador e pode ser ajustado pela Script Property `LEXIS_SHARD_TARGET_CELLS`. Isso evita depender de um plano de banco pago, mas **não transforma serviços do Google em recursos literalmente ilimitados**: cotas de Apps Script, Drive e da conta Google continuam existindo.
+
+### Edições instantâneas
+
+A versão 4.4 torna edição de processo, observação e atendimento **local-first**. A interface atualiza assim que a pequena outbox do navegador confirma a gravação local; o envio ao Google Sheets acontece depois, em segundo plano. Essas ações deixam de regravar a carteira inteira no IndexedDB.
+
+O status de retorno também passa a ser derivado primeiro de **Próximo Retorno**: data passada = `VENCIDO`, hoje = `ATENÇÃO`, data futura = `NO PRAZO`. Isso evita exibir um texto antigo da planilha enquanto a nova data ainda está sincronizando.
 
 ### PCs fracos e qualquer navegador
 

@@ -74,10 +74,23 @@ function daysTo(v){const d=parseDate(v);if(!d)return null;const t=new Date();t.s
 function isClosed(r){return /encerrad|arquivad|baixa definitiva|cancelamento de distribui|transito em julgado/i.test([pick(r,"Status"),pick(r,"Diagnóstico Processual"),pick(r,"DataJud • Último Movimento")].join(" "))}
 function quality(r){return String(pick(r,"Qualidade")||"").toUpperCase()}
 function score(r){const n=Number(String(pick(r,"Score 0–100","Score")).replace(",","."));return Number.isFinite(n)?n:50}
+function returnStatusForDate(value){
+  const d=daysTo(value);
+  if(d===null)return"";
+  if(d<0)return"VENCIDO";
+  if(d===0)return"ATENÇÃO";
+  return"NO PRAZO";
+}
 function statusRet(r){
+  // Próximo Retorno é a fonte de verdade; o texto salvo na planilha pode estar
+  // atrasado enquanto uma edição local ainda está sincronizando.
+  const byDate=returnStatusForDate(pick(r,"Próximo Retorno"));
+  if(byDate)return byDate;
   const st=String(pick(r,"Situação do Retorno","Status")).toUpperCase();
-  if(st.includes("VENC"))return"VENCIDO";if(st.includes("ATEN"))return"ATENÇÃO";if(st.includes("EM DIA")||st.includes("NO PRAZO"))return"EM DIA";
-  const d=daysTo(pick(r,"Próximo Retorno"));if(d===null)return"SEM DATA";if(d<0)return"VENCIDO";if(d<=0)return"ATENÇÃO";return"EM DIA";
+  if(st.includes("VENC"))return"VENCIDO";
+  if(st.includes("ATEN"))return"ATENÇÃO";
+  if(st.includes("EM DIA")||st.includes("NO PRAZO"))return"NO PRAZO";
+  return"SEM DATA";
 }
 function latestMove(r){return pick(r,"DataJud • Último Movimento","Último Andamento","Andamento","ultimo_movimento","Diagnóstico Processual")}
 function cnjFormatted(v){const d=digits(v);return d.length===20?d.slice(0,7)+"-"+d.slice(7,9)+"."+d.slice(9,13)+"."+d.slice(13,14)+"."+d.slice(14,16)+"."+d.slice(16):v}
@@ -151,6 +164,8 @@ async function loadLocal(){
   }else{
     state.companyRows=(await idbAll("rows")).map(({_key,...r})=>r);
   }
+  const pending=await idbAll("outbox").catch(()=>[]);
+  if(pending.length)state.companyRows=mergePending(state.companyRows,pending);
   const sync=metas.find(x=>x.key==="lastSync"),at=metas.find(x=>x.key==="lastSyncAt");
   if(sync)state.lastSync=sync.value;
   if(at)state.lastSyncAt=Number(at.value||0);
@@ -168,7 +183,9 @@ function invalidateCrmIndexes(){
 async function loadCrmCache(){
   const items=await idbAll("crm").catch(()=>[]);
   for(const item of items||[])if(item?.key&&Array.isArray(item.rows))state.crm[item.key]=item.rows;
-  state.crmLoaded=items.length>0;
+  const pending=await idbAll("crmOutbox").catch(()=>[]);
+  for(const item of pending||[])if(item?.table&&item?.row)crmUpsertLocal(item.table,item.row);
+  state.crmLoaded=items.length>0||pending.length>0;
   return state.crm;
 }
 async function saveCrmCache(table){
@@ -200,16 +217,11 @@ async function flushCrmOutbox(){
 }
 async function crmWrite(table,row,{quiet=false}={}){
   if(state.updateLock)return {ok:false,blocked:true,error:"Atualização em andamento."};
-  crmUpsertLocal(table,row);await saveCrmCache(table);
-  if(!navigator.onLine){await queueCrmWrite(table,row);if(!quiet)showBanner("CRM salvo offline; será enviado quando a conexão voltar.","good");return {ok:true,queued:true}}
-  try{
-    const j=await apiSheets({action:"crm_write",table,rows:[row]});
-    state.crmBridgeReady=true;return j;
-  }catch(e){
-    state.crmBridgeReady=false;await queueCrmWrite(table,row);
-    if(!quiet)showBanner("CRM preservado no cache. Bridge da planilha ainda precisa da versão CRM: "+(e.message||String(e)),"bad");
-    return {ok:false,queued:true,error:e.message||String(e)};
-  }
+  crmUpsertLocal(table,row);
+  await queueCrmWrite(table,row);
+  if(!quiet)showBanner(navigator.onLine?"CRM salvo. Sincronizando em segundo plano…":"CRM salvo offline; será enviado quando a conexão voltar.","good");
+  scheduleBackgroundFlush();
+  return {ok:true,queued:true,local:true};
 }
 async function syncCRM({quiet=true}={}){
   if(state.crmLoading||!state.session||!navigator.onLine)return;
@@ -324,6 +336,25 @@ async function queueWrite(row){
   updateSyncUi();
 }
 async function outboxCount(){return (await idbAll("outbox")).length}
+let backgroundFlushTimer=null,backgroundFlushRunning=false;
+function scheduleBackgroundFlush(delay=350){
+  clearTimeout(backgroundFlushTimer);
+  if(!navigator.onLine||!state.session||cloudAuthBlocked)return;
+  backgroundFlushTimer=setTimeout(async()=>{
+    if(backgroundFlushRunning||state.syncing||!navigator.onLine||!state.session||cloudAuthBlocked){
+      if(state.session&&!cloudAuthBlocked)scheduleBackgroundFlush(1200);
+      return;
+    }
+    backgroundFlushRunning=true;
+    try{
+      await flushOutbox();
+      await flushCrmOutbox().catch(()=>{});
+      updateSyncUi();
+    }catch(e){
+      if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
+    }finally{backgroundFlushRunning=false}
+  },Math.max(100,Number(delay)||350));
+}
 function mergePending(rows,pending){
   const map=new Map(rows.map(r=>[keyOf(r),r]));
   pending.forEach(x=>map.set(keyOf(x.row),{...(map.get(keyOf(x.row))||{}),...x.row}));
@@ -893,8 +924,7 @@ function setView(v,push=true){
   if(push&&(location.pathname+location.hash)!==target)history.pushState({view:v},"",target);
   render();
 }
-function render(){
-  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navClientes").textContent=crmClients().length;$("#navTarefas").textContent=tasks().length;updateSyncUi();
+function renderCurrentView(){
   if(state.view==="dashboard")renderDashboard();
   else if(state.view==="hub")renderHub();
   else if(state.view==="studio")renderPredictStudio();
@@ -913,6 +943,11 @@ function render(){
   else if(state.view==="settings")renderSettings();
   else setView("dashboard",false);
   scheduleGlobalXScroll();
+}
+function render(){
+  const m=metrics();$("#navProcessos").textContent=m.total;$("#navEmpresa").textContent=state.companyRows.length;$("#navClientes").textContent=crmClients().length;$("#navTarefas").textContent=tasks().length;
+  updateSyncUi();
+  renderCurrentView();
 }
 function renderPredictStudio(){
   const root=$("#content");
@@ -959,8 +994,19 @@ async function updateSyncUi(){
   const text=(state.lastSync?state.lastSync:"Aguardando autenticação")+(pending?" • "+pending+" pendente(s)":"");
   $("#syncText").textContent=text;
   const label=$("#syncLabel");if(label)label.textContent=authenticated&&online?(pending?"Pendente":"Sincronizado"):(online?"Autenticação":"Offline");
-  const notice=$("#topNotifCount"),n=tasks().filter(x=>x.w>=800||statusRet(x.r)==="VENCIDO").length;
-  if(notice){notice.textContent=String(Math.min(n,99));notice.classList.toggle("hidden",!n)}
+  scheduleNotificationRefresh();
+}
+let notificationRefreshTimer=null;
+function scheduleNotificationRefresh(){
+  clearTimeout(notificationRefreshTimer);
+  const run=()=>{
+    notificationRefreshTimer=null;
+    const notice=$("#topNotifCount");if(!notice)return;
+    const n=tasks().filter(x=>x.w>=800||statusRet(x.r)==="VENCIDO").length;
+    notice.textContent=String(Math.min(n,99));notice.classList.toggle("hidden",!n);
+  };
+  if(typeof requestIdleCallback==="function")requestIdleCallback(run,{timeout:1200});
+  else notificationRefreshTimer=setTimeout(run,450);
 }
 function kpi(label,value,sub,cls=""){return '<div class="kpi '+cls+'"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(sub||"")+'</small></div>'}
 function isRecentDate(v,days=7){
@@ -1567,14 +1613,14 @@ function processTable(rows,{company=false,total=rows.length,view=company?"empres
   const subtitle=company
     ?"Todos os usuários autenticados podem consultar e editar. Editar ou atender não transfere a carteira."
     :"Processos vinculados ao seu Assistente/perfil.";
-  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' de '+total+' registro(s)</span></div><div class="toolbar">'+searchFieldHtml("search","Pesquisar cliente, CNJ, advogado, assistente ou andamento…",state.query)+'<select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","EM DIA","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
+  return '<div class="record-toolbar"><div class="record-title"><span class="eyebrow">'+(company?"EMPRESA • LIST VIEW":"CARTEIRA • LIST VIEW")+'</span><strong>'+title+'</strong><span>'+rows.length+' de '+total+' registro(s)</span></div><div class="toolbar">'+searchFieldHtml("search","Pesquisar cliente, CNJ, advogado, assistente ou andamento…",state.query)+'<select id="statusFilter"><option value="">Retorno: todos</option>'+["VENCIDO","ATENÇÃO","NO PRAZO","SEM DATA"].map(x=>'<option '+(state.status===x?"selected":"")+'>'+x+'</option>').join("")+'</select><select id="qualityFilter"><option value="">Qualidade: todas</option>'+["BOM","NEUTRO","RUIM"].map(x=>'<option '+(state.quality===x?"selected":"")+'>'+x+'</option>').join("")+'</select><button class="btn primary sm" data-new-record>+ Novo cadastro</button></div></div>'+
   '<div class="company-note">'+esc(subtitle)+'</div>'+
   '<div class="process-x-scroll" data-process-x="'+esc(view)+'" aria-label="Rolagem horizontal da tabela"><div></div></div>'+
   '<div class="table-wrap crm-table process-table-wrap" data-process-table="'+esc(view)+'"><table class="table process-table"><thead><tr><th>Cliente / Conta</th><th>Processo</th><th>Última movimentação</th><th>Cumprimento</th><th>Favorecido</th><th>Comercial</th><th>Retorno</th><th>Assistente</th><th>Atendido por</th><th class="process-actions-head">Ações</th></tr></thead><tbody>'+
   rows.map(r=>{
     const key=keyOf(r),move=String(latestMove(r)||"Sem movimentação em cache").slice(0,180);
     const moveDate=pick(r,"DataJud • Data","Data da Movimentação","Data_Movimentacao","DJEN • Data");
-    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="EM DIA"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="process-actions"><div class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></div></td></tr>';
+    return '<tr><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub">'+esc(pick(r,"Escritório","Escritorio"))+'</div></td><td><div class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div><div class="cell-sub">'+esc(pick(r,"Tribunal"))+' • '+esc(pick(r,"Advogado Atual","Advogado"))+'</div></td><td><div class="cell-main clamp2">'+esc(move)+'</div><div class="cell-sub">'+esc(moveDate||"movimentação já registrada na planilha")+'</div></td><td>'+execHtml(r)+'</td><td>'+favoredHtml(r)+'</td><td>'+commercialHtml(r)+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"||statusRet(r)==="É HOJE"?"warn":statusRet(r)==="NO PRAZO"?"good":"gray")+'<div class="cell-sub">'+esc(pick(r,"Próximo Retorno"))+'</div></td><td><div class="cell-main">'+esc(pick(r,"Assistente")||"—")+'</div></td><td><div class="cell-main">'+esc(pick(r,"AtendidoPor","Atendido por")||"—")+'</div><div class="cell-sub">'+esc(pick(r,"Último Retorno")||"")+'</div></td><td class="process-actions"><div class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico tribunal</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button><button class="icon-action" data-audit="'+esc(key)+'">Audit 3D</button><button class="icon-action" data-suggest="'+esc(key)+'">Sugerir resposta</button><button class="icon-action" data-edit="'+esc(key)+'">Editar</button></div></td></tr>';
   }).join("")+
   '</tbody></table></div>'+paginationHtml(view,rows.length,total,company?"processos da empresa":"processos");
 }
@@ -1755,7 +1801,7 @@ function renderCliente360(id){
     (inter.length?inter.slice(0,30).map(x=>'<div class="timeline-item"><div class="timeline-dot"></div><div><strong>'+esc(x.Assunto||x.Tipo||x.Canal||"Interação")+'</strong><small>'+esc(x.DataHora||"")+' · '+esc(x.Usuario||"")+' · '+esc(x.Canal||"")+'</small><p>'+esc(x.Conteudo||"")+'</p>'+(x.ProximoPasso?'<span>Próximo: '+esc(x.ProximoPasso)+'</span>':'')+'</div></div>').join(""):'<div class="empty">Nenhuma interação CRM registrada ainda.</div>')+
     '</div></div></section>'+
     '<section class="card"><div class="card-head"><div><span class="eyebrow">OPERAÇÃO</span><h3>Processos vinculados</h3></div></div><div class="table-wrap flat"><table class="table compact"><thead><tr><th>CNJ</th><th>Status</th><th>Movimentação</th><th>Retorno</th><th></th></tr></thead><tbody>'+
-    procs.map(r=>'<tr><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":"gray")+'</td><td><div class="clamp2">'+esc(String(latestMove(r)||"").slice(0,160))+'</div></td><td>'+esc(pick(r,"Próximo Retorno")||"—")+'</td><td><button class="icon-action" data-edit="'+esc(keyOf(r))+'">Gerir</button></td></tr>').join("")+
+    procs.map(r=>'<tr><td class="mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":statusRet(r)==="NO PRAZO"?"good":"gray")+'</td><td><div class="clamp2">'+esc(String(latestMove(r)||"").slice(0,160))+'</div></td><td>'+esc(pick(r,"Próximo Retorno")||"—")+'</td><td><button class="icon-action" data-edit="'+esc(keyOf(r))+'">Gerir</button></td></tr>').join("")+
     '</tbody></table></div></section></div>'+
     '<div class="grid-2 crm-bottom"><section class="card"><div class="card-head"><div><span class="eyebrow">PIPELINE</span><h3>Comercial</h3></div></div><div class="card-body metric-list">'+(pipe.length?pipe.map(x=>metricRow(x.Servico||"Oportunidade",x.Etapa||"Triagem",x.Responsavel||"")).join(""):'<div class="empty">Sem oportunidade.</div>')+'</div></section>'+
     '<section class="card"><div class="card-head"><div><span class="eyebrow">AGENDA</span><h3>Próximos compromissos</h3></div></div><div class="card-body metric-list">'+(agenda.length?agenda.slice(0,10).map(x=>metricRow(x.Titulo||x.Tipo,x.Inicio||"—",x.Responsavel||"")).join(""):'<div class="empty">Sem eventos CRM.</div>')+'</div></section></div>';
@@ -1876,7 +1922,7 @@ function renderReport(){
     '<div class="lexis-page-shell report-page"><div class="report-head lexis-page-header"><div><span class="eyebrow">DOSSIÊ OPERACIONAL</span><h2>Relatório executivo da carteira</h2><p>Resumo consolidado do app, Google Sheets, DataJud e DJEN.</p></div><div class="command-actions"><button class="btn" data-goto="dashboard">Dashboard</button><button class="btn primary" id="printReport">Imprimir / PDF</button></div></div>'+
     '<div class="kpi-grid">'+kpi("Carteira",m.total,m.active+" ativos")+kpi("Vencidos",m.venc,"retornos","bad")+kpi("Novidades",m.newer,"pós-retorno",m.newer?"warn":"good")+kpi("Potencial",potential.length,"triagem comercial","good")+kpi("DataJud",m.dj,"processos auditados")+kpi("DJEN",m.djen,"processos com publicação")+'</div>'+
     '<section class="report-sheet"><div class="report-band"><div><span class="eyebrow">CRITICIDADE</span><h3>Top 10 · prioridade por movimentação e prazo</h3></div></div><div class="table-wrap flat report-table"><table class="table"><thead><tr><th>#</th><th>Cliente / CNJ</th><th>Motivo</th><th>Retorno</th><th>Tribunal</th><th>Ações</th></tr></thead><tbody>'+
-      topCrit.map((x,i)=>{const r=x.r,key=keyOf(r);return '<tr><td><strong>'+(i+1)+'</strong></td><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div></td><td>'+esc(taskLabel(r))+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":"gray")+'</td><td>'+esc(pick(r,"Tribunal")||"—")+'</td><td class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico inteiro</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button></td></tr>'}).join("")+
+      topCrit.map((x,i)=>{const r=x.r,key=keyOf(r);return '<tr><td><strong>'+(i+1)+'</strong></td><td><div class="cell-main">'+esc(pick(r,"Cliente"))+'</div><div class="cell-sub mono">'+esc(cnjFormatted(pick(r,"Protocolo")))+'</div></td><td>'+esc(taskLabel(r))+'</td><td>'+badge(statusRet(r),statusRet(r)==="VENCIDO"?"bad":statusRet(r)==="ATENÇÃO"?"warn":statusRet(r)==="NO PRAZO"?"good":"gray")+'</td><td>'+esc(pick(r,"Tribunal")||"—")+'</td><td class="actions"><button class="icon-action" data-history="'+esc(key)+'">Histórico inteiro</button><button class="icon-action" data-attendance="'+esc(key)+'">Registrar atendimento</button></td></tr>'}).join("")+
     '</tbody></table></div></section>'+
     '<div class="analysis-grid report-grid"><div class="analysis-tile"><h4>Por assistente</h4>'+bars(topA,m.total)+'</div><div class="analysis-tile"><h4>Por tribunal</h4>'+bars(topT,m.total)+'</div><div class="analysis-tile"><h4>Execução / cumprimento</h4>'+bars(Object.entries(execs).sort((a,b)=>b[1]-a[1]),m.total)+'</div></div>'+
     '<section class="report-sheet"><div class="report-band neutral"><div><span class="eyebrow">AUDITORIA DE RESPONSABILIDADE</span><h3>Minha carteira</h3></div><div>'+badge(myVenc.length+" vencidos","bad")+badge(myNews.length+" novidades","blue")+'</div></div><div class="grid-2 responsibility-grid"><div><h4>Meus prazos vencidos</h4><div class="report-list">'+(myVenc.length?myVenc.map(r=>{const key=keyOf(r);return '<div class="report-list-item danger"><div><strong>'+esc(pick(r,"Cliente"))+'</strong><small>'+esc(cnjFormatted(pick(r,"Protocolo")))+' · '+esc(pick(r,"Próximo Retorno")||"sem data")+'</small></div><button class="icon-action" data-attendance="'+esc(key)+'">Atender</button></div>'}).join(""):'<div class="empty">Nenhum prazo vencido.</div>')+'</div></div>'+
@@ -2083,6 +2129,9 @@ function updateLocalRow(row){
   const idx=state.companyRows.findIndex(x=>keyOf(x)===keyOf(row));
   if(idx>=0)state.companyRows[idx]=row;else state.companyRows.unshift(row);
   invalidateCrmIndexes();refreshScopes();
+  const mine=$("#navProcessos"),company=$("#navEmpresa");
+  if(mine)mine.textContent=state.rows.length;
+  if(company)company.textContent=state.companyRows.length;
 }
 async function markContacted(key){
   const row=findRow(key);if(!row)return;
@@ -2091,7 +2140,7 @@ async function markContacted(key){
   const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
   if(clientId&&!pick(row,"ClienteId"))row.ClienteId=clientId;
   Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"});
-  updateLocalRow(row);await saveRows(state.companyRows);
+  updateLocalRow(row);
   const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"};
   await queueWrite(patch);
   if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
@@ -2099,10 +2148,9 @@ async function markContacted(key){
     const interaction={InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),ClienteId:clientId,Protocolo:pick(row,"Protocolo"),Canal:"Atendimento",Tipo:"Retorno",Assunto:"Atendimento registrado",Conteudo:"Cliente marcado como contatado no SheetsPredict.",Usuario:actor,DataHora:nowIso,Resultado:"Contatado",ProximoPasso:"",DataProximoPasso:"",OptOut:""};
     await crmWrite("Interacoes",interaction,{quiet:true});
   }
-  render();
-  if(!navigator.onLine){showBanner("Atendimento e histórico CRM salvos no cache. Serão enviados quando a conexão voltar.","good");return}
-  try{await flushOutbox();await flushCrmOutbox().catch(()=>{});showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
-  catch(e){showBanner("Atendimento ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
+  renderCurrentView();
+  showBanner(navigator.onLine?"Atendimento registrado por "+actor+". Sincronizando em segundo plano…":"Atendimento e histórico CRM salvos no dispositivo. Serão enviados quando a conexão voltar.","good");
+  scheduleBackgroundFlush();
 }
 
 function dateInputValue(v){
@@ -2137,12 +2185,15 @@ async function saveAttendance(){
   const note=$("#attendanceNote").value.trim();
   const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
   const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"};
-  if(next)patch["Próximo Retorno"]=next;
+  if(next){
+    patch["Próximo Retorno"]=next;
+    patch["Situação do Retorno"]=returnStatusForDate(next);
+  }
   if(result==="ENCERRADO"){patch["Status"]="Encerrado";patch["Situacao"]="ENCERRADO"}
   else if(result!=="SEM CONTATO"){patch["Situacao"]="EM ANDAMENTO"}
   if(note)patch["Observações"]=note;
-  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);
-  if(statusEl)statusEl.textContent="Atendimento salvo localmente. Preparando sincronização…";
+  Object.assign(row,patch);updateLocalRow(row);
+  if(statusEl)statusEl.textContent="Atendimento salvo no dispositivo.";
   await queueWrite(patch);if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
   let crmPending=false;
   if(clientId){
@@ -2156,48 +2207,15 @@ async function saveAttendance(){
     // O registro principal em Processos tem prioridade. O histórico CRM entra
     // primeiro na fila local e só é enviado depois que Processos for confirmado.
     crmUpsertLocal("Interacoes",interaction);
-    await saveCrmCache("Interacoes");
     await queueCrmWrite("Interacoes",interaction);
     crmPending=true;
   }
-  render();
-  try{
-    let crmError=null;
-    if(navigator.onLine){
-      if(statusEl)statusEl.textContent="Sincronizando atendimento com a aba Processos…";
-      await flushOutbox();
-      if(clientId){
-        if(statusEl)statusEl.textContent="Confirmando histórico de atendimento…";
-        try{await flushCrmOutbox();crmPending=false}
-        catch(e){crmError=e;crmPending=true}
-      }
-    }
-    if(crmError){
-      const needsBridge=!!(crmError?.upgradeRequired||crmError?.deploymentOutdated||crmError?.bridgeMismatch);
-      const detail=needsBridge
-        ?" O Apps Script publicado precisa ser atualizado para o bridge 8.2 e republicado como Nova versão na implantação /exec existente."
-        :" "+(crmError.message||String(crmError));
-      if(statusEl)statusEl.textContent="Processos atualizado; histórico CRM pendente."+detail;
-      await updateSleep(500);
-      $("#attendanceDialog").close();
-      showBanner("Atendimento gravado na aba Processos, mas o histórico em Interacoes ficou pendente."+detail,"bad");
-    }else{
-      if(statusEl)statusEl.textContent=navigator.onLine?"Atendimento confirmado na planilha.":"Atendimento salvo offline.";
-      await updateSleep(260);
-      $("#attendanceDialog").close();
-      showBanner((navigator.onLine?"Atendimento registrado na planilha por ":"Atendimento salvo offline por ")+actor+" sem transferir o processo.","good");
-    }
-  }catch(e){
-    const needsBridge=!!(e?.upgradeRequired||e?.deploymentOutdated||e?.bridgeMismatch);
-    const detail=needsBridge
-      ?" O Apps Script publicado precisa ser atualizado para o bridge 8.2 e republicado como Nova versão na implantação /exec existente."
-      :" "+(e.message||String(e));
-    if(statusEl)statusEl.textContent="Salvo localmente; a aba Processos ainda não confirmou a gravação."+detail;
-    await updateSleep(500);
-    $("#attendanceDialog").close();
-    showBanner("Atendimento ficou pendente para a aba Processos."+detail,"bad");
-    if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
-  }finally{setOperationBusy(btn,{busy:false,doneLabel:"Registrar atendimento",statusEl})}
+  renderCurrentView();
+  if(statusEl)statusEl.textContent=navigator.onLine?"Salvo. Sincronizando em segundo plano…":"Salvo offline.";
+  $("#attendanceDialog").close();
+  showBanner((navigator.onLine?"Atendimento salvo imediatamente por ":"Atendimento salvo offline por ")+actor+" sem transferir o processo.","good");
+  setOperationBusy(btn,{busy:false,doneLabel:"Registrar atendimento",statusEl});
+  scheduleBackgroundFlush();
 }
 function historyDate(raw){
   const d=parseDate(raw);return d&&!Number.isNaN(d.getTime())?d:new Date(0);
@@ -2459,35 +2477,28 @@ async function saveProcess(){
   setOperationBusy(saveBtn,{busy:true,label:isNew?"Criando processo…":"Salvando alterações…",doneLabel:"Salvar",statusEl,status:"Salvando no dispositivo…"});
   try{
   next["ClienteId"]=clientId;
+  next["Situação do Retorno"]=returnStatusForDate(next["Próximo Retorno"])||pick(next,"Situação do Retorno");
   if(digits(next["Protocolo"]).length===20){next["Automação"]="PENDENTE";next["Próxima Sincronização"]=""}
-  updateLocalRow(next);await saveRows(state.companyRows);
-  if(statusEl)statusEl.textContent="Processo salvo localmente. Preparando sincronização…";
+  updateLocalRow(next);
+  if(statusEl)statusEl.textContent="Processo salvo no dispositivo.";
   if(clientId){
     const clientRecord={ClienteId:clientId,Tipo:"Pessoa",Nome:next["Cliente"],Telefone_Principal:next["Telefone"],Origem:"App",Status:"ATIVO",Responsavel:next["Assistente"],OptOutWhatsApp:"NÃO",AtualizadoEm:new Date().toISOString()};
     await crmWrite("Clientes",clientRecord,{quiet:true});
   }
   const writePayload={
-    "Protocolo":next["Protocolo"],"ClienteId":clientId,"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
+    "Protocolo":next["Protocolo"],"ClienteId":clientId,"Cliente":next["Cliente"],"Advogado":next["Advogado"],"Escritório":next["Escritório"],"Tribunal":next["Tribunal"],"Status":next["Status"],"Telefone":next["Telefone"],"Último Retorno":next["Último Retorno"],"Próximo Retorno":next["Próximo Retorno"],"Situação do Retorno":next["Situação do Retorno"]||"","Observações":next["Observações"],"Automação":next["Automação"]||"","Próxima Sincronização":next["Próxima Sincronização"]||""
   };
   if(isNew)writePayload["Assistente"]=next["Assistente"];
-  await queueWrite(writePayload);render();
-  $("#processStatus").textContent="Salvo neste dispositivo. Enviando para a planilha…";
-  if(!navigator.onLine){
-    if(statusEl)statusEl.textContent="Salvo offline; será sincronizado quando a conexão voltar.";
-    await updateSleep(250);$("#processDialog").close();showBanner("Cadastro salvo no cache e aguardando conexão.","good");return
-  }
-  if(statusEl)statusEl.textContent="Sincronizando com a planilha…";
-  try{
-    const j=await flushOutbox();if(Number(j.rejected_count||0)>0)throw new Error("A planilha recusou a alteração.");
-    if(statusEl)statusEl.textContent="Processo confirmado na planilha.";
-    await updateSleep(260);
-    $("#processDialog").close();showBanner((isNew?"Cadastro criado":"Alteração salva")+" sem transferir a carteira.","good");
+  await queueWrite(writePayload);
+  renderCurrentView();
+  if(statusEl)statusEl.textContent=navigator.onLine?"Salvo. Sincronizando em segundo plano…":"Salvo offline; será sincronizado quando a conexão voltar.";
+  $("#processDialog").close();
+  showBanner((isNew?"Cadastro criado":"Alteração salva")+" imediatamente no app"+(navigator.onLine?"; sincronizando com a planilha em segundo plano.":".")+"","good");
+  setOperationBusy(saveBtn,{busy:false,doneLabel:"Salvar",statusEl});
+  scheduleBackgroundFlush();
   }catch(e){
-    if(statusEl)statusEl.textContent="Salvo localmente; aguardando a planilha voltar.";
-    await updateSleep(350);$("#processDialog").close();showBanner("Alteração preservada no app e ficou pendente para a planilha: "+(e.message||String(e)),"bad");
-    if(e?.transient)scheduleSheetRecovery(Number(e.retryAfterMs)||5000);
-  }
-  }finally{
+    if(statusEl)statusEl.textContent="Não foi possível salvar no dispositivo.";
+    showBanner("Não foi possível preservar a alteração localmente: "+(e.message||String(e)),"bad");
     setOperationBusy(saveBtn,{busy:false,doneLabel:"Salvar",statusEl});
   }
 }

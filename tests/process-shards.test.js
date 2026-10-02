@@ -32,7 +32,7 @@ assert.match(app,/DEVICE_PROFILE\.syncPageSize/);
 assert.match(app,/hardPageLimit=5000/);
 
 assert.ok(index.indexOf("/lib/device-profile.js")<index.indexOf("/app.js"),"device profile deve carregar antes do app");
-assert.match(sw,/sheetspredict-v57/);
+assert.match(sw,/sheetspredict-v58/);
 assert.match(sw,/\/lib\/device-profile\.js/);
 
 console.log("process-shards: ok");
