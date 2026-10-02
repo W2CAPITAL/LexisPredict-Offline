@@ -23,6 +23,11 @@ const crm=needle.routeSheetsAction({action:"crm_write",table:"Interacoes",rows:[
 assert.equal(crm.optional,true);
 assert.equal(crm.capability,"crm_write");
 
+const shards=needle.routeSheetsAction({action:"shard_status"});
+assert.equal(shards.optional,true);
+assert.equal(shards.capability,"process_shards");
+assert.equal(shards.upstream,"shard_status");
+
 const unknown=needle.routeSheetsAction({action:"inventar_rota"});
 assert.equal(unknown.supported,false);
 assert.equal(unknown.confidence,0);
