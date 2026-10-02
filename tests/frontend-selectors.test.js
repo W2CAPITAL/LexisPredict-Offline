@@ -38,4 +38,8 @@ assert.doesNotMatch(app,/"atendido_em":nowIso/,"atendimento não deve exigir col
 assert.match(app,/Sincronizando atendimento com a aba Processos/,"atendimento deve priorizar a escrita principal");
 assert.match(app,/bridge 8\.2/,"falha de histórico deve orientar atualização explícita do Apps Script");
 
+assert.match(app,/SheetsNeedle\?\.bridgeConfirmedWrite/,"write confirmado deve evitar GET redundante");
+const authFailure=(app.match(/function handleCloudAuthFailure\(message\)\{([\s\S]*?)\n\}/)||[])[1]||"";
+assert.doesNotMatch(authFailure,/state\.companyRows\s*=\s*\[\]/,"401 não pode apagar a réplica local de Processos");
+
 console.log("frontend-selectors: ok");
