@@ -1,6 +1,7 @@
 const dns=require("node:dns").promises;
 const {requireSession,requireSameOrigin}=require("../lib/bridge-auth");
 const learning=require("../lib/predict-learning-pack");
+const {bpmnContext}=require("../lib/bpmn-skill");
 
 const REPOSITORIES=[
   {id:"predictlm",name:"PredictLM",repo:"W2CAPITAL/PredictLm",role:"IA principal, análise, dossiês e capability fusion"},
@@ -261,6 +262,7 @@ function contextSystem(ctx,prompt=""){
     "Não invente movimentações judiciais, publicações DJEN ou estados de WhatsApp. Diferencie dado confirmado de inferência.",
     "Responda em pt-BR, de forma direta e operacional.",
     learned?("APRENDIZADO PREDICTLM APLICÁVEL:\n"+learned):"",
+    bpmnContext(prompt),
     ctx?("CONTEXTO SHEETSPREDICT:\n"+compact(ctx,16000)):""
   ].filter(Boolean).join("\n\n");
 }
@@ -290,7 +292,7 @@ async function callPredictLm(prompt,context,messages,body={}){
   try{
     const r=await jsonFetch(urlAt(base,"/api/chat"),{method:"POST",headers:{"Content-Type":"application/json",...authHeaders(key,"Authorization")},body:JSON.stringify({
       prompt:compact(prompt,30000),messages:Array.isArray(messages)?messages.slice(-10):[],language:"pt-BR",deep:!!body.deep,
-      answerAnchor:compact(context,16000),sessionId:compact(body.sessionId,120)
+      answerAnchor:compact([context,bpmnContext(prompt)].filter(Boolean).join("\n\n"),16000),sessionId:compact(body.sessionId,120)
     })},body.deep?45000:35000);
     const text=predictText(r.data);if(r.ok&&text)return {ok:true,engine:"PredictLM",provider:"PredictLM",content:String(text)};
   }catch{}

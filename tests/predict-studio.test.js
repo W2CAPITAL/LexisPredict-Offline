@@ -16,7 +16,7 @@ assert.equal(learningStats.total,149,"learning pack portátil deve consolidar 14
 assert.ok(learning.context("falha na geração de imagem",{surface:"media",limit:6}).includes("artefato real validado"),"aprendizado de mídia deve ser recuperável");
 
 assert.deepEqual(Array.from(c.surfaces).map(x=>x.id),["chat","legal","build","work","tutor","research","imagine","report"]);
-assert.equal(c.skills.length,82,"snapshot deve conter as 82 skills registradas no PredictLM");
+assert.equal(c.skills.length,83,"snapshot deve conter as 83 skills registradas no Predict Studio");
 assert.equal(c.agents.length,16,"Agent Fabric deve expor 16 papéis");
 assert.equal(c.cores.length,4,"Four-core control deve expor Fly/Mouse/Macaque/Human");
 assert.ok(c.localRuntimes.length>=10,"Runtime Federation deve listar motores locais");
@@ -24,7 +24,7 @@ assert.ok(c.providers.length>=10,"Provider Mesh deve listar providers conhecidos
 assert.ok(c.providers.includes("ashna"),"AshnaAI deve estar no catálogo de providers");
 assert.ok(c.fusionRepositories.length>=70,"Capability Fusion deve preservar registry amplo");
 assert.ok(c.fusionRepositories.includes("Graphify-Labs/graphify"),"Graphify deve constar na fusão de conhecimento");
-for(const id of ["predictlm-master","provider-mesh","runtime-federation","agent-fabric","report-architect","deep-research","tutor-mode","grok-imagine-parity","neurocore","datajud","graphify-brain","revisao-contrato-bancario"]){
+for(const id of ["predictlm-master","provider-mesh","runtime-federation","agent-fabric","report-architect","deep-research","tutor-mode","grok-imagine-parity","neurocore","datajud","graphify-brain","revisao-contrato-bancario","bpmn-process-modeling"]){
   assert.ok(c.skills.some(x=>x.id===id),"skill ausente: "+id);
 }
 
