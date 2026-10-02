@@ -2129,6 +2129,9 @@ function updateLocalRow(row){
   const idx=state.companyRows.findIndex(x=>keyOf(x)===keyOf(row));
   if(idx>=0)state.companyRows[idx]=row;else state.companyRows.unshift(row);
   invalidateCrmIndexes();refreshScopes();
+  const mine=$("#navProcessos"),company=$("#navEmpresa");
+  if(mine)mine.textContent=state.rows.length;
+  if(company)company.textContent=state.companyRows.length;
 }
 async function markContacted(key){
   const row=findRow(key);if(!row)return;
@@ -2137,7 +2140,7 @@ async function markContacted(key){
   const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
   if(clientId&&!pick(row,"ClienteId"))row.ClienteId=clientId;
   Object.assign(row,{"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"});
-  updateLocalRow(row);await saveRows(state.companyRows);
+  updateLocalRow(row);
   const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"};
   await queueWrite(patch);
   if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
@@ -2145,10 +2148,9 @@ async function markContacted(key){
     const interaction={InteracaoId:window.LexisCRM?.stableId("int",clientId,nowIso,actor)||("int_"+Date.now()),ClienteId:clientId,Protocolo:pick(row,"Protocolo"),Canal:"Atendimento",Tipo:"Retorno",Assunto:"Atendimento registrado",Conteudo:"Cliente marcado como contatado no SheetsPredict.",Usuario:actor,DataHora:nowIso,Resultado:"Contatado",ProximoPasso:"",DataProximoPasso:"",OptOut:""};
     await crmWrite("Interacoes",interaction,{quiet:true});
   }
-  render();
-  if(!navigator.onLine){showBanner("Atendimento e histórico CRM salvos no cache. Serão enviados quando a conexão voltar.","good");return}
-  try{await flushOutbox();await flushCrmOutbox().catch(()=>{});showBanner("Atendimento registrado por "+actor+" sem alterar o Assistente da carteira.","good")}
-  catch(e){showBanner("Atendimento ficou pendente para a planilha: "+(e.message||String(e)),"bad")}
+  renderCurrentView();
+  showBanner(navigator.onLine?"Atendimento registrado por "+actor+". Sincronizando em segundo plano…":"Atendimento e histórico CRM salvos no dispositivo. Serão enviados quando a conexão voltar.","good");
+  scheduleBackgroundFlush();
 }
 
 function dateInputValue(v){
@@ -2183,12 +2185,15 @@ async function saveAttendance(){
   const note=$("#attendanceNote").value.trim();
   const clientId=pick(row,"ClienteId")||(window.LexisCRM?.stableClientId?window.LexisCRM.stableClientId({Cliente:pick(row,"Cliente"),Telefone:pick(row,"Telefone")}):"");
   const patch={"Protocolo":pick(row,"Protocolo"),"ClienteId":clientId,"AtendidoPor":actor,"Último Retorno":retorno,"Nova Atualização":"NÃO","Novo Andamento":"NÃO","Novo_Andamento":"NÃO"};
-  if(next)patch["Próximo Retorno"]=next;
+  if(next){
+    patch["Próximo Retorno"]=next;
+    patch["Situação do Retorno"]=returnStatusForDate(next);
+  }
   if(result==="ENCERRADO"){patch["Status"]="Encerrado";patch["Situacao"]="ENCERRADO"}
   else if(result!=="SEM CONTATO"){patch["Situacao"]="EM ANDAMENTO"}
   if(note)patch["Observações"]=note;
-  Object.assign(row,patch);updateLocalRow(row);await saveRows(state.companyRows);
-  if(statusEl)statusEl.textContent="Atendimento salvo localmente. Preparando sincronização…";
+  Object.assign(row,patch);updateLocalRow(row);
+  if(statusEl)statusEl.textContent="Atendimento salvo no dispositivo.";
   await queueWrite(patch);if(window.WAAutoModule?.syncRows)void window.WAAutoModule.syncRows([row],crmClients(),{quiet:true}).catch(()=>{});
   let crmPending=false;
   if(clientId){
