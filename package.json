@@ -1,6 +1,6 @@
 {
   "name": "sheetspredict",
-  "version": "4.3.0",
+  "version": "4.3.1",
   "private": true,
   "description": "SheetsPredict — SaaS jurídico operacional + Google Sheets + Predict Studio + AshnaAI + WA.Auto + DataJud/DJEN + Graphify Brain",
   "scripts": {
