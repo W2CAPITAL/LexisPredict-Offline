@@ -1,5 +1,6 @@
 const {validateSession,requireSameOrigin,setSessionCookie,clearSessionCookie}=require("../lib/bridge-auth");
 const {scopeRows,isElevated}=require("../lib/sheet-scope");
+const {routeSheetsAction,bridgeCapabilityFor}=require("../lib/needle-router");
 function safeUrl(raw){
   let u;try{u=new URL(String(raw||""))}catch{throw new Error("LEXIS_APPS_SCRIPT_URL inválida ou ausente na Vercel.")}
   const okHost=u.hostname==="script.google.com"||u.hostname.endsWith(".script.google.com")||u.hostname==="script.googleusercontent.com";
@@ -74,6 +75,7 @@ function transientRead(res,action,message,status){
     error:message||"A planilha está temporariamente indisponível. O cache local foi preservado."
   });
 }
+let bridgeMetaCache={url:"",at:0,data:null};
 async function probeBridgeVersion(url,token){
   try{
     const probe=await fetchBridge(url,{action:"ping",token},"ping");
@@ -90,6 +92,14 @@ async function probeBridgeVersion(url,token){
     return {ok:false,version:"",pong:false,capabilities:[],httpStatus:0,error:e?.message||String(e)};
   }
 }
+async function bridgeMeta(url,token){
+  const now=Date.now();
+  if(bridgeMetaCache.data&&bridgeMetaCache.url===url&&now-bridgeMetaCache.at<45000)return bridgeMetaCache.data;
+  const data=await probeBridgeVersion(url,token);
+  if(data?.ok)bridgeMetaCache={url,at:now,data};
+  return data;
+}
+
 module.exports=async(req,res)=>{
   if(req.method!=="POST")return res.status(405).json({ok:false,error:"Método não permitido"});
   if(!requireSameOrigin(req,res))return;
@@ -97,6 +107,10 @@ module.exports=async(req,res)=>{
     const body=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});
     const payload={...(body.payload||{})};
     const action=String(payload.action||"").trim().toLowerCase();
+    const route=routeSheetsAction(payload);
+    if(!route.supported){
+      return res.status(400).json({ok:false,error:"Ação não suportada pelo bridge do SheetsPredict.",action,reason:route.reason,confidence:route.confidence});
+    }
 
     if(action==="logout"){
       clearSessionCookie(res);
@@ -131,10 +145,10 @@ module.exports=async(req,res)=>{
       const qDigits=searchDigits(query);
       let source=[];
       let upstream=null;
-      if(qDigits.length===20){
+      if(route.tool==="get_process"&&qDigits.length===20){
         upstream=await fetchBridge(url,{action:"get",protocolo:qDigits,sess:auth.sess,token:fixedToken},"get");
         if(upstream?.parseError)return transientRead(res,action,"A planilha não respondeu corretamente à busca direta.",upstream?.up?.status||503);
-        if(upstream?.data?.error==="token invalido")return res.status(401).json({ok:false,error:"LEXIS_SHEETS_TOKEN da Vercel não corresponde ao Apps Script publicado."});
+        if(upstream?.data?.error==="token invalido")return res.status(401).json({ok:false,error:"LEXIS_SHEETS_TOKEN da Vercel não corresponde ao Apps Script publicado.",reason:"token_mismatch"});
         const row=upstream?.data?.row||(Array.isArray(upstream?.data?.data)?upstream.data.data[0]:null);
         source=row?[row]:[];
       }else{
@@ -152,7 +166,32 @@ module.exports=async(req,res)=>{
       return res.status(200).json({ok:true,query,scope:requestedScope,rows,count:rows.length,direct:qDigits.length===20});
     }
 
-    const bridgePayload={...payload,action:action==="list"?"list_compact":action,token:fixedToken};
+    const capability=bridgeCapabilityFor(action);
+    if(capability){
+      const meta=await bridgeMeta(url,fixedToken);
+      const caps=Array.isArray(meta?.capabilities)?meta.capabilities:[];
+      const metadataAuthoritative=!!(meta?.ok&&(caps.length||meta.version));
+      if(metadataAuthoritative&&!caps.includes(capability)){
+        const optional=route.optional===true;
+        return res.status(200).json({
+          ok:false,
+          degraded:optional,
+          optional,
+          bridgeMismatch:true,
+          code:optional?"OPTIONAL_BRIDGE_CAPABILITY_MISSING":"APPS_SCRIPT_CAPABILITY_MISSING",
+          action,
+          detectedVersion:meta.version||"legacy",
+          detectedCapabilities:caps,
+          requiredVersion:REQUIRED_BRIDGE_VERSION,
+          requiredCapability:capability,
+          error:optional
+            ?"O recurso opcional "+action+" não existe na implantação ativa do Apps Script. A operação principal em Processos continua disponível; este recurso ficará na fila local."
+            :"O Apps Script publicado não expõe a capacidade "+capability+". Publique a versão atual do installer na implantação /exec ativa."
+        });
+      }
+    }
+
+    const bridgePayload={...route.args,...payload,action:route.upstream||action,token:fixedToken};
     let bridged=await fetchBridge(url,bridgePayload,action);
     let up=bridged.up,txt=bridged.txt,data=bridged.data;
     if(action==="list"&&data&&data.ok===false&&/acao desconhecida:\s*list_compact/i.test(String(data.error||""))){
@@ -217,7 +256,7 @@ module.exports=async(req,res)=>{
     res.setHeader("Cache-Control","no-store");
 
     if(data&&data.error==="token invalido"){
-      return res.status(401).json({ok:false,error:"LEXIS_SHEETS_TOKEN da Vercel não corresponde à Script Property LEXIS_SHEETS_TOKEN do Apps Script publicado."});
+      return res.status(401).json({ok:false,error:"LEXIS_SHEETS_TOKEN da Vercel não corresponde à Script Property LEXIS_SHEETS_TOKEN do Apps Script publicado.",reason:"token_mismatch"});
     }
 
     if((action==="login"||action==="auth")&&data&&data.ok){
@@ -230,7 +269,7 @@ module.exports=async(req,res)=>{
 
     if(data&&/sessao invalida|sessão inválida|sessao expirada|sessão expirada/i.test(String(data.error||""))){
       clearSessionCookie(res);
-      return res.status(401).json({ok:false,error:data.error});
+      return res.status(401).json({ok:false,error:data.error,reason:"expired_session"});
     }
 
     if(action==="list"&&data&&data.ok){
