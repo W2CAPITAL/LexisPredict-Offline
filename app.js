@@ -5,7 +5,7 @@ const SHEET_DEFAULT="https://docs.google.com/spreadsheets/d/1qbuJee6DCv0bh9XGvnB
 const DB_NAME="lexispredict-secure-cache-v3";
 const SESSION_SNAPSHOT_KEY="lexis_user_snapshot_v2";
 const CACHE_TTL_MS=5*60*1000;
-const DEVICE_PROFILE=window.SheetsDeviceProfile?.detect?window.SheetsDeviceProfile.detect():{renderPageSize:200,syncPageSize:600,idbChunkSize:320,yieldMs:0,lowMemory:false,constrained:false};
+const DEVICE_PROFILE=(typeof window!=="undefined"&&window.SheetsDeviceProfile?.detect)?window.SheetsDeviceProfile.detect():{renderPageSize:200,syncPageSize:600,idbChunkSize:320,yieldMs:0,lowMemory:false,constrained:false};
 const PAGE_DEFAULT=Number(DEVICE_PROFILE.renderPageSize)||200;
 const DJEN_GEO_BLOCK_MS=10*60*1000;
 const DJEN_BLOCK_KEY="lexis_djen_blocked_until_v2";
